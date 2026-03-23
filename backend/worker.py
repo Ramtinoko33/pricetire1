@@ -10,10 +10,7 @@ load_dotenv()
 
 print("=== IMPORTS OK ===", flush=True)
 
-MONGO_URL = os.environ.get(
-    'MONGO_URL',
-    'mongodb://mongo:xaqYuAhAqswTyVYfYwkDrIlhTHBQVPxh@mongodb.railway.internal:27017'
-)
+MONGO_URL = os.environ['MONGO_URL']
 DB_NAME = os.environ['DB_NAME']
 
 print(f"=== MONGO_URL: {MONGO_URL[:50]}... ===", flush=True)

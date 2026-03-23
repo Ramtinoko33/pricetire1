@@ -25,7 +25,7 @@ from playwright.async_api import async_playwright
 import re
 
 # MongoDB connection
-MONGO_URL = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
+MONGO_URL = os.environ['MONGO_URL']
 DB_NAME = os.environ['DB_NAME']
 
 # Results directory

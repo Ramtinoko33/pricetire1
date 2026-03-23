@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 @api_router.get("/suppliers", response_model=List[Supplier])
 async def get_suppliers():
-    suppliers = await db.suppliers.find({}, {"_id": 0}).to_list(1000)
+    suppliers = await db.suppliers.find({}, {"_id": 0}).to_list(100)
     for supplier in suppliers:
         supplier['password'] = "********"
     return suppliers
@@ -242,7 +242,7 @@ async def run_scraping_job(job_id: str):
         
         job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
         items = await db.job_items.find({"job_id": job_id}, {"_id": 0}).to_list(10000)
-        suppliers = await db.suppliers.find({"is_active": True}, {"_id": 0}).to_list(10000)
+        suppliers = await db.suppliers.find({"is_active": True}, {"_id": 0}).to_list(100)
         
         if not suppliers:
             await db.jobs.update_one(
@@ -624,7 +624,7 @@ async def export_job_results(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
     
     items = await db.job_items.find({"job_id": job_id}, {"_id": 0}).to_list(10000)
-    suppliers = await db.suppliers.find({"is_active": True}, {"_id": 0}).to_list(10000)
+    suppliers = await db.suppliers.find({"is_active": True}, {"_id": 0}).to_list(100)
     supplier_names = [s['name'] for s in suppliers]
     
     try:
