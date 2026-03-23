@@ -1,0 +1,45 @@
+import axios from 'axios';
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const API = `${BACKEND_URL}/api`;
+
+const api = axios.create({
+  baseURL: API,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+export const suppliersAPI = {
+  getAll: () => api.get('/suppliers'),
+  create: (data) => api.post('/suppliers', data),
+  update: (id, data) => api.put(`/suppliers/${id}`, data),
+  delete: (id) => api.delete(`/suppliers/${id}`),
+  testLogin: (id) => api.post(`/suppliers/${id}/test`),
+  getSelectors: (id) => api.get(`/suppliers/${id}/selectors`),
+  updateSelectors: (id, selectors) => api.put(`/suppliers/${id}/selectors`, selectors),
+};
+
+export const jobsAPI = {
+  upload: (formData) => api.post('/jobs/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }),
+  getAll: () => api.get('/jobs'),
+  getOne: (id) => api.get(`/jobs/${id}`),
+  run: (id) => api.post(`/jobs/${id}/run`),
+  compare: (id) => api.post(`/jobs/${id}/compare`),
+  getProgress: (id) => api.get(`/jobs/${id}/progress`),
+  getResults: (id) => api.get(`/jobs/${id}/results`),
+  export: (id) => api.get(`/jobs/${id}/export`, { responseType: 'blob' }),
+  delete: (id) => api.delete(`/jobs/${id}`),
+};
+
+export const statsAPI = {
+  getDashboard: () => api.get('/stats'),
+};
+
+export const logsAPI = {
+  getAll: (jobId = null, limit = 100) => api.get('/logs', { params: { job_id: jobId, limit } }),
+};
+
+export default api;

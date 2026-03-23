@@ -1,0 +1,49 @@
+{
+  "summary": "Completed testing of Pneu Price Scout scraper endpoints and frontend. All key features working: /api/scrape/enqueue creates jobs, /api/scraped-prices returns prices, /api/scraped-prices/best/{medida} returns best price, Scraper page loads with prices, refresh button works.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/jobs",
+        "issue": "Returns 500 - scrape queue jobs (from /api/scrape/enqueue) mixed in same 'jobs' collection with upload jobs but have different schema. Job model expects fields like filename, total_items but scrape jobs have type, supplier_id, payload.",
+        "priority": "HIGH",
+        "fix": "Either filter by type in get_jobs: query={'type': {'$exists': False}} OR use separate collection for scrape queue jobs"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_scraper_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix /api/jobs endpoint to filter out scrape queue jobs OR use separate collection for scrape queue"
+  ],
+  "critical_code_review_comments": [
+    "Line 605-606 in server.py: /api/scrape/enqueue inserts jobs without 'id' field to same 'jobs' collection used by upload jobs - causes schema conflict",
+    "Suppliers: euromais and S. José Pneus have login/connectivity issues (expected based on agent context)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_scraper_api.py"
+  ],
+  "success_rate": {
+    "backend": "93% (13/14 passed, 1 skipped due to known bug)",
+    "frontend": "100%"
+  },
+  "test_credentials": "None required",
+  "seed_data_creation": "Created test scrape jobs via /api/scrape/enqueue with TEST_ prefix",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend APIs for scraper functionality work correctly. Scraped prices exist in DB for medidas 2055516, 1956515, 2255517 from MP24, Prismanil, Dispnal. S. José and Euromais have external connectivity issues. /api/jobs bug documented but does not affect main scraper workflow.",
+  "features_tested": {
+    "endpoint_scrape_enqueue": "PASS - creates jobs in queue",
+    "endpoint_scraped_prices": "PASS - returns scraped prices from DB",
+    "endpoint_scraped_prices_best": "PASS - returns best price for medida",
+    "frontend_scraper_page": "PASS - loads prices, shows status, refresh works",
+    "frontend_refresh_button": "PASS - updates prices display"
+  }
+}

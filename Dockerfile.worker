@@ -1,0 +1,16 @@
+FROM mcr.microsoft.com/playwright/python:v1.58.0-jammy
+
+WORKDIR /app
+
+COPY requirements.worker.txt .
+RUN pip install --no-cache-dir -r requirements.worker.txt
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/pw-browsers
+RUN playwright install chromium --with-deps
+
+COPY backend/worker.py ./backend/worker.py
+COPY backend/run_scraper.py ./backend/run_scraper.py
+
+RUN mkdir -p /app/tmp/scraper_results
+
+CMD ["python3", "backend/worker.py"]

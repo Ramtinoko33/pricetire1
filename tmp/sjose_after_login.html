@@ -1,0 +1,449 @@
+<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><title>
+	S. José Pneus
+</title><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta http-equiv="X-UA-Compatible" content="IE=edge;"><link href="App_Themes/Default/CSS/bootstrap.min.css" rel="stylesheet"><link href="App_Themes/Default/CSS/styles.css" rel="stylesheet"><link href="App_Themes/Default/CSS/font-awesome.min.css" rel="stylesheet"><link href="App_Themes/Default/toastr/toastr.min.css" rel="stylesheet">
+    <link href="../App_Themes/Default/CSS/Login.css" rel="stylesheet">
+</head>
+
+<body class="login-background">
+    <form method="post" action="./login.aspx" onsubmit="javascript:return WebForm_OnSubmit();" id="form1">
+<div class="aspNetHidden">
+<input type="hidden" name="__LASTFOCUS" id="__LASTFOCUS" value="">
+<input type="hidden" name="__EVENTTARGET" id="__EVENTTARGET" value="">
+<input type="hidden" name="__EVENTARGUMENT" id="__EVENTARGUMENT" value="">
+<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="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">
+</div>
+
+<script type="text/javascript">
+//<![CDATA[
+var theForm = document.forms['form1'];
+if (!theForm) {
+    theForm = document.form1;
+}
+function __doPostBack(eventTarget, eventArgument) {
+    if (!theForm.onsubmit || (theForm.onsubmit() != false)) {
+        theForm.__EVENTTARGET.value = eventTarget;
+        theForm.__EVENTARGUMENT.value = eventArgument;
+        theForm.submit();
+    }
+}
+//]]>
+</script>
+
+
+<script src="/WebResource.axd?d=pynGkmcFUV13He1Qd6_TZFeye3R2_Xu8Wi_UsdrXwZdeWCZltyIVFC3PvDlKFJHBk16ZUI-Sd-e6M0dmjQ3jYA2&amp;t=638901572248157332" type="text/javascript"></script>
+
+
+<script src="/ScriptResource.axd?d=nv7asgRUU0tRmHNR2D6t1MhatEjBaT_L36hINp5ZPnJK6k9y_AkbNN7ZgeXEq2AD4tuD0BpJyNv2aoQUP61_cXxkuwvE-wgDljPj4YPICQkvlBgXMtkzy9VnHZaFygzAMisQsEfuslkJ9Mj5Mpw3Ew2&amp;t=ffffffff93d1c106" type="text/javascript"></script>
+<script src="/ScriptResource.axd?d=NJmAwtEo3Ipnlaxl6CMhvi4YSau1FcaVdMguzkgdnpE-47j7oFfOiQuswRiO4P11nWpU9LOKWOElCcDWKgMYm1X8xYOzLpI1KR5YmB9Rulhq4QytJP3O8hF5x12-i20zoaApHJY55InScBWz8BHMO4z7V0Bnz3ZEk5ukgVOw7dc1&amp;t=5c0e0825" type="text/javascript"></script>
+<script src="/ScriptResource.axd?d=dwY9oWetJoJoVpgL6Zq8ODSK5g8fSM3uZGnrq-KPwPo0-J_1GP-Pi1CU3tZLEENxgH_GCmAUD8HXihVPsQBjFaSYd5vulN_-MiYap8Uql1750Gyoq4klqzRfWCll1KH0Qfw3Tp6QbZFivhI4YKYKreHeB0aFXEY4Xpya9KZ2KrY1&amp;t=5c0e0825" type="text/javascript"></script>
+<script src="Scripts/jquery/3.6.0/jquery.min.js" type="text/javascript"></script>
+<script src="Scripts/bootstrap.min.js" type="text/javascript"></script>
+<script src="Scripts/toastr/toastr.min.js" type="text/javascript"></script>
+<script src="Scripts/toastr/toastrWrapper.js" type="text/javascript"></script>
+<script src="/WebResource.axd?d=JoBkLzP19aTuxbWOhHobYpGJmfad4jfQprLFB_TVitAKILTqIXDKkqWvVQLbsjpe6p09UHB6YVrFGts3dfs9IA2&amp;t=638901572248157332" type="text/javascript"></script>
+<script type="text/javascript">
+//<![CDATA[
+function WebForm_OnSubmit() {
+if (typeof(ValidatorOnSubmit) == "function" && ValidatorOnSubmit() == false) return false;
+return true;
+}
+//]]>
+</script>
+
+<div class="aspNetHidden">
+
+	<input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="C2EE9ABB">
+	<input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="o7+LfGQfHrdrrvevjmrjbiVWzVK4GNgRNeMDI7cK4ERPkjmovZh7poKr4etkMqk4BlZvSlwqCt/Eaqka146bgIrwrHY662YLoV9kesrvPGHb7qrc2l41x2eZ8KC7nEopGQwa/FjiAoL/JJYEYE3QHEQdzBqgZ0JOBtkc4f6g30auSN4xHoLovQ/Y8NBUQ+X3BbRCGdO2te2tCFNa/WFBpEaVf9Kc5a59ttNjihPFlp19FX4ybI89DV3orWDTsMkC">
+</div>
+         <script type="text/javascript">
+//<![CDATA[
+Sys.WebForms.PageRequestManager._initialize('ctl00$smMaster', 'form1', [], [], [], 90, 'ctl00');
+//]]>
+</script>
+
+        <!-- Header -->
+        <header id="kopa-page-header" class="loginPage">
+            <!--Header Top -->
+            <div class="clearfix">
+                <div class="header-top clearfix">
+                   <!-- <div class="wrapper clearfix">-->
+                        <div class="logo-image">
+                            <span>
+                                <a href="../default.aspx" title="">
+                                    <img src="App_Themes/Default/Images/logo.png" id="imgLogo1" style="width: 220px;" alt="S.José - José Aniceto &amp; Irmão" title="S.José - José Aniceto &amp; Irmão">
+                                    <!--<img src="App_Themes/Default/Images/50anos_pme_3.png" id="imgLogo2" style="width: 135px;" alt="S.José - José Aniceto &amp; Irmão" title="S.José - José Aniceto &amp; Irmão" />-->
+									<!-- Ricardo 198px -->
+                                </a>
+                            </span>
+                        </div>
+                        <div class="language-box right">
+                            
+
+<div class="language-box right">
+    
+            <ul>
+        
+            <li>
+                <input type="image" name="ctl00$ucLanguages$rptLanguages$ctl01$ibtLanguage" id="ucLanguages_rptLanguages_ibtLanguage_0" disabled="disabled" title="Português" class="aspNetDisabled" src="App_Themes/Default/Images/pt-PT.png" alt="Português">
+            </li>
+        
+            <li>
+                <input type="image" name="ctl00$ucLanguages$rptLanguages$ctl02$ibtLanguage" id="ucLanguages_rptLanguages_ibtLanguage_1" title="Español" src="App_Themes/Default/Images/es-ES.png" alt="Español">
+            </li>
+        
+            </ul>
+        
+</div>
+                        </div>
+                    </div>
+                </div>
+            <!--</div>-->
+        </header>
+        <!-- Breadcrumb -->
+        <!-- top page above -->
+        <!--
+        <div id="kopa-top-page">
+           
+            <div class="top-page-bottom clearfix">
+                <div class="right container">
+                    <div class="kopa-breadcrumb clearfix">
+                        <span><span itemprop="title">Login</span></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        -->
+        <!-- Body -->
+        
+    <div id="main-content" class="pt-50 ">
+        <div class="container">
+            <div class="row login">
+                    
+
+        <div class="col-md-1"></div>
+        <div class="col-md-4 col-sm-5 col-xs-12 div-login-area">
+            <table id="ContentPlaceHolder1_ctrlLogin_Login" class="userSectionLogin" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;">
+	<tbody><tr>
+		<td>
+                    <div id="ContentPlaceHolder1_ctrlLogin_Login_pnlLogin" onkeypress="javascript:return WebForm_FireDefaultButton(event, 'ContentPlaceHolder1_ctrlLogin_Login_btnLogin')">
+			
+
+                        <div class="login-area">
+                            <div class="row">
+                                <div class="col-md-2 col-sm-2 col-xs-2">
+                                    <img id="ContentPlaceHolder1_ctrlLogin_Login_imglogin" class="login-icon" src="App_Themes/Default/Images/icon_login.png">
+                                </div>
+                                <div class="col-md-10 col-sm-10 col-xs-10">
+                                    <p class="login-heading">Área Reservada</p>
+                                </div>
+                            </div>
+
+                            <p class="login-intro">Introduza os seus dados pessoais para aceder à sua área pessoal</p>
+
+                            <p class="input-block">
+                                <label for="ContentPlaceHolder1_ctrlLogin_Login_UserName" class="required">Utilizador <span>*</span></label>
+
+                                <input name="ctl00$ContentPlaceHolder1$ctrlLogin$Login$UserName" type="text" value="5010600251" maxlength="32" id="ContentPlaceHolder1_ctrlLogin_Login_UserName" class="valid">
+                                <span id="ContentPlaceHolder1_ctrlLogin_Login_rvfUsername" class="error" style="display:none;">Por favor introduza o seu Username.</span>
+                            </p>
+                            <p class="input-block" style="position: relative;">
+                                <label for="ContentPlaceHolder1_ctrlLogin_Login_Password" id="ContentPlaceHolder1_ctrlLogin_Login_pwd" class="required">Password <span>*</span>
+                                </label>
+                                <input name="ctl00$ContentPlaceHolder1$ctrlLogin$Login$Password" type="password" maxlength="16" id="ContentPlaceHolder1_ctrlLogin_Login_Password" class="valid">
+
+                                <!-- Ícone do olho (Font Awesome) -->
+                                <i id="togglePassword" class="fa fa-eye" style="position: absolute; right: 10px; top: 42px; cursor: pointer; color: #666;"></i>
+                                <span id="ContentPlaceHolder1_ctrlLogin_Login_rfvPassword" class="error" style="display:none;">Por favor introduza a sua Password.</span>
+                            </p>
+                            <p>*<small> <i>campos obrigatórios </i></small></p>
+                            <p class="error">
+                                Username ou password inválidos. Por favor tente novamente.
+                            </p>
+                        </div>
+
+                        <div class="elementor-button-wrapper">
+
+                            <input type="submit" name="ctl00$ContentPlaceHolder1$ctrlLogin$Login$btnLogin" value="Entrar" onclick="javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions(&quot;ctl00$ContentPlaceHolder1$ctrlLogin$Login$btnLogin&quot;, &quot;&quot;, true, &quot;vgLogin&quot;, &quot;&quot;, false, false))" id="ContentPlaceHolder1_ctrlLogin_Login_btnLogin" class="input-submit btnLogin button">
+
+                            <input type="submit" name="ctl00$ContentPlaceHolder1$ctrlLogin$Login$lkbRecoverPass" value="Repor password" id="ContentPlaceHolder1_ctrlLogin_Login_lkbRecoverPass" class="button button-second input-submit">
+                            <input type="submit" name="ctl00$ContentPlaceHolder1$ctrlLogin$Login$lbkRegister" value="Registar nova empresa" id="ContentPlaceHolder1_ctrlLogin_Login_lbkRegister" class="button button-second input-submit">
+
+                        </div>
+                        </div>
+                    
+		
+                </td>
+	</tr>
+</tbody></table>
+        </div>
+
+        
+
+        <script type="text/javascript">
+
+
+            $('input').on('keypress', function (e) {
+                return e.which !== 13;
+            });
+        </script>
+    
+
+
+<script type="text/javascript">
+
+
+
+    window.onresize = function () {
+        $("#al-page-footer-login").css("position", "fixed");
+
+        if ($(document).height() > $(window).height()) {
+
+            $("#al-page-footer-login").css("position", "static");
+        } else {
+            //this part works, so it's hidden
+            $("#al-page-footer-login").css("position", "fixed");
+        }
+    };
+
+
+
+    $(document).ready(function () {
+
+        var bohi = $(window).height();
+        var bohwidth = $(window).width();
+        if ($(document).height() > $(window).height()) {
+
+
+            $("#al-page-footer-login").css("position", "static");
+        } else {
+            //this part works, so it's hidden
+            $("#al-page-footer-login").css("position", "fixed");
+
+        }
+    });
+
+
+
+
+
+    document.addEventListener('DOMContentLoaded', function () {
+        const togglePassword = document.getElementById('togglePassword');
+        const passwordField = document.querySelector('input[type="password"][id$="_Password"]');
+
+        if (togglePassword && passwordField) {
+            togglePassword.addEventListener('click', function () {
+                const type = passwordField.getAttribute('type') === 'password' ? 'text' : 'password';
+                passwordField.setAttribute('type', type);
+
+                // alternar ícone Font Awesome
+                togglePassword.classList.toggle('fa-eye');
+                togglePassword.classList.toggle('fa-eye-slash');
+            });
+        }
+    });
+</script>
+
+
+
+
+
+
+
+
+
+
+
+
+            </div>
+        </div>
+    </div>
+       <div class="container">
+        <div class="col-md-1"></div>
+        <div class="col-md-11 col-sm-11 col-xs-12">
+	        <div class="div-nota-login" style="margin-bottom:3%;font-size:1.5rem"><small><strong>NOTA! Este website está optimizado para os seguintes browsers (Navegadores Web):</strong><br>
+                Google Chrome |
+                Mozzila Firefox |
+                Internet Explorer 10 ou superior <br><br>
+                Se ainda utiliza uma <strong>versão anterior ao Internet Explorer 9</strong>, por favor <strong>atualize o seu navegador</strong> ou instale o Google Chrome: pode encontrar o instalador <a href="http://www.google.com/intl/pt-PT/chrome/browser/" target="_blank">aqui</a>.<br>
+                Se ainda utiliza o <strong>sistema operativo Windows XP</strong>, por favor <strong>instale o Google Chrome: pode encontrar o instalador <a href="http://www.google.com/intl/pt-PT/chrome/browser/" target="_blank">aqui</a></strong>.
+                </small>
+	        </div>
+        </div>
+    </div>
+	<!--<div id="info" class="overlay">
+    	<div class="popup" >
+		<br>
+    		<h4>Campanha de Aniversário da S. José</h4>
+			<strong><a class="close" style="color:#e5091c;font-size:2rem;margin-top:2%" href="#info">[X]</a><strong>
+    		<div class="content">
+    			<img style="width:860px" src="https://www.sjosepneus.com/public/imgs/conteudos/final-ACREDITAR-COMUNICACAO.png"></img>
+    		</div>
+			<div style="text-align:center">
+				<strong><a style="font-size:2rem" href="#info">[FECHAR]</a><strong>
+			</div>
+    	</div>
+		
+    </div>-->
+	
+		<script type="text/javascript">
+
+
+
+
+        $('.container').each(function () {
+            var heightImgDiv = $('.login-area').height();
+          
+            $('.login-help').height(heightImgDiv);
+           
+            });
+
+
+  
+             
+          
+            window.onresize = function () {
+                $("#al-page-footer-login").css("position", "fixed");
+
+                if ($(document).height() > $(window).height()) {
+
+                    $("#al-page-footer-login").css("position", "static");
+                } else {
+                    //this part works, so it's hidden
+                    $("#al-page-footer-login").css("position", "fixed");
+                }
+            };
+
+
+      
+            $(document).ready(function () {
+                //debugger;
+                var bohi = $(window).height();
+                var bohwidth = $(window).width();
+                if ($(document).height() > $(window).height()) {
+
+                   
+                        $("#al-page-footer-login").css("position", "static");
+                    } else {
+                        //this part works, so it's hidden
+                        $("#al-page-footer-login").css("position", "fixed");
+                    
+                }
+            });
+
+	</script> 
+	
+ 
+
+
+        <!-- Footer -->
+        <footer id="al-page-footer-login" style="position: fixed;">
+            <div class="wrapper clearfix">
+			    <div class="col-md-12 col-sm-12 col-xs-12">
+                    <div class="catalog col-md-3 col-sm-3 col-xs-12">
+                          <img style="width: 70px;" src="../App_Themes/Default/Images/simbolo_desde.png">
+                          <img style="width: 58px;" src="../App_Themes/Default/Images/pme22.png">
+                    </div>
+                    <div class="catalog col-md-5 col-sm-4 col-xs-12">
+                    
+					    <p class="copyright" style="font-size:1.1rem">
+						    <a href="https://sjosepneus.com/contactos/" target="_blank">
+						        Copyright ©  2024  Jose Aniceto &amp; Irmão Lda<br>Rua José Abrantes Aniceto, nº2 <br> Zona Industrial de Cantanhede <br 3060-197="" cantanhede="">rede fixa nacional: (+351) 231 419 290 /e-mail: </a> <a class="lowercase" href="mailto:encomendas@sjosepneus.com">encomendas@sjosepneus.com</a>
+					    </p>
+                    </div>
+                    <div class="catalog col-md-4 col-sm-4 col-xs-12">
+					    <div>
+					        
+                            <p>
+								<a class="linkfooter copyright privacy-button" target="_blank" href="\Conditions.aspx">Condições Gerais de Venda</a>
+								<a class="linkfooter copyright privacy-button" target="_blank" href="\Privacy.aspx">Política de Privacidade </a>
+								<a class="linkfooter findus-button" href="https://sjosepneus.com/contactos/" target="_blank">Encontre-nos</a>
+								<a class="linkfooter copyright privacy-button" target="_blank" href="\Help.aspx">Ajuda </a>
+                            </p>
+						</div>
+				    </div>
+			    </div>
+            </div>
+             
+        </footer>
+
+        <!-- Footer 
+        <footer id="al-page-footer">
+            <div class="wrapper clearfix">
+                <p class="copyright">
+                    <a href="https://sjosepneus.com/contactos/" target="_blank">
+                    Copyright ©  2024  Jose Aniceto & Irmão Lda<br />Rua José Abrantes Aniceto, nº2 <br /> Zona Industrial de Cantanhede <br 3060-197 Cantanhede />rede fixa nacional: (+351) 231 419 290 /e-mail: </a> <a href="mailto:encomendas@sjosepneus.com">encomendas@sjosepneus.com</a>
+                </p>
+
+                <div class="right">
+                    <nav id="footer-nav">
+                        <p class="copyright">copyright</p>
+                        <p><a href="https://sjosepneus.com/contactos/" target="_blank">Encontre-nos</a></p>  
+                    </nav>
+                    <nav>
+                        <p class="local">
+                        </p>
+                    </nav>
+                </div>
+            </div>
+            <div class="back-to-top"><span>^ Topo</span><i class="fa fa-chevron-up"></i></div>
+        </footer>
+        -->
+    
+<script type="text/javascript">
+//<![CDATA[
+var Page_Validators =  new Array(document.getElementById("ContentPlaceHolder1_ctrlLogin_Login_rvfUsername"), document.getElementById("ContentPlaceHolder1_ctrlLogin_Login_rfvPassword"));
+//]]>
+</script>
+
+<script type="text/javascript">
+//<![CDATA[
+var ContentPlaceHolder1_ctrlLogin_Login_rvfUsername = document.all ? document.all["ContentPlaceHolder1_ctrlLogin_Login_rvfUsername"] : document.getElementById("ContentPlaceHolder1_ctrlLogin_Login_rvfUsername");
+ContentPlaceHolder1_ctrlLogin_Login_rvfUsername.controltovalidate = "ContentPlaceHolder1_ctrlLogin_Login_UserName";
+ContentPlaceHolder1_ctrlLogin_Login_rvfUsername.errormessage = "Por favor introduza o seu Username.";
+ContentPlaceHolder1_ctrlLogin_Login_rvfUsername.display = "Dynamic";
+ContentPlaceHolder1_ctrlLogin_Login_rvfUsername.validationGroup = "vgLogin";
+ContentPlaceHolder1_ctrlLogin_Login_rvfUsername.evaluationfunction = "RequiredFieldValidatorEvaluateIsValid";
+ContentPlaceHolder1_ctrlLogin_Login_rvfUsername.initialvalue = "";
+var ContentPlaceHolder1_ctrlLogin_Login_rfvPassword = document.all ? document.all["ContentPlaceHolder1_ctrlLogin_Login_rfvPassword"] : document.getElementById("ContentPlaceHolder1_ctrlLogin_Login_rfvPassword");
+ContentPlaceHolder1_ctrlLogin_Login_rfvPassword.controltovalidate = "ContentPlaceHolder1_ctrlLogin_Login_Password";
+ContentPlaceHolder1_ctrlLogin_Login_rfvPassword.errormessage = "Por favor introduza a sua Password.";
+ContentPlaceHolder1_ctrlLogin_Login_rfvPassword.display = "Dynamic";
+ContentPlaceHolder1_ctrlLogin_Login_rfvPassword.validationGroup = "vgLogin";
+ContentPlaceHolder1_ctrlLogin_Login_rfvPassword.evaluationfunction = "RequiredFieldValidatorEvaluateIsValid";
+ContentPlaceHolder1_ctrlLogin_Login_rfvPassword.initialvalue = "";
+//]]>
+</script>
+
+
+<script type="text/javascript">
+//<![CDATA[
+
+var Page_ValidationActive = false;
+if (typeof(ValidatorOnLoad) == "function") {
+    ValidatorOnLoad();
+}
+
+function ValidatorOnSubmit() {
+    if (Page_ValidationActive) {
+        return ValidatorCommonOnSubmit();
+    }
+    else {
+        return true;
+    }
+}
+        WebForm_AutoFocus('ContentPlaceHolder1_ctrlLogin_Login_UserName');
+document.getElementById('ContentPlaceHolder1_ctrlLogin_Login_rvfUsername').dispose = function() {
+    Array.remove(Page_Validators, document.getElementById('ContentPlaceHolder1_ctrlLogin_Login_rvfUsername'));
+}
+
+document.getElementById('ContentPlaceHolder1_ctrlLogin_Login_rfvPassword').dispose = function() {
+    Array.remove(Page_Validators, document.getElementById('ContentPlaceHolder1_ctrlLogin_Login_rfvPassword'));
+}
+//]]>
+</script>
+</form>
+
+
+
+
+</body></html>
