@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Setup environment
-os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '/pw-browsers'
+os.environ.setdefault('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
 sys.path.insert(0, '/app/backend')
 
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -26,7 +26,7 @@ import re
 
 # MongoDB connection
 MONGO_URL = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
-DB_NAME = os.environ.get('DB_NAME', 'test_database')
+DB_NAME = os.environ['DB_NAME']
 
 # Results directory
 RESULTS_DIR = Path('/app/tmp/scraper_results')

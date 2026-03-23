@@ -14,7 +14,7 @@ MONGO_URL = os.environ.get(
     'MONGO_URL',
     'mongodb://mongo:xaqYuAhAqswTyVYfYwkDrIlhTHBQVPxh@mongodb.railway.internal:27017'
 )
-DB_NAME = os.environ.get('DB_NAME', 'test_database')
+DB_NAME = os.environ['DB_NAME']
 
 print(f"=== MONGO_URL: {MONGO_URL[:50]}... ===", flush=True)
 print(f"=== DB_NAME: {DB_NAME} ===", flush=True)

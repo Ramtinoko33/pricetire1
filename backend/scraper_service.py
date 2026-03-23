@@ -14,6 +14,18 @@ logger = logging.getLogger(__name__)
 SCREENSHOTS_DIR = Path("/app/backend/screenshots")
 SCREENSHOTS_DIR.mkdir(exist_ok=True)
 
+# Check if Playwright browsers are available
+PLAYWRIGHT_AVAILABLE = True
+try:
+    pw_path = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
+    chromium_path = Path(pw_path) / 'chromium_headless_shell-1208'
+    if not chromium_path.exists():
+        PLAYWRIGHT_AVAILABLE = False
+        logger.warning(f"Playwright browsers not found at {pw_path}. Scraping features will be disabled.")
+except Exception as e:
+    PLAYWRIGHT_AVAILABLE = False
+    logger.warning(f"Error checking Playwright availability: {e}. Scraping features will be disabled.")
+
 class ScraperBase(ABC):
     """Base class for supplier-specific scrapers"""
     
@@ -32,6 +44,9 @@ class ScraperBase(ABC):
         
     async def init_browser(self):
         """Initialize browser and page with anti-detection"""
+        if not PLAYWRIGHT_AVAILABLE:
+            raise RuntimeError("Playwright browsers are not installed. Scraping is disabled in this environment.")
+        
         self.playwright = await async_playwright().start()
         # Launch with anti-detection args
         self.browser = await self.playwright.chromium.launch(
@@ -973,7 +988,7 @@ class ScraperService:
             
             # Run scraper as completely independent background process
             env = os.environ.copy()
-            env['PLAYWRIGHT_BROWSERS_PATH'] = '/pw-browsers'
+            env['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
             
             process = subprocess.Popen(
                 ['python3', '/app/backend/background_scraper.py', config_file, result_file],

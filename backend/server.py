@@ -241,8 +241,8 @@ async def run_scraping_job(job_id: str):
         logger.info(f"Starting scraping job {job_id}")
         
         job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
-        items = await db.job_items.find({"job_id": job_id}, {"_id": 0}).to_list(None)
-        suppliers = await db.suppliers.find({"is_active": True}, {"_id": 0}).to_list(None)
+        items = await db.job_items.find({"job_id": job_id}, {"_id": 0}).to_list(10000)
+        suppliers = await db.suppliers.find({"is_active": True}, {"_id": 0}).to_list(10000)
         
         if not suppliers:
             await db.jobs.update_one(
@@ -424,7 +424,7 @@ async def get_job_progress(job_id: str):
 
 @api_router.get("/jobs/{job_id}/results")
 async def get_job_results(job_id: str):
-    items = await db.job_items.find({"job_id": job_id}, {"_id": 0}).to_list(None)
+    items = await db.job_items.find({"job_id": job_id}, {"_id": 0}).to_list(10000)
     return items
 
 @api_router.post("/jobs/{job_id}/compare")
@@ -440,7 +440,7 @@ async def compare_job_with_scraped_prices(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     
-    items = await db.job_items.find({"job_id": job_id}, {"_id": 0}).to_list(None)
+    items = await db.job_items.find({"job_id": job_id}, {"_id": 0}).to_list(10000)
     
     if not items:
         raise HTTPException(status_code=400, detail="No items found in job")
@@ -623,8 +623,8 @@ async def export_job_results(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     
-    items = await db.job_items.find({"job_id": job_id}, {"_id": 0}).to_list(None)
-    suppliers = await db.suppliers.find({"is_active": True}, {"_id": 0}).to_list(None)
+    items = await db.job_items.find({"job_id": job_id}, {"_id": 0}).to_list(10000)
+    suppliers = await db.suppliers.find({"is_active": True}, {"_id": 0}).to_list(10000)
     supplier_names = [s['name'] for s in suppliers]
     
     try:
@@ -658,7 +658,7 @@ async def get_stats():
         {"$match": {"status": JobStatus.COMPLETED.value}},
         {"$group": {"_id": None, "total": {"$sum": "$total_savings"}}}
     ]
-    savings_result = await db.jobs.aggregate(pipeline).to_list(None)
+    savings_result = await db.jobs.aggregate(pipeline).to_list(10000)
     total_savings = savings_result[0]['total'] if savings_result else 0.0
     
     recent_jobs = await db.jobs.find({}, {"_id": 0}).sort("created_at", -1).limit(5).to_list(5)
@@ -694,7 +694,7 @@ async def run_manual_scraper(medidas: list):
         medidas_str = ','.join(medidas)
         
         env = os.environ.copy()
-        env['PLAYWRIGHT_BROWSERS_PATH'] = '/pw-browsers'
+        env['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
         
         process = subprocess.Popen(
             ['python3', '/app/backend/run_scraper.py', '--medidas', medidas_str],
@@ -753,6 +753,20 @@ async def start_manual_scraper(background_tasks: BackgroundTasks, medidas: list 
 async def get_scraper_status():
     """Get current scraper status"""
     return scraper_status
+
+@api_router.get("/scraper/availability")
+async def check_scraper_availability():
+    """Check if Playwright scraper is available in this environment"""
+    pw_path = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
+    from pathlib import Path
+    chromium_path = Path(pw_path) / 'chromium_headless_shell-1208'
+    available = chromium_path.exists()
+    
+    return {
+        "available": available,
+        "playwright_path": pw_path,
+        "message": "Scraping is available" if available else "Playwright browsers not installed. Scraping features are disabled."
+    }
 
 @api_router.get("/scraped-prices")
 async def get_scraped_prices(medida: str = None, marca: str = None, modelo: str = None, load_index: str = None):
