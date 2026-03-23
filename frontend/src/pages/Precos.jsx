@@ -262,16 +262,6 @@ const [loadIndex, setLoadIndex] = useState('');
                 data-testid="medida-input"
               />
             </div>
-            <div className="flex-1">
-              <Input
-                placeholder="Medidas separadas por vírgula (ex: 205/55R16, 195/65R15)"
-                value={medida}
-                onChange={(e) => setMedida(e.target.value)}
-                onKeyPress={handleKeyPress}
-                className="text-lg"
-                data-testid="medida-input"
-              />
-            </div>
             <div className="w-36">
               <Input
                 placeholder="Marca (ex: Michelin)"
