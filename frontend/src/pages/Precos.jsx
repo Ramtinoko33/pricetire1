@@ -100,24 +100,37 @@ const [loadIndex, setLoadIndex] = useState('');
   };
 
   const searchPrices = async () => {
-    if (!medida.trim()) {
+    // Check if at least one field has a value
+    const hasMedida = medida.trim();
+    const hasMarca = marca.trim();
+    const hasModelo = modelo.trim();
+    const hasLoadIndex = loadIndex.trim();
+    
+    if (!hasMedida && !hasMarca && !hasModelo && !hasLoadIndex) {
       loadAllPrices();
       return;
     }
 
     setLoading(true);
     try {
-      // Support multiple sizes separated by comma
-      const sizes = medida.split(',').map(s => s.trim().replace(/\//g, '').replace(/R/gi, '')).filter(s => s);
+      // Normalize medida if provided
+      const medidaNorm = hasMedida ? medida.split(',').map(s => s.trim().replace(/\//g, '').replace(/R/gi, '')).filter(s => s)[0] : null;
       
-      if (sizes.length === 1) {
-        const { data } = await scrapedPricesAPI.getAll(sizes[0]);
-        processPrices(data);
-      } else {
-        // Multiple sizes - fetch all and filter
-        const { data } = await scrapedPricesAPI.getAll();
+      // Call API with all filters
+      const { data } = await scrapedPricesAPI.getAll(
+        medidaNorm || null,
+        hasMarca ? marca.trim() : null,
+        hasModelo ? modelo.trim() : null,
+        hasLoadIndex ? loadIndex.trim() : null
+      );
+      
+      // If multiple medidas, filter client-side
+      if (hasMedida && medida.includes(',')) {
+        const sizes = medida.split(',').map(s => s.trim().replace(/\//g, '').replace(/R/gi, '')).filter(s => s);
         const filtered = data.filter(p => sizes.includes(p.medida));
         processPrices(filtered);
+      } else {
+        processPrices(data);
       }
       
       if (prices.length === 0) {
