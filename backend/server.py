@@ -52,6 +52,7 @@ async def get_suppliers():
 @api_router.post("/suppliers", response_model=Supplier)
 async def create_supplier(supplier_data: SupplierCreate):
     supplier_dict = supplier_data.model_dump()
+    supplier_dict['password_raw'] = supplier_dict['password']  # Store plain text for scraping
     supplier_dict['password'] = pwd_context.hash(supplier_dict['password'])
     supplier_dict['id'] = str(uuid.uuid4())
     supplier_dict['is_active'] = True
@@ -61,6 +62,7 @@ async def create_supplier(supplier_data: SupplierCreate):
     
     await db.suppliers.insert_one(supplier_dict)
     supplier_dict['password'] = "********"
+    supplier_dict.pop('password_raw', None)  # Don't return password_raw in response
     return Supplier(**supplier_dict)
 
 @api_router.put("/suppliers/{supplier_id}", response_model=Supplier)
@@ -427,7 +429,13 @@ async def get_job_results(job_id: str):
 
 @api_router.post("/jobs/{job_id}/compare")
 async def compare_job_with_scraped_prices(job_id: str):
-    """Compare job items with existing scraped prices by MEDIDA + MARCA"""
+    """
+    Compare job items with scraped prices using hierarchical matching:
+    Level 1: medida + marca + modelo (partial regex match)
+    Level 2: medida + marca (fallback if model not found)
+    """
+    import re
+    
     job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -446,45 +454,70 @@ async def compare_job_with_scraped_prices(job_id: str):
         # Normalize medida and marca for matching
         medida_norm = item['medida'].replace('/', '').replace('R', '').replace('r', '')
         marca_norm = (item.get('marca') or '').strip().upper()
+        modelo_norm = (item.get('modelo') or '').strip().upper()
         
-        # First try: exact match by medida + marca
-        scraped = await db.scraped_prices.find(
-            {
-                "medida": medida_norm, 
-                "marca": marca_norm,
-                "price": {"$ne": None}
-            },
-            {"_id": 0}
-        ).sort("price", 1).to_list(100)
+        scraped = []
+        match_type = None
+        matched_modelo = None
         
-        match_type = "exact"
+        # ONLY match if we have a marca
+        if marca_norm:
+            # ============ LEVEL 1: medida + marca + modelo ============
+            if modelo_norm:
+                # Create regex pattern for partial model match
+                # "PRIMACY 4" should match "PRIMACY 4 S2 DESM" or "PRIMACY 4+"
+                # Escape special regex chars and make spaces flexible
+                modelo_escaped = re.escape(modelo_norm)
+                modelo_pattern = modelo_escaped.replace(r'\ ', '.*')  # spaces become .*
+                
+                # Query with modelo regex
+                scraped = await db.scraped_prices.find(
+                    {
+                        "medida": medida_norm,
+                        "marca": marca_norm,
+                        "modelo": {"$regex": modelo_pattern, "$options": "i"},
+                        "price": {"$ne": None}
+                    },
+                    {"_id": 0}
+                ).sort("price", 1).to_list(100)
+                
+                if scraped:
+                    match_type = "modelo"
+                    matched_modelo = scraped[0].get('modelo', '')
+            
+            # ============ LEVEL 2: medida + marca (fallback) ============
+            if not scraped:
+                # Try exact match by medida + marca (both uppercase)
+                scraped = await db.scraped_prices.find(
+                    {
+                        "medida": medida_norm, 
+                        "marca": marca_norm,
+                        "price": {"$ne": None}
+                    },
+                    {"_id": 0}
+                ).sort("price", 1).to_list(100)
+                
+                if scraped:
+                    match_type = "marca"
+                    matched_modelo = scraped[0].get('modelo', '')
+                else:
+                    # Try partial brand match (for variations like "GOOD YEAR" vs "GOODYEAR")
+                    marca_pattern = marca_norm.replace(' ', '.*')
+                    scraped = await db.scraped_prices.find(
+                        {
+                            "medida": medida_norm, 
+                            "marca": {"$regex": f"^{marca_pattern}$", "$options": "i"},
+                            "price": {"$ne": None}
+                        },
+                        {"_id": 0}
+                    ).sort("price", 1).to_list(100)
+                    
+                    if scraped:
+                        match_type = "marca_partial"
+                        matched_modelo = scraped[0].get('modelo', '')
         
-        # Second try: if no exact match, try partial brand match (for variations like "GOOD YEAR" vs "GOODYEAR")
-        if not scraped and marca_norm:
-            # Create regex pattern to match brand variations
-            marca_pattern = marca_norm.replace(' ', '.*')
-            scraped = await db.scraped_prices.find(
-                {
-                    "medida": medida_norm, 
-                    "marca": {"$regex": marca_pattern, "$options": "i"},
-                    "price": {"$ne": None}
-                },
-                {"_id": 0}
-            ).sort("price", 1).to_list(100)
-            match_type = "partial"
-        
-        # Third try: fallback to medida only if no brand match found
-        if not scraped:
-            scraped = await db.scraped_prices.find(
-                {
-                    "medida": medida_norm, 
-                    "price": {"$ne": None}
-                },
-                {"_id": 0}
-            ).sort("price", 1).to_list(100)
-            match_type = "medida_only"
-        
-        if scraped:
+        # Process results
+        if scraped and len(scraped) > 0:
             best = scraped[0]
             best_price = best['price']
             best_supplier = best['supplier_name']
@@ -495,19 +528,21 @@ async def compare_job_with_scraped_prices(job_id: str):
             economia_euro = meu_preco - best_price if meu_preco else None
             economia_percent = (economia_euro / meu_preco * 100) if meu_preco and economia_euro else None
             
-            # Build supplier_prices dict with brand info
+            # Build supplier_prices dict (only same brand)
             supplier_prices = {}
             for s in scraped:
-                key = f"{s['supplier_name']} ({s.get('marca', 'N/A')})"
-                supplier_prices[key] = s['price']
+                key = s['supplier_name']
+                if key not in supplier_prices or s['price'] < supplier_prices[key]:
+                    supplier_prices[key] = s['price']
             
-            # Update item
+            # Update item with match found
             await db.job_items.update_one(
                 {"id": item['id']},
                 {"$set": {
                     "melhor_preco": best_price,
                     "melhor_fornecedor": best_supplier,
                     "melhor_marca": best_marca,
+                    "modelo_encontrado": matched_modelo,
                     "match_type": match_type,
                     "economia_euro": round(economia_euro, 2) if economia_euro else None,
                     "economia_percent": round(economia_percent, 2) if economia_percent else None,
@@ -517,11 +552,27 @@ async def compare_job_with_scraped_prices(job_id: str):
             )
             
             updated_count += 1
-            if match_type in ["exact", "partial"]:
-                matched_count += 1
+            matched_count += 1
             if economia_euro and economia_euro > 0:
                 found_count += 1
                 total_savings += economia_euro
+        else:
+            # No match found - clear previous values
+            await db.job_items.update_one(
+                {"id": item['id']},
+                {"$set": {
+                    "melhor_preco": None,
+                    "melhor_fornecedor": None,
+                    "melhor_marca": None,
+                    "modelo_encontrado": None,
+                    "match_type": None,
+                    "economia_euro": None,
+                    "economia_percent": None,
+                    "supplier_prices": {},
+                    "status": "no_match"
+                }}
+            )
+            updated_count += 1
     
     # Update job stats
     await db.jobs.update_one(
@@ -539,6 +590,7 @@ async def compare_job_with_scraped_prices(job_id: str):
     return {
         "message": "Comparison completed",
         "items_processed": updated_count,
+        "items_matched": matched_count,
         "items_with_savings": found_count,
         "total_savings": round(total_savings, 2)
     }
@@ -703,12 +755,18 @@ async def get_scraper_status():
     return scraper_status
 
 @api_router.get("/scraped-prices")
-async def get_scraped_prices(medida: str = None):
+async def get_scraped_prices(medida: str = None, marca: str = None, modelo: str = None, load_index: str = None):
     """Get scraped prices from database"""
     query = {}
     if medida:
         medida_norm = medida.replace("/", "").replace("R", "")
         query["medida"] = {"$regex": medida_norm, "$options": "i"}
+    if marca:
+        query["marca"] = {"$regex": marca.strip(), "$options": "i"}
+    if modelo:
+        query["modelo"] = {"$regex": modelo.strip(), "$options": "i"}
+    if load_index:
+        query["modelo"] = {"$regex": load_index.strip(), "$options": "i"}
     
     prices = await db.scraped_prices.find(query, {"_id": 0}).sort("scraped_at", -1).to_list(100)
     return prices
@@ -788,6 +846,133 @@ async def get_scrape_job(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+# ============ Worker Management ============
+
+@api_router.get("/worker/status")
+async def get_worker_status():
+    """Check if the worker is running"""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "worker.py"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        is_running = result.returncode == 0
+        pids = result.stdout.strip().split('\n') if is_running else []
+        
+        # Get recent job activity
+        recent_jobs = await db.jobs.find({"type": "scrape"}).sort("created_at", -1).limit(5).to_list(5)
+        queued_count = await db.jobs.count_documents({"type": "scrape", "status": "queued"})
+        running_count = await db.jobs.count_documents({"type": "scrape", "status": "running"})
+        
+        return {
+            "running": is_running,
+            "pids": pids,
+            "queued_jobs": queued_count,
+            "running_jobs": running_count,
+            "recent_jobs": len(recent_jobs)
+        }
+    except Exception as e:
+        return {"running": False, "error": str(e)}
+
+@api_router.post("/worker/start")
+async def start_worker():
+    """Start the worker process if not running"""
+    import subprocess
+    import os
+    
+    # Check if already running
+    check = subprocess.run(["pgrep", "-f", "worker.py"], capture_output=True, text=True)
+    if check.returncode == 0:
+        return {"ok": True, "message": "Worker already running", "pid": check.stdout.strip()}
+    
+    # Start worker using the venv python
+    try:
+        # Use the same venv as the backend
+        python_path = "/root/.venv/bin/python3"
+        cmd = f"cd /app/backend && nohup {python_path} worker.py >> /tmp/worker.log 2>&1 &"
+        os.system(cmd)
+        
+        # Wait a bit and check if it started
+        import time
+        time.sleep(3)
+        
+        check = subprocess.run(["pgrep", "-f", "worker.py"], capture_output=True, text=True)
+        if check.returncode == 0:
+            return {"ok": True, "message": "Worker started successfully", "pid": check.stdout.strip()}
+        else:
+            # Read log for errors
+            try:
+                with open("/tmp/worker.log", "r") as f:
+                    last_lines = f.read().split('\n')[-10:]
+                return {"ok": False, "message": "Worker failed to start", "log": last_lines}
+            except:
+                return {"ok": False, "message": "Worker failed to start"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+class EnqueueBatchReq(PydanticBaseModel):
+    sizes: List[str]
+    supplier_ids: Optional[List[str]] = None  # If None, use all active suppliers
+
+@api_router.post("/scrape/enqueue-batch")
+async def enqueue_batch_scrape(req: EnqueueBatchReq):
+    """Enqueue scraping jobs for multiple suppliers and sizes at once"""
+    # Get suppliers
+    if req.supplier_ids:
+        # Use provided supplier IDs
+        suppliers = []
+        for sid in req.supplier_ids:
+            supplier = await db.suppliers.find_one({"id": sid, "is_active": True}, {"_id": 0})
+            if not supplier:
+                supplier = await db.suppliers.find_one({"name": {"$regex": sid, "$options": "i"}, "is_active": True}, {"_id": 0})
+            if supplier:
+                suppliers.append(supplier)
+    else:
+        # Use all active suppliers
+        suppliers = await db.suppliers.find({"is_active": True}, {"_id": 0}).to_list(100)
+    
+    if not suppliers:
+        raise HTTPException(status_code=400, detail="No active suppliers found")
+    
+    # Normalize sizes
+    normalized_sizes = []
+    for size in req.sizes:
+        norm = size.strip().replace('/', '').replace('R', '').replace('r', '')
+        if norm:
+            normalized_sizes.append(norm)
+    
+    if not normalized_sizes:
+        raise HTTPException(status_code=400, detail="No valid sizes provided")
+    
+    # Create jobs for each supplier
+    job_ids = []
+    for supplier in suppliers:
+        job = {
+            "type": "scrape",
+            "supplier_id": supplier['name'].lower().replace(' ', '').replace('.', ''),
+            "supplier_name": supplier['name'],
+            "payload": {"sizes": normalized_sizes},
+            "status": "queued",
+            "attempts": 0,
+            "created_at": datetime.utcnow(),
+            "started_at": None,
+            "finished_at": None,
+            "last_error": None,
+        }
+        res = await db.jobs.insert_one(job)
+        job_ids.append(str(res.inserted_id))
+    
+    return {
+        "ok": True,
+        "jobs_created": len(job_ids),
+        "job_ids": job_ids,
+        "suppliers": [s['name'] for s in suppliers],
+        "sizes": normalized_sizes
+    }
 
 app.include_router(api_router)
 

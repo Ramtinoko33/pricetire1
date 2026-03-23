@@ -8,6 +8,7 @@ import Suppliers from './pages/Suppliers';
 import Results from './pages/Results';
 import Logs from './pages/Logs';
 import Scraper from './pages/Scraper';
+import Precos from './pages/Precos';
 import '@/App.css';
 
 function App() {
@@ -20,6 +21,7 @@ function App() {
           <Route path="/suppliers" element={<Suppliers />} />
           <Route path="/results" element={<Results />} />
           <Route path="/scraper" element={<Scraper />} />
+          <Route path="/precos" element={<Precos />} />
           <Route path="/logs" element={<Logs />} />
         </Routes>
       </Layout>

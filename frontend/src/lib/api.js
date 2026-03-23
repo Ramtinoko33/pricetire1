@@ -42,4 +42,28 @@ export const logsAPI = {
   getAll: (jobId = null, limit = 100) => api.get('/logs', { params: { job_id: jobId, limit } }),
 };
 
+export const scrapedPricesAPI = {
+  getAll: (medida = null, marca = null, modelo = null, load_index = null) => {
+    const params = {};
+    if (medida) params.medida = medida;
+    if (marca) params.marca = marca;
+    if (modelo) params.modelo = modelo;
+    if (load_index) params.load_index = load_index;
+    return api.get('/scraped-prices', { params });
+  },
+  getBest: (medida) => api.get(`/scraped-prices/best/${medida}`),
+};
+
+export const scrapeAPI = {
+  enqueue: (supplier_id, sizes) => api.post('/scrape/enqueue', { supplier_id, sizes }),
+  enqueueBatch: (sizes, supplier_ids = null) => api.post('/scrape/enqueue-batch', { sizes, supplier_ids }),
+  getJobs: (status = null, limit = 20) => api.get('/scrape/jobs', { params: { status, limit } }),
+  getJob: (jobId) => api.get(`/scrape/jobs/${jobId}`),
+};
+
+export const workerAPI = {
+  getStatus: () => api.get('/worker/status'),
+  start: () => api.post('/worker/start'),
+};
+
 export default api;
