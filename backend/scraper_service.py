@@ -885,6 +885,9 @@ class ScraperService:
         supplier_name_lower = supplier['name'].lower()
         supplier_url_lower = supplier.get('url_login', '').lower()
         
+        # Use password_raw if available, otherwise fall back to password
+        password = supplier.get('password_raw') or supplier.get('password', '')
+        
         # Select appropriate adapter based on supplier
         if 'mp24' in supplier_name_lower or 'mp24' in supplier_url_lower:
             logger.info(f"Creating MP24Adapter for {supplier['name']}")
@@ -894,7 +897,7 @@ class ScraperService:
                 url_login=supplier['url_login'],
                 url_search=supplier['url_search'],
                 username=supplier['username'],
-                password=supplier['password'],
+                password=password,
                 selectors=supplier.get('selectors')
             )
         elif 'prismanil' in supplier_name_lower or 'prismanil' in supplier_url_lower:
@@ -905,7 +908,7 @@ class ScraperService:
                 url_login=supplier['url_login'],
                 url_search=supplier['url_search'],
                 username=supplier['username'],
-                password=supplier['password'],
+                password=password,
                 selectors=supplier.get('selectors')
             )
         elif 'sjose' in supplier_name_lower or 'sjose' in supplier_url_lower:
@@ -916,7 +919,7 @@ class ScraperService:
                 url_login=supplier['url_login'],
                 url_search=supplier['url_search'],
                 username=supplier['username'],
-                password=supplier['password'],
+                password=password,
                 selectors=supplier.get('selectors')
             )
         elif 'euromais' in supplier_name_lower or 'eurotyre' in supplier_url_lower:
@@ -927,7 +930,7 @@ class ScraperService:
                 url_login=supplier['url_login'],
                 url_search=supplier['url_search'],
                 username=supplier['username'],
-                password=supplier['password'],
+                password=password,
                 selectors=supplier.get('selectors')
             )
         else:
@@ -939,7 +942,7 @@ class ScraperService:
                 url_login=supplier['url_login'],
                 url_search=supplier['url_search'],
                 username=supplier['username'],
-                password=supplier['password'],
+                password=password,
                 selectors=supplier.get('selectors')
             )
     
@@ -975,7 +978,7 @@ class ScraperService:
         config = {
             "supplier": supplier['name'],
             "username": supplier['username'],
-            "password": supplier['password'],
+            "password": supplier.get('password_raw') or supplier.get('password', ''),
             "medida": medida
         }
         

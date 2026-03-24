@@ -609,6 +609,548 @@ async def scrape_euromais(page, username: str, password: str, medida: str) -> di
     
     return result
 
+# ============================================================
+# NEW SCRAPERS - 6 Fornecedores Adicionais
+# ============================================================
+
+async def scrape_grupo_soledad(page, username: str, password: str, medida: str) -> dict:
+    """Scrape Grupo Soledad B2B"""
+    result = {
+        "supplier": "Grupo Soledad",
+        "price": None,
+        "error": None,
+        "products": [],
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    
+    try:
+        print("  [Grupo Soledad] Logging in...")
+        await page.goto("https://www.gruposoledad.com/b2b/current/login", wait_until="networkidle", timeout=60000)
+        await asyncio.sleep(2)
+        
+        # Fill login form
+        username_input = page.locator('input[name="username"], input[name="email"], input[type="text"]').first
+        if await username_input.count() > 0:
+            await username_input.fill(username)
+        
+        password_input = page.locator('input[type="password"]').first
+        if await password_input.count() > 0:
+            await password_input.fill(password)
+        
+        # Submit login
+        submit_btn = page.locator('button[type="submit"], input[type="submit"], button:has-text("Login"), button:has-text("Entrar")').first
+        if await submit_btn.count() > 0:
+            await submit_btn.click()
+        await asyncio.sleep(5)
+        
+        # Search for tires
+        medida_norm = normalize_medida(medida)
+        print(f"  [Grupo Soledad] Searching for: {medida_norm}")
+        
+        # Try common search patterns
+        search_input = page.locator('input[type="search"], input[placeholder*="buscar"], input[placeholder*="pesq"], input[name*="search"], #search, .search-input').first
+        if await search_input.count() > 0:
+            await search_input.fill(medida_norm)
+            await search_input.press('Enter')
+            await asyncio.sleep(5)
+        else:
+            # Navigate to catalog/products page
+            catalog_link = page.locator('a:has-text("Catálogo"), a:has-text("Productos"), a:has-text("Pneus"), a:has-text("Neumáticos")').first
+            if await catalog_link.count() > 0:
+                await catalog_link.click()
+                await asyncio.sleep(3)
+        
+        # Extract products
+        products = await page.evaluate('''() => {
+            const products = [];
+            // Try common product container selectors
+            const items = document.querySelectorAll('.product, .item, .producto, [class*="product"], [class*="item"], tr[data-id]');
+            
+            items.forEach(item => {
+                const brandEl = item.querySelector('.brand, .marca, [class*="brand"], [class*="marca"]');
+                const modelEl = item.querySelector('.model, .modelo, .name, .nombre, [class*="model"], [class*="name"]');
+                const priceEl = item.querySelector('.price, .precio, .preco, [class*="price"], [class*="precio"]');
+                
+                let brand = brandEl ? brandEl.textContent.trim() : '';
+                let model = modelEl ? modelEl.textContent.trim() : '';
+                let priceText = priceEl ? priceEl.textContent.trim() : '';
+                
+                // Extract price
+                const priceMatch = priceText.match(/(\d+[,\.]\d{2})/);
+                if (priceMatch) {
+                    const price = parseFloat(priceMatch[1].replace(',', '.'));
+                    if (price > 15 && price < 500) {
+                        products.push({
+                            brand: brand.toUpperCase(),
+                            model: model,
+                            price: price
+                        });
+                    }
+                }
+            });
+            
+            return products;
+        }''')
+        
+        if products and len(products) > 0:
+            result["products"] = products
+            prices = [p['price'] for p in products]
+            result["price"] = min(prices)
+            result["all_prices"] = sorted(prices)[:10]
+            print(f"  [Grupo Soledad] Found {len(products)} products")
+        else:
+            content = await page.content()
+            prices = extract_prices(content)
+            if prices:
+                result["price"] = min(prices)
+                result["all_prices"] = sorted(prices)[:10]
+                print(f"  [Grupo Soledad] Fallback: Found {len(prices)} prices")
+            else:
+                result["error"] = "No products found"
+                
+    except Exception as e:
+        result["error"] = str(e)
+        print(f"  [Grupo Soledad] Error: {e}")
+    
+    return result
+
+async def scrape_aguesport(page, username: str, password: str, medida: str) -> dict:
+    """Scrape Aguesport"""
+    result = {
+        "supplier": "Aguesport",
+        "price": None,
+        "error": None,
+        "products": [],
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    
+    try:
+        print("  [Aguesport] Logging in...")
+        await page.goto("https://encomendas.aguesport.com/login", wait_until="networkidle", timeout=60000)
+        await asyncio.sleep(2)
+        
+        # Fill login form
+        email_input = page.locator('input[type="email"], input[name="email"], input[name="username"]').first
+        if await email_input.count() > 0:
+            await email_input.fill(username)
+        
+        password_input = page.locator('input[type="password"]').first
+        if await password_input.count() > 0:
+            await password_input.fill(password)
+        
+        # Submit login
+        submit_btn = page.locator('button[type="submit"], input[type="submit"]').first
+        if await submit_btn.count() > 0:
+            await submit_btn.click()
+        await asyncio.sleep(5)
+        
+        # Search for tires
+        medida_norm = normalize_medida(medida)
+        print(f"  [Aguesport] Searching for: {medida_norm}")
+        
+        search_input = page.locator('input[type="search"], input[placeholder*="pesq"], input[name*="search"], #search').first
+        if await search_input.count() > 0:
+            await search_input.fill(medida_norm)
+            await search_input.press('Enter')
+            await asyncio.sleep(5)
+        
+        # Extract products
+        products = await page.evaluate('''() => {
+            const products = [];
+            const items = document.querySelectorAll('.product, .item, [class*="product"], [class*="item"], table tr');
+            
+            items.forEach(item => {
+                const text = item.textContent || '';
+                const priceMatch = text.match(/(\d+[,\.]\d{2})\s*€|€\s*(\d+[,\.]\d{2})/);
+                
+                if (priceMatch) {
+                    const priceStr = priceMatch[1] || priceMatch[2];
+                    const price = parseFloat(priceStr.replace(',', '.'));
+                    
+                    // Try to extract brand and model
+                    const brandMatch = text.match(/(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|BF GOODRICH|KUMHO|TOYO|NEXEN|FALKEN|COOPER|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL|SEMPERIT|BARUM|LASSA|SAVA|KLEBER|FULDA|GISLAVED|MATADOR|DEBICA|KELLY|DAYTON|ROADSTONE|NANKANG|FEDERAL|ACHILLES|LINGLONG|TRIANGLE|WESTLAKE|GOODRIDE|SAILUN|LANDSAIL|RADAR|ZEETEX|APLUS|COMPASAL|WINDFORCE|SUNFULL|ROADCLAW|HIFLY|SUNWIDE|POWERTRAC|THREE-A|GREMAX|ANTARES|BOTO|JINYU|DELINTE|MASSIMO|INSA TURBO)/i);
+                    
+                    if (price > 15 && price < 500) {
+                        products.push({
+                            brand: brandMatch ? brandMatch[1].toUpperCase() : 'UNKNOWN',
+                            model: '',
+                            price: price
+                        });
+                    }
+                }
+            });
+            
+            return products;
+        }''')
+        
+        if products and len(products) > 0:
+            result["products"] = products
+            prices = [p['price'] for p in products]
+            result["price"] = min(prices)
+            result["all_prices"] = sorted(prices)[:10]
+            print(f"  [Aguesport] Found {len(products)} products")
+        else:
+            content = await page.content()
+            prices = extract_prices(content)
+            if prices:
+                result["price"] = min(prices)
+                result["all_prices"] = sorted(prices)[:10]
+            else:
+                result["error"] = "No products found"
+                
+    except Exception as e:
+        result["error"] = str(e)
+        print(f"  [Aguesport] Error: {e}")
+    
+    return result
+
+async def scrape_abt_tyres(page, username: str, password: str, medida: str) -> dict:
+    """Scrape ABT Tyres B2B"""
+    result = {
+        "supplier": "ABT Tyres",
+        "price": None,
+        "error": None,
+        "products": [],
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    
+    try:
+        print("  [ABT Tyres] Logging in...")
+        await page.goto("https://b2b.abtyres.pt/", wait_until="networkidle", timeout=60000)
+        await asyncio.sleep(2)
+        
+        # Fill login form
+        username_input = page.locator('input[name="username"], input[name="user"], input[type="text"]').first
+        if await username_input.count() > 0:
+            await username_input.fill(username)
+        
+        password_input = page.locator('input[type="password"]').first
+        if await password_input.count() > 0:
+            await password_input.fill(password)
+        
+        # Submit login
+        submit_btn = page.locator('button[type="submit"], input[type="submit"], button:has-text("Login"), button:has-text("Entrar")').first
+        if await submit_btn.count() > 0:
+            await submit_btn.click()
+        await asyncio.sleep(5)
+        
+        # Search for tires
+        medida_norm = normalize_medida(medida)
+        print(f"  [ABT Tyres] Searching for: {medida_norm}")
+        
+        # Try search box
+        search_input = page.locator('input[type="search"], input[placeholder*="pesq"], input[name*="search"], #searchInput, .search-box input').first
+        if await search_input.count() > 0:
+            await search_input.fill(medida_norm)
+            await search_input.press('Enter')
+            await asyncio.sleep(5)
+        
+        # Extract products
+        products = await page.evaluate('''() => {
+            const products = [];
+            const items = document.querySelectorAll('.product, .item, .tire, [class*="product"], [class*="tire"], table tbody tr');
+            
+            items.forEach(item => {
+                const text = item.textContent || '';
+                const priceMatch = text.match(/(\d+[,\.]\d{2})\s*€|€\s*(\d+[,\.]\d{2})/);
+                
+                if (priceMatch) {
+                    const priceStr = priceMatch[1] || priceMatch[2];
+                    const price = parseFloat(priceStr.replace(',', '.'));
+                    
+                    const brandMatch = text.match(/(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|BF GOODRICH|KUMHO|TOYO|NEXEN|FALKEN|COOPER|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL|SEMPERIT|BARUM|LASSA|SAVA|KLEBER|FULDA|GISLAVED|MATADOR)/i);
+                    
+                    if (price > 15 && price < 500) {
+                        products.push({
+                            brand: brandMatch ? brandMatch[1].toUpperCase() : 'UNKNOWN',
+                            model: '',
+                            price: price
+                        });
+                    }
+                }
+            });
+            
+            return products;
+        }''')
+        
+        if products and len(products) > 0:
+            result["products"] = products
+            prices = [p['price'] for p in products]
+            result["price"] = min(prices)
+            result["all_prices"] = sorted(prices)[:10]
+            print(f"  [ABT Tyres] Found {len(products)} products")
+        else:
+            content = await page.content()
+            prices = extract_prices(content)
+            if prices:
+                result["price"] = min(prices)
+                result["all_prices"] = sorted(prices)[:10]
+            else:
+                result["error"] = "No products found"
+                
+    except Exception as e:
+        result["error"] = str(e)
+        print(f"  [ABT Tyres] Error: {e}")
+    
+    return result
+
+async def scrape_tugapneus(page, username: str, password: str, medida: str) -> dict:
+    """Scrape TugaPneus"""
+    result = {
+        "supplier": "TugaPneus",
+        "price": None,
+        "error": None,
+        "products": [],
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    
+    try:
+        print("  [TugaPneus] Logging in...")
+        await page.goto("http://tugapneus.pt/login", wait_until="networkidle", timeout=60000)
+        await asyncio.sleep(2)
+        
+        # Fill login form
+        email_input = page.locator('input[type="email"], input[name="email"], input[name="username"]').first
+        if await email_input.count() > 0:
+            await email_input.fill(username)
+        
+        password_input = page.locator('input[type="password"]').first
+        if await password_input.count() > 0:
+            await password_input.fill(password)
+        
+        # Submit login
+        submit_btn = page.locator('button[type="submit"], input[type="submit"]').first
+        if await submit_btn.count() > 0:
+            await submit_btn.click()
+        await asyncio.sleep(5)
+        
+        # Search for tires
+        medida_norm = normalize_medida(medida)
+        print(f"  [TugaPneus] Searching for: {medida_norm}")
+        
+        search_input = page.locator('input[type="search"], input[placeholder*="pesq"], input[name*="search"], #search').first
+        if await search_input.count() > 0:
+            await search_input.fill(medida_norm)
+            await search_input.press('Enter')
+            await asyncio.sleep(5)
+        
+        # Extract products
+        content = await page.content()
+        prices = extract_prices(content)
+        
+        if prices:
+            result["price"] = min(prices)
+            result["all_prices"] = sorted(prices)[:10]
+            print(f"  [TugaPneus] Found {len(prices)} prices, best: €{result['price']}")
+        else:
+            result["error"] = "No products found"
+                
+    except Exception as e:
+        result["error"] = str(e)
+        print(f"  [TugaPneus] Error: {e}")
+    
+    return result
+
+async def scrape_inter_sprint(page, username: str, password: str, medida: str) -> dict:
+    """Scrape Inter-Sprint (Netherlands)"""
+    result = {
+        "supplier": "Inter-Sprint",
+        "price": None,
+        "error": None,
+        "products": [],
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    
+    try:
+        print("  [Inter-Sprint] Logging in...")
+        await page.goto("https://customers.inter-sprint.nl/", wait_until="networkidle", timeout=60000)
+        await asyncio.sleep(2)
+        
+        # Fill login form
+        username_input = page.locator('input[name="username"], input[name="user"], input[type="text"]').first
+        if await username_input.count() > 0:
+            await username_input.fill(username)
+        
+        password_input = page.locator('input[type="password"]').first
+        if await password_input.count() > 0:
+            await password_input.fill(password)
+        
+        # Submit login
+        submit_btn = page.locator('button[type="submit"], input[type="submit"], button:has-text("Login"), button:has-text("Sign in")').first
+        if await submit_btn.count() > 0:
+            await submit_btn.click()
+        await asyncio.sleep(5)
+        
+        # Search for tires
+        medida_norm = normalize_medida(medida)
+        print(f"  [Inter-Sprint] Searching for: {medida_norm}")
+        
+        # Try to navigate to tyres section
+        tyres_link = page.locator('a:has-text("Tyres"), a:has-text("Banden"), a:has-text("Tires")').first
+        if await tyres_link.count() > 0:
+            await tyres_link.click()
+            await asyncio.sleep(3)
+        
+        search_input = page.locator('input[type="search"], input[placeholder*="search"], input[name*="search"], #search').first
+        if await search_input.count() > 0:
+            await search_input.fill(medida_norm)
+            await search_input.press('Enter')
+            await asyncio.sleep(5)
+        
+        # Extract products
+        products = await page.evaluate('''() => {
+            const products = [];
+            const items = document.querySelectorAll('.product, .item, .tire, [class*="product"], table tbody tr');
+            
+            items.forEach(item => {
+                const text = item.textContent || '';
+                const priceMatch = text.match(/€\s*(\d+[,\.]\d{2})|(\d+[,\.]\d{2})\s*€/);
+                
+                if (priceMatch) {
+                    const priceStr = priceMatch[1] || priceMatch[2];
+                    const price = parseFloat(priceStr.replace(',', '.'));
+                    
+                    const brandMatch = text.match(/(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL)/i);
+                    
+                    if (price > 15 && price < 500) {
+                        products.push({
+                            brand: brandMatch ? brandMatch[1].toUpperCase() : 'UNKNOWN',
+                            model: '',
+                            price: price
+                        });
+                    }
+                }
+            });
+            
+            return products;
+        }''')
+        
+        if products and len(products) > 0:
+            result["products"] = products
+            prices = [p['price'] for p in products]
+            result["price"] = min(prices)
+            result["all_prices"] = sorted(prices)[:10]
+            print(f"  [Inter-Sprint] Found {len(products)} products")
+        else:
+            content = await page.content()
+            prices = extract_prices(content)
+            if prices:
+                result["price"] = min(prices)
+                result["all_prices"] = sorted(prices)[:10]
+            else:
+                result["error"] = "No products found"
+                
+    except Exception as e:
+        result["error"] = str(e)
+        print(f"  [Inter-Sprint] Error: {e}")
+    
+    return result
+
+async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str) -> dict:
+    """Scrape Pneus Cruzeiro"""
+    result = {
+        "supplier": "Pneus Cruzeiro",
+        "price": None,
+        "error": None,
+        "products": [],
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    
+    try:
+        print("  [Pneus Cruzeiro] Logging in...")
+        await page.goto("https://www.pneuscruzeiro.pt/", wait_until="networkidle", timeout=60000)
+        await asyncio.sleep(2)
+        
+        # Look for login button/link
+        login_link = page.locator('a:has-text("Login"), a:has-text("Entrar"), button:has-text("Login"), .login-link').first
+        if await login_link.count() > 0:
+            await login_link.click()
+            await asyncio.sleep(2)
+        
+        # Fill login form
+        email_input = page.locator('input[type="email"], input[name="email"], input[name="username"]').first
+        if await email_input.count() > 0:
+            await email_input.fill(username)
+        
+        password_input = page.locator('input[type="password"]').first
+        if await password_input.count() > 0:
+            await password_input.fill(password)
+        
+        # Submit login
+        submit_btn = page.locator('button[type="submit"], input[type="submit"]').first
+        if await submit_btn.count() > 0:
+            await submit_btn.click()
+        await asyncio.sleep(5)
+        
+        # Search for tires
+        medida_norm = normalize_medida(medida)
+        print(f"  [Pneus Cruzeiro] Searching for: {medida_norm}")
+        
+        # Navigate to tires section
+        tyres_link = page.locator('a:has-text("Pneus"), a:has-text("Catálogo")').first
+        if await tyres_link.count() > 0:
+            await tyres_link.click()
+            await asyncio.sleep(3)
+        
+        search_input = page.locator('input[type="search"], input[placeholder*="pesq"], input[name*="search"], #search').first
+        if await search_input.count() > 0:
+            await search_input.fill(medida_norm)
+            await search_input.press('Enter')
+            await asyncio.sleep(5)
+        
+        # Extract products
+        products = await page.evaluate('''() => {
+            const products = [];
+            const items = document.querySelectorAll('.product, .item, [class*="product"], [class*="item"]');
+            
+            items.forEach(item => {
+                const text = item.textContent || '';
+                const priceMatch = text.match(/(\d+[,\.]\d{2})\s*€|€\s*(\d+[,\.]\d{2})/);
+                
+                if (priceMatch) {
+                    const priceStr = priceMatch[1] || priceMatch[2];
+                    const price = parseFloat(priceStr.replace(',', '.'));
+                    
+                    const brandMatch = text.match(/(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS)/i);
+                    
+                    if (price > 15 && price < 500) {
+                        products.push({
+                            brand: brandMatch ? brandMatch[1].toUpperCase() : 'UNKNOWN',
+                            model: '',
+                            price: price
+                        });
+                    }
+                }
+            });
+            
+            return products;
+        }''')
+        
+        if products and len(products) > 0:
+            result["products"] = products
+            prices = [p['price'] for p in products]
+            result["price"] = min(prices)
+            result["all_prices"] = sorted(prices)[:10]
+            print(f"  [Pneus Cruzeiro] Found {len(products)} products")
+        else:
+            content = await page.content()
+            prices = extract_prices(content)
+            if prices:
+                result["price"] = min(prices)
+                result["all_prices"] = sorted(prices)[:10]
+            else:
+                result["error"] = "No products found"
+                
+    except Exception as e:
+        result["error"] = str(e)
+        print(f"  [Pneus Cruzeiro] Error: {e}")
+    
+    return result
+
+# ============================================================
+# END NEW SCRAPERS
+# ============================================================
+
 async def get_suppliers_from_db():
     """Get active suppliers from MongoDB"""
     client = AsyncIOMotorClient(MONGO_URL)
@@ -616,11 +1158,13 @@ async def get_suppliers_from_db():
     
     suppliers = []
     async for doc in db.suppliers.find({"is_active": {"$ne": False}}):
+        # Use password_raw if available, otherwise fall back to password
+        password = doc.get("password_raw") or doc.get("password", "")
         suppliers.append({
             "id": str(doc["_id"]) if "_id" in doc else doc.get("id"),
             "name": doc["name"],
             "username": doc["username"],
-            "password": doc["password"],
+            "password": password,
             "url_login": doc.get("url_login", ""),
         })
     
@@ -696,6 +1240,18 @@ async def run_scraper(medidas: list, supplier_filter: str = None):
                         result = await scrape_sjose(page, supplier['username'], supplier['password'], medida)
                     elif 'euromais' in supplier_name or 'eurotyre' in supplier_name:
                         result = await scrape_euromais(page, supplier['username'], supplier['password'], medida)
+                    elif 'soledad' in supplier_name:
+                        result = await scrape_grupo_soledad(page, supplier['username'], supplier['password'], medida)
+                    elif 'aguesport' in supplier_name:
+                        result = await scrape_aguesport(page, supplier['username'], supplier['password'], medida)
+                    elif 'abt' in supplier_name:
+                        result = await scrape_abt_tyres(page, supplier['username'], supplier['password'], medida)
+                    elif 'tugapneus' in supplier_name or 'tuga' in supplier_name:
+                        result = await scrape_tugapneus(page, supplier['username'], supplier['password'], medida)
+                    elif 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:
+                        result = await scrape_inter_sprint(page, supplier['username'], supplier['password'], medida)
+                    elif 'cruzeiro' in supplier_name:
+                        result = await scrape_pneus_cruzeiro(page, supplier['username'], supplier['password'], medida)
                     else:
                         result = {"supplier": supplier['name'], "price": None, "error": "Adapter not implemented"}
                     
@@ -802,6 +1358,18 @@ async def _run_supplier_async(supplier_id: str, sizes: list, job_id: str = None)
                     result = await scrape_sjose(page, username, password, medida)
                 elif 'euromais' in supplier_name or 'eurotyre' in supplier_name:
                     result = await scrape_euromais(page, username, password, medida)
+                elif 'soledad' in supplier_name:
+                    result = await scrape_grupo_soledad(page, username, password, medida)
+                elif 'aguesport' in supplier_name:
+                    result = await scrape_aguesport(page, username, password, medida)
+                elif 'abt' in supplier_name:
+                    result = await scrape_abt_tyres(page, username, password, medida)
+                elif 'tugapneus' in supplier_name or 'tuga' in supplier_name:
+                    result = await scrape_tugapneus(page, username, password, medida)
+                elif 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:
+                    result = await scrape_inter_sprint(page, username, password, medida)
+                elif 'cruzeiro' in supplier_name:
+                    result = await scrape_pneus_cruzeiro(page, username, password, medida)
                 else:
                     result = {"supplier": supplier['name'], "price": None, "error": "Adapter not implemented"}
                 
