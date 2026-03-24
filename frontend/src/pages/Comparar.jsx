@@ -352,32 +352,44 @@ const Comparar = () => {
                       const hasSavings = item.economia_euro && item.economia_euro > 0;
                       const matchType = item.match_type;
                       
+                      // Define badge styles based on match type
+                      const getMatchBadge = () => {
+                        switch(matchType) {
+                          case 'modelo_exato':
+                            return <Badge variant="outline" className="text-xs bg-green-100 text-green-800 border-green-300">modelo exato</Badge>;
+                          case 'modelo_parcial':
+                            return <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-300">modelo parcial</Badge>;
+                          case 'marca':
+                            return <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-300">marca</Badge>;
+                          case 'marca_parcial':
+                            return <Badge variant="outline" className="text-xs bg-sky-50 text-sky-700 border-sky-300">marca parcial</Badge>;
+                          case 'medida':
+                            return <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-300">só medida</Badge>;
+                          case 'sem_dados':
+                            return <Badge variant="outline" className="text-xs bg-red-50 text-red-700 border-red-300">sem dados</Badge>;
+                          default:
+                            return null;
+                        }
+                      };
+                      
                       return (
                         <TableRow 
                           key={item.id || index}
-                          className={hasSavings ? 'bg-emerald-50 hover:bg-emerald-100' : ''}
+                          className={hasSavings ? 'bg-emerald-50 hover:bg-emerald-100' : matchType === 'medida' ? 'bg-amber-50/30' : ''}
                           data-testid={`result-row-${index}`}
                         >
                           <TableCell className="font-mono">{item.medida}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
-                              {item.marca}
-                              {matchType === 'modelo' && (
-                                <Badge variant="outline" className="text-xs bg-green-50 text-green-700">modelo</Badge>
-                              )}
-                              {matchType === 'marca' && (
-                                <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700">marca</Badge>
-                              )}
-                              {matchType === 'marca_partial' && (
-                                <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-700">parcial</Badge>
-                              )}
+                              <span>{item.marca}</span>
+                              {getMatchBadge()}
                             </div>
                           </TableCell>
                           <TableCell className="max-w-[120px] truncate text-slate-600" title={item.modelo}>
                             {item.modelo || '-'}
                           </TableCell>
                           <TableCell className="max-w-[150px] truncate font-medium" title={item.modelo_encontrado}>
-                            {item.modelo_encontrado || '-'}
+                            {item.modelo_encontrado || '-'}}
                           </TableCell>
                           <TableCell className="text-right font-medium">
                             {item.meu_preco ? `€${item.meu_preco.toFixed(2)}` : '-'}

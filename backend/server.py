@@ -430,12 +430,13 @@ async def get_job_results(job_id: str):
 @api_router.post("/jobs/{job_id}/compare")
 async def compare_job_with_scraped_prices(job_id: str):
     """
-    Compare job items with scraped prices using hierarchical matching:
-    Level 1: medida + marca + modelo EXACT
-    Level 2: medida + marca + modelo STARTS WITH
-    Level 3: medida + marca (fallback if model not found)
+    Compare job items with scraped prices using 3-level hierarchical matching:
     
-    OPTIMIZED: Uses bulk fetch to avoid N+1 query problem
+    Nível 1: medida + marca + modelo (regex parcial)
+    Nível 2: medida + marca (se não encontrar modelo)
+    Nível 3: medida apenas (se não encontrar marca)
+    
+    NUNCA mostra linha vazia - sempre mostra o melhor resultado com nível de match
     """
     import re
     
@@ -492,58 +493,76 @@ async def compare_job_with_scraped_prices(job_id: str):
         # Get all prices for this medida from pre-fetched data
         medida_prices = prices_by_medida.get(medida_norm, [])
         
-        # ONLY match if we have a marca
-        if marca_norm and medida_prices:
-            # Filter by marca (case insensitive) - handle None values
-            marca_prices = [p for p in medida_prices if (p.get('marca') or '').upper() == marca_norm]
+        if medida_prices:
+            # ============================================================
+            # NÍVEL 1: medida + marca + modelo (regex parcial)
+            # ============================================================
+            if marca_norm and modelo_norm:
+                # Filter by marca first
+                marca_prices = [p for p in medida_prices if (p.get('marca') or '').upper() == marca_norm]
+                
+                if marca_prices:
+                    # Try exact model match first
+                    modelo_pattern_exact = re.compile(f"^{re.escape(modelo_norm)}$", re.IGNORECASE)
+                    scraped = [p for p in marca_prices if modelo_pattern_exact.match(p.get('modelo') or '')]
+                    
+                    if scraped:
+                        match_type = "modelo_exato"
+                    else:
+                        # Try partial model match (model starts with search term)
+                        modelo_pattern_starts = re.compile(f"^{re.escape(modelo_norm)}(\\s|$)", re.IGNORECASE)
+                        scraped = [p for p in marca_prices if modelo_pattern_starts.match(p.get('modelo') or '')]
+                        
+                        if scraped:
+                            match_type = "modelo_parcial"
+                        else:
+                            # Try model contains search term
+                            modelo_pattern_contains = re.compile(re.escape(modelo_norm), re.IGNORECASE)
+                            scraped = [p for p in marca_prices if modelo_pattern_contains.search(p.get('modelo') or '')]
+                            
+                            if scraped:
+                                match_type = "modelo_parcial"
             
-            # ============ LEVEL 1: modelo EXACT ============
-            if modelo_norm and not scraped:
-                modelo_pattern = re.compile(f"^{re.escape(modelo_norm)}$", re.IGNORECASE)
-                scraped = [p for p in marca_prices if modelo_pattern.match(p.get('modelo') or '')]
-                scraped = sorted(scraped, key=lambda x: x.get('price', 999))
-                if scraped:
-                    match_type = "modelo_exact"
-                    matched_modelo = scraped[0].get('modelo', '')
-            
-            # ============ LEVEL 2: modelo STARTS WITH ============
-            if modelo_norm and not scraped:
-                modelo_pattern = re.compile(f"^{re.escape(modelo_norm)}(\\s|$)", re.IGNORECASE)
-                scraped = [p for p in marca_prices if modelo_pattern.match(p.get('modelo') or '')]
-                scraped = sorted(scraped, key=lambda x: x.get('price', 999))
-                if scraped:
-                    match_type = "modelo"
-                    matched_modelo = scraped[0].get('modelo', '')
-            
-            # ============ LEVEL 3: marca only (fallback) ============
-            if not scraped:
-                scraped = sorted(marca_prices, key=lambda x: x.get('price', 999))
-                if scraped:
+            # ============================================================
+            # NÍVEL 2: medida + marca (se não encontrou modelo)
+            # ============================================================
+            if not scraped and marca_norm:
+                # Filter by marca
+                marca_prices = [p for p in medida_prices if (p.get('marca') or '').upper() == marca_norm]
+                
+                if marca_prices:
+                    scraped = marca_prices
                     match_type = "marca"
-                    matched_modelo = scraped[0].get('modelo', '')
+                else:
+                    # Try partial brand match (GOOD YEAR vs GOODYEAR)
+                    marca_pattern = re.compile(f"^{marca_norm.replace(' ', '.*')}$", re.IGNORECASE)
+                    scraped = [p for p in medida_prices if marca_pattern.match(p.get('marca') or '')]
+                    
+                    if scraped:
+                        match_type = "marca_parcial"
             
-            # Try partial brand match if still no results
+            # ============================================================
+            # NÍVEL 3: medida apenas (se não encontrou marca)
+            # ============================================================
             if not scraped:
-                marca_pattern = re.compile(f"^{marca_norm.replace(' ', '.*')}$", re.IGNORECASE)
-                partial_marca_prices = [p for p in medida_prices if marca_pattern.match(p.get('marca') or '')]
-                scraped = sorted(partial_marca_prices, key=lambda x: x.get('price', 999))
-                if scraped:
-                    match_type = "marca_partial"
-                    matched_modelo = scraped[0].get('modelo', '')
+                scraped = medida_prices
+                match_type = "medida"
         
-        # Process results
-        if scraped and len(scraped) > 0:
+        # Sort by price and get best result
+        if scraped:
+            scraped = sorted(scraped, key=lambda x: x.get('price', 999999))
             best = scraped[0]
             best_price = best['price']
             best_supplier = best['supplier_name']
             best_marca = best.get('marca', '')
+            matched_modelo = best.get('modelo', '')
             
             # Calculate savings
             meu_preco = item.get('meu_preco', 0)
             economia_euro = meu_preco - best_price if meu_preco else None
             economia_percent = (economia_euro / meu_preco * 100) if meu_preco and economia_euro else None
             
-            # Build supplier_prices dict (only same brand)
+            # Build supplier_prices dict
             supplier_prices = {}
             for s in scraped:
                 key = s['supplier_name']
@@ -571,6 +590,7 @@ async def compare_job_with_scraped_prices(job_id: str):
                 found_count += 1
                 total_savings += economia_euro
         else:
+            # No prices at all for this medida in database
             bulk_updates.append({
                 "filter": {"id": item['id']},
                 "update": {"$set": {
@@ -578,11 +598,11 @@ async def compare_job_with_scraped_prices(job_id: str):
                     "melhor_fornecedor": None,
                     "melhor_marca": None,
                     "modelo_encontrado": None,
-                    "match_type": None,
+                    "match_type": "sem_dados",
                     "economia_euro": None,
                     "economia_percent": None,
                     "supplier_prices": {},
-                    "status": "no_match"
+                    "status": "no_data"
                 }}
             })
             updated_count += 1
