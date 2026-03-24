@@ -431,8 +431,9 @@ async def get_job_results(job_id: str):
 async def compare_job_with_scraped_prices(job_id: str):
     """
     Compare job items with scraped prices using hierarchical matching:
-    Level 1: medida + marca + modelo (partial regex match)
-    Level 2: medida + marca (fallback if model not found)
+    Level 1: medida + marca + modelo EXACT
+    Level 2: medida + marca + modelo STARTS WITH
+    Level 3: medida + marca (fallback if model not found)
     """
     import re
     
@@ -462,20 +463,34 @@ async def compare_job_with_scraped_prices(job_id: str):
         
         # ONLY match if we have a marca
         if marca_norm:
-            # ============ LEVEL 1: medida + marca + modelo ============
+            # ============ LEVEL 1: medida + marca + modelo EXACT ============
             if modelo_norm:
-                # Create regex pattern for partial model match
-                # "PRIMACY 4" should match "PRIMACY 4 S2 DESM" or "PRIMACY 4+"
-                # Escape special regex chars and make spaces flexible
-                modelo_escaped = re.escape(modelo_norm)
-                modelo_pattern = modelo_escaped.replace(r'\ ', '.*')  # spaces become .*
-                
-                # Query with modelo regex
+                # First try exact model match (case insensitive)
                 scraped = await db.scraped_prices.find(
                     {
                         "medida": medida_norm,
                         "marca": marca_norm,
-                        "modelo": {"$regex": modelo_pattern, "$options": "i"},
+                        "modelo": {"$regex": f"^{re.escape(modelo_norm)}$", "$options": "i"},
+                        "price": {"$ne": None}
+                    },
+                    {"_id": 0}
+                ).sort("price", 1).to_list(100)
+                
+                if scraped:
+                    match_type = "modelo_exact"
+                    matched_modelo = scraped[0].get('modelo', '')
+            
+            # ============ LEVEL 2: medida + marca + modelo STARTS WITH ============
+            if not scraped and modelo_norm:
+                # Try model that STARTS with the search term
+                # "PRIMACY 5" should match "PRIMACY 5" or "PRIMACY 5 ENERGY" but NOT "PRIMACY 4"
+                # The model in DB should start with the Excel model
+                modelo_escaped = re.escape(modelo_norm)
+                scraped = await db.scraped_prices.find(
+                    {
+                        "medida": medida_norm,
+                        "marca": marca_norm,
+                        "modelo": {"$regex": f"^{modelo_escaped}(\\s|$)", "$options": "i"},
                         "price": {"$ne": None}
                     },
                     {"_id": 0}
@@ -485,7 +500,7 @@ async def compare_job_with_scraped_prices(job_id: str):
                     match_type = "modelo"
                     matched_modelo = scraped[0].get('modelo', '')
             
-            # ============ LEVEL 2: medida + marca (fallback) ============
+            # ============ LEVEL 3: medida + marca (fallback) ============
             if not scraped:
                 # Try exact match by medida + marca (both uppercase)
                 scraped = await db.scraped_prices.find(

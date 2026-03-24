@@ -204,39 +204,50 @@ async def scrape_mp24_with_session(page, username: str, password: str, medida: s
             print(f"  [MP24] Captured {len(captured_tyres)} tyres from API")
             
             if captured_tyres:
-                products = []
+                # Group products by brand+model and keep minimum price
+                product_map = {}  # key: "BRAND|MODEL" -> min price
+                
                 for tyre in captured_tyres:
                     brand = tyre.get('manufacturer', '').upper()
                     model = tyre.get('profile', '')
                     
-                    # Get price from bestPricesBySource
+                    # Get minimum price from all sources
                     best_prices = tyre.get('bestPricesBySource', {})
                     price = None
                     
-                    # Try different price sources
+                    # Try all price sources and get the minimum
                     for source in ['supplier', 'loadAll', 'central_warehouse', 'my_stock']:
                         source_data = best_prices.get(source, {})
                         best_price = source_data.get('bestPrice', {})
                         if best_price and best_price.get('purchasePrice'):
-                            price = best_price['purchasePrice']
-                            break
+                            source_price = best_price['purchasePrice']
+                            if price is None or source_price < price:
+                                price = source_price
                     
-                    if brand and price and price > 15 and price < 500:
-                        products.append({
-                            'brand': brand,
-                            'model': model,
-                            'price': price
-                        })
+                    if brand and model and price and price > 15 and price < 500:
+                        key = f"{brand}|{model}"
+                        if key not in product_map or price < product_map[key]:
+                            product_map[key] = price
+                
+                # Convert map back to list
+                products = []
+                for key, price in product_map.items():
+                    brand, model = key.split('|', 1)
+                    products.append({
+                        'brand': brand,
+                        'model': model,
+                        'price': price
+                    })
                 
                 if products:
                     result["products"] = products
                     prices = [p['price'] for p in products]
                     result["price"] = min(prices)
                     result["all_prices"] = sorted(prices)[:10]
-                    print(f"  [MP24] Extracted {len(products)} products with brand/model")
+                    print(f"  [MP24] Extracted {len(products)} unique products with brand/model")
                     
                     # Show sample products
-                    for p in products[:5]:
+                    for p in sorted(products, key=lambda x: x['price'])[:5]:
                         print(f"    - {p['brand']} {p['model']}: €{p['price']}")
                 else:
                     result["error"] = "No valid products found in API response"
@@ -815,12 +826,13 @@ async def _run_supplier_async(supplier_id: str, sizes: list, job_id: str = None)
                             "scraped_at": datetime.now(timezone.utc),
                         }
                         
-                        # Upsert by supplier + medida + marca
+                        # Upsert by supplier + medida + marca + modelo (to keep different models separate)
                         await db.scraped_prices.update_one(
                             {
                                 "supplier_name": supplier['name'], 
                                 "medida": medida,
-                                "marca": prod.get('brand', '').upper()
+                                "marca": prod.get('brand', '').upper(),
+                                "modelo": prod.get('model', '')
                             },
                             {"$set": price_doc},
                             upsert=True
