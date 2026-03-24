@@ -434,6 +434,8 @@ async def compare_job_with_scraped_prices(job_id: str):
     Level 1: medida + marca + modelo EXACT
     Level 2: medida + marca + modelo STARTS WITH
     Level 3: medida + marca (fallback if model not found)
+    
+    OPTIMIZED: Uses bulk fetch to avoid N+1 query problem
     """
     import re
     
@@ -446,10 +448,36 @@ async def compare_job_with_scraped_prices(job_id: str):
     if not items:
         raise HTTPException(status_code=400, detail="No items found in job")
     
+    # OPTIMIZATION: Bulk fetch all unique medidas from items
+    unique_medidas = set()
+    for item in items:
+        medida_norm = item['medida'].replace('/', '').replace('R', '').replace('r', '')
+        unique_medidas.add(medida_norm)
+    
+    # Fetch ALL scraped prices for these medidas in ONE query
+    all_scraped_prices = await db.scraped_prices.find(
+        {
+            "medida": {"$in": list(unique_medidas)},
+            "price": {"$ne": None}
+        },
+        {"_id": 0}
+    ).to_list(50000)
+    
+    # Index scraped prices by medida for fast lookup
+    prices_by_medida = {}
+    for sp in all_scraped_prices:
+        medida = sp.get('medida', '')
+        if medida not in prices_by_medida:
+            prices_by_medida[medida] = []
+        prices_by_medida[medida].append(sp)
+    
     updated_count = 0
     found_count = 0
     matched_count = 0
     total_savings = 0.0
+    
+    # Prepare bulk updates
+    bulk_updates = []
     
     for item in items:
         # Normalize medida and marca for matching
@@ -461,75 +489,47 @@ async def compare_job_with_scraped_prices(job_id: str):
         match_type = None
         matched_modelo = None
         
+        # Get all prices for this medida from pre-fetched data
+        medida_prices = prices_by_medida.get(medida_norm, [])
+        
         # ONLY match if we have a marca
-        if marca_norm:
-            # ============ LEVEL 1: medida + marca + modelo EXACT ============
-            if modelo_norm:
-                # First try exact model match (case insensitive)
-                scraped = await db.scraped_prices.find(
-                    {
-                        "medida": medida_norm,
-                        "marca": marca_norm,
-                        "modelo": {"$regex": f"^{re.escape(modelo_norm)}$", "$options": "i"},
-                        "price": {"$ne": None}
-                    },
-                    {"_id": 0}
-                ).sort("price", 1).to_list(100)
-                
+        if marca_norm and medida_prices:
+            # Filter by marca (case insensitive)
+            marca_prices = [p for p in medida_prices if p.get('marca', '').upper() == marca_norm]
+            
+            # ============ LEVEL 1: modelo EXACT ============
+            if modelo_norm and not scraped:
+                modelo_pattern = re.compile(f"^{re.escape(modelo_norm)}$", re.IGNORECASE)
+                scraped = [p for p in marca_prices if modelo_pattern.match(p.get('modelo', ''))]
+                scraped = sorted(scraped, key=lambda x: x.get('price', 999))
                 if scraped:
                     match_type = "modelo_exact"
                     matched_modelo = scraped[0].get('modelo', '')
             
-            # ============ LEVEL 2: medida + marca + modelo STARTS WITH ============
-            if not scraped and modelo_norm:
-                # Try model that STARTS with the search term
-                # "PRIMACY 5" should match "PRIMACY 5" or "PRIMACY 5 ENERGY" but NOT "PRIMACY 4"
-                # The model in DB should start with the Excel model
-                modelo_escaped = re.escape(modelo_norm)
-                scraped = await db.scraped_prices.find(
-                    {
-                        "medida": medida_norm,
-                        "marca": marca_norm,
-                        "modelo": {"$regex": f"^{modelo_escaped}(\\s|$)", "$options": "i"},
-                        "price": {"$ne": None}
-                    },
-                    {"_id": 0}
-                ).sort("price", 1).to_list(100)
-                
+            # ============ LEVEL 2: modelo STARTS WITH ============
+            if modelo_norm and not scraped:
+                modelo_pattern = re.compile(f"^{re.escape(modelo_norm)}(\\s|$)", re.IGNORECASE)
+                scraped = [p for p in marca_prices if modelo_pattern.match(p.get('modelo', ''))]
+                scraped = sorted(scraped, key=lambda x: x.get('price', 999))
                 if scraped:
                     match_type = "modelo"
                     matched_modelo = scraped[0].get('modelo', '')
             
-            # ============ LEVEL 3: medida + marca (fallback) ============
+            # ============ LEVEL 3: marca only (fallback) ============
             if not scraped:
-                # Try exact match by medida + marca (both uppercase)
-                scraped = await db.scraped_prices.find(
-                    {
-                        "medida": medida_norm, 
-                        "marca": marca_norm,
-                        "price": {"$ne": None}
-                    },
-                    {"_id": 0}
-                ).sort("price", 1).to_list(100)
-                
+                scraped = sorted(marca_prices, key=lambda x: x.get('price', 999))
                 if scraped:
                     match_type = "marca"
                     matched_modelo = scraped[0].get('modelo', '')
-                else:
-                    # Try partial brand match (for variations like "GOOD YEAR" vs "GOODYEAR")
-                    marca_pattern = marca_norm.replace(' ', '.*')
-                    scraped = await db.scraped_prices.find(
-                        {
-                            "medida": medida_norm, 
-                            "marca": {"$regex": f"^{marca_pattern}$", "$options": "i"},
-                            "price": {"$ne": None}
-                        },
-                        {"_id": 0}
-                    ).sort("price", 1).to_list(100)
-                    
-                    if scraped:
-                        match_type = "marca_partial"
-                        matched_modelo = scraped[0].get('modelo', '')
+            
+            # Try partial brand match if still no results
+            if not scraped:
+                marca_pattern = re.compile(f"^{marca_norm.replace(' ', '.*')}$", re.IGNORECASE)
+                partial_marca_prices = [p for p in medida_prices if marca_pattern.match(p.get('marca', ''))]
+                scraped = sorted(partial_marca_prices, key=lambda x: x.get('price', 999))
+                if scraped:
+                    match_type = "marca_partial"
+                    matched_modelo = scraped[0].get('modelo', '')
         
         # Process results
         if scraped and len(scraped) > 0:
@@ -550,10 +550,9 @@ async def compare_job_with_scraped_prices(job_id: str):
                 if key not in supplier_prices or s['price'] < supplier_prices[key]:
                     supplier_prices[key] = s['price']
             
-            # Update item with match found
-            await db.job_items.update_one(
-                {"id": item['id']},
-                {"$set": {
+            bulk_updates.append({
+                "filter": {"id": item['id']},
+                "update": {"$set": {
                     "melhor_preco": best_price,
                     "melhor_fornecedor": best_supplier,
                     "melhor_marca": best_marca,
@@ -564,7 +563,7 @@ async def compare_job_with_scraped_prices(job_id: str):
                     "supplier_prices": supplier_prices,
                     "status": "found" if economia_euro and economia_euro > 0 else "processed"
                 }}
-            )
+            })
             
             updated_count += 1
             matched_count += 1
@@ -572,10 +571,9 @@ async def compare_job_with_scraped_prices(job_id: str):
                 found_count += 1
                 total_savings += economia_euro
         else:
-            # No match found - clear previous values
-            await db.job_items.update_one(
-                {"id": item['id']},
-                {"$set": {
+            bulk_updates.append({
+                "filter": {"id": item['id']},
+                "update": {"$set": {
                     "melhor_preco": None,
                     "melhor_fornecedor": None,
                     "melhor_marca": None,
@@ -586,8 +584,14 @@ async def compare_job_with_scraped_prices(job_id: str):
                     "supplier_prices": {},
                     "status": "no_match"
                 }}
-            )
+            })
             updated_count += 1
+    
+    # Execute bulk updates
+    if bulk_updates:
+        from pymongo import UpdateOne
+        operations = [UpdateOne(u["filter"], u["update"]) for u in bulk_updates]
+        await db.job_items.bulk_write(operations)
     
     # Update job stats
     await db.jobs.update_one(
