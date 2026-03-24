@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
-import Upload from './pages/Upload';
+import Comparar from './pages/Comparar';
 import Suppliers from './pages/Suppliers';
 import Results from './pages/Results';
 import Logs from './pages/Logs';
@@ -17,7 +17,7 @@ function App() {
       <Layout>
         <Routes>
           <Route path="/" element={<Dashboard />} />
-          <Route path="/upload" element={<Upload />} />
+          <Route path="/comparar" element={<Comparar />} />
           <Route path="/suppliers" element={<Suppliers />} />
           <Route path="/results" element={<Results />} />
           <Route path="/scraper" element={<Scraper />} />
