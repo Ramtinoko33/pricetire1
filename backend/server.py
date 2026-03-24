@@ -494,13 +494,13 @@ async def compare_job_with_scraped_prices(job_id: str):
         
         # ONLY match if we have a marca
         if marca_norm and medida_prices:
-            # Filter by marca (case insensitive)
-            marca_prices = [p for p in medida_prices if p.get('marca', '').upper() == marca_norm]
+            # Filter by marca (case insensitive) - handle None values
+            marca_prices = [p for p in medida_prices if (p.get('marca') or '').upper() == marca_norm]
             
             # ============ LEVEL 1: modelo EXACT ============
             if modelo_norm and not scraped:
                 modelo_pattern = re.compile(f"^{re.escape(modelo_norm)}$", re.IGNORECASE)
-                scraped = [p for p in marca_prices if modelo_pattern.match(p.get('modelo', ''))]
+                scraped = [p for p in marca_prices if modelo_pattern.match(p.get('modelo') or '')]
                 scraped = sorted(scraped, key=lambda x: x.get('price', 999))
                 if scraped:
                     match_type = "modelo_exact"
@@ -509,7 +509,7 @@ async def compare_job_with_scraped_prices(job_id: str):
             # ============ LEVEL 2: modelo STARTS WITH ============
             if modelo_norm and not scraped:
                 modelo_pattern = re.compile(f"^{re.escape(modelo_norm)}(\\s|$)", re.IGNORECASE)
-                scraped = [p for p in marca_prices if modelo_pattern.match(p.get('modelo', ''))]
+                scraped = [p for p in marca_prices if modelo_pattern.match(p.get('modelo') or '')]
                 scraped = sorted(scraped, key=lambda x: x.get('price', 999))
                 if scraped:
                     match_type = "modelo"
@@ -525,7 +525,7 @@ async def compare_job_with_scraped_prices(job_id: str):
             # Try partial brand match if still no results
             if not scraped:
                 marca_pattern = re.compile(f"^{marca_norm.replace(' ', '.*')}$", re.IGNORECASE)
-                partial_marca_prices = [p for p in medida_prices if marca_pattern.match(p.get('marca', ''))]
+                partial_marca_prices = [p for p in medida_prices if marca_pattern.match(p.get('marca') or '')]
                 scraped = sorted(partial_marca_prices, key=lambda x: x.get('price', 999))
                 if scraped:
                     match_type = "marca_partial"
