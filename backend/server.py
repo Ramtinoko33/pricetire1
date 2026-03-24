@@ -755,7 +755,10 @@ async def start_manual_scraper(background_tasks: BackgroundTasks, medidas: list 
         pending_jobs = await db.jobs.find({"status": {"$in": ["pending", "running"]}}).to_list(10)
         medidas = []
         for job in pending_jobs:
-            items = await db.job_items.find({"job_id": job["id"]}).to_list(100)
+            job_id = job.get("id")
+            if not job_id:
+                continue
+            items = await db.job_items.find({"job_id": job_id}).to_list(100)
             for item in items:
                 medida = item.get("medida", "").replace("/", "").replace("R", "")
                 if medida and medida not in medidas:
