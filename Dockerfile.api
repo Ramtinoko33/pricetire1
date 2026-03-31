@@ -1,0 +1,33 @@
+# ============================================================
+# Dockerfile.api — Serviço FastAPI (Railway)
+#
+# Usa a mesma imagem base do worker (Playwright já incluído)
+# porque o endpoint /suppliers/{id}/test usa scraper_service.py
+#
+# Serviço separado do Dockerfile.worker:
+#   - Worker: corre worker.py (consome jobs da fila MongoDB)
+#   - API:    corre server.py (serve os endpoints HTTP)
+# ============================================================
+
+FROM mcr.microsoft.com/playwright/python:v1.58.0-jammy
+
+WORKDIR /app
+
+# Dependências Python (versão slim — sem pacotes AI/ML do Emergent)
+COPY requirements.api.txt .
+RUN pip install --no-cache-dir -r requirements.api.txt
+
+# Instalar Chromium (necessário para scraper_service test-login)
+ENV PLAYWRIGHT_BROWSERS_PATH=/pw-browsers
+RUN playwright install chromium --with-deps
+
+# Copiar TODOS os ficheiros do backend
+COPY backend/ ./backend/
+
+# Criar pasta de screenshots (usada por scraper_service.py)
+RUN mkdir -p /app/backend/screenshots /app/tmp/scraper_results
+
+# Railway injeta a variável $PORT automaticamente
+EXPOSE 8000
+
+CMD ["sh", "-c", "uvicorn backend.server:app --host 0.0.0.0 --port ${PORT:-8000}"]
