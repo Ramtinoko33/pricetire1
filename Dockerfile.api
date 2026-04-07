@@ -30,4 +30,4 @@ RUN mkdir -p /app/backend/screenshots /app/tmp/scraper_results
 # Railway injeta a variável $PORT automaticamente
 EXPOSE 8000
 
-CMD ["sh", "-c", "uvicorn backend.server:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "if [ \"$SERVICE_TYPE\" = \"worker\" ]; then exec python3 backend/worker.py; else exec uvicorn backend.server:app --host 0.0.0.0 --port ${PORT:-8000}; fi"]
