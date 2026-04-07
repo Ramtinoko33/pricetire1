@@ -23,14 +23,12 @@ RUN playwright install chromium --with-deps
 
 # Copiar TODOS os ficheiros do backend
 COPY backend/ ./backend/
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+COPY entrypoint.py /app/entrypoint.py
 
 # Criar pasta de screenshots (usada por scraper_service.py)
 RUN mkdir -p /app/backend/screenshots /app/tmp/scraper_results
 
-# Railway injeta a variável $PORT automaticamente
 ENV PORT=8000
 EXPOSE 8000
 
-CMD ["/app/start.sh"]
+CMD ["python3", "/app/entrypoint.py"]
