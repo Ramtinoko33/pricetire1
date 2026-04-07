@@ -23,6 +23,8 @@ RUN playwright install chromium --with-deps
 
 # Copiar TODOS os ficheiros do backend
 COPY backend/ ./backend/
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 
 # Criar pasta de screenshots (usada por scraper_service.py)
 RUN mkdir -p /app/backend/screenshots /app/tmp/scraper_results
@@ -31,4 +33,4 @@ RUN mkdir -p /app/backend/screenshots /app/tmp/scraper_results
 ENV PORT=8000
 EXPOSE 8000
 
-CMD ["sh", "-c", "if [ \"$SERVICE_TYPE\" = \"worker\" ]; then exec python3 backend/worker.py; else exec uvicorn backend.server:app --host 0.0.0.0 --port $PORT; fi"]
+CMD ["/app/start.sh"]
