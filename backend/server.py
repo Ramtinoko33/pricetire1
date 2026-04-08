@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Body
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -763,7 +763,7 @@ async def run_manual_scraper(medidas: list):
         scraper_status["running"] = False
 
 @api_router.post("/scraper/run")
-async def start_manual_scraper(background_tasks: BackgroundTasks, medidas: list = None):
+async def start_manual_scraper(background_tasks: BackgroundTasks, medidas: list = Body(default=None)):
     """Start the manual scraper in background"""
     global scraper_status
     
@@ -822,7 +822,7 @@ async def get_scraped_prices(medida: str = None, marca: str = None, modelo: str 
     if modelo:
         query["modelo"] = {"$regex": modelo.strip(), "$options": "i"}
     if load_index:
-        query["modelo"] = {"$regex": load_index.strip(), "$options": "i"}
+        query["load_index"] = {"$regex": load_index.strip(), "$options": "i"}
     
     prices = await db.scraped_prices.find(query, {"_id": 0}).sort("scraped_at", -1).to_list(100)
     return prices
@@ -950,11 +950,11 @@ async def start_worker():
         # Use the same venv as the backend
         python_path = "/root/.venv/bin/python3"
         cmd = f"cd /app/backend && nohup {python_path} worker.py >> /tmp/worker.log 2>&1 &"
-        os.system(cmd)
-        
+        proc = await asyncio.create_subprocess_shell(cmd)
+        await proc.wait()
+
         # Wait a bit and check if it started
-        import time
-        time.sleep(3)
+        await asyncio.sleep(3)
         
         check = subprocess.run(["pgrep", "-f", "worker.py"], capture_output=True, text=True)
         if check.returncode == 0:
@@ -1009,7 +1009,7 @@ async def enqueue_batch_scrape(req: EnqueueBatchReq):
     for supplier in suppliers:
         job = {
             "type": "scrape",
-            "supplier_id": supplier['name'].lower().replace(' ', '').replace('.', ''),
+            "supplier_id": supplier['id'],
             "supplier_name": supplier['name'],
             "payload": {"sizes": normalized_sizes},
             "status": "queued",
