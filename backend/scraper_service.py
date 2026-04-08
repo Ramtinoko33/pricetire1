@@ -18,8 +18,8 @@ SCREENSHOTS_DIR.mkdir(exist_ok=True)
 PLAYWRIGHT_AVAILABLE = True
 try:
     pw_path = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
-    chromium_path = Path(pw_path) / 'chromium_headless_shell-1208'
-    if not chromium_path.exists():
+    chromium_dirs = list(Path(pw_path).glob('chromium_headless_shell-*'))
+    if not chromium_dirs:
         PLAYWRIGHT_AVAILABLE = False
         logger.warning(f"Playwright browsers not found at {pw_path}. Scraping features will be disabled.")
 except Exception as e:
@@ -500,7 +500,6 @@ class EuromaisAdapter(ScraperBase):
                 return best_price
             
             logger.warning(f"No valid prices extracted for {medida_normalized}")
-            return None
             return None
             
         except Exception as e:
