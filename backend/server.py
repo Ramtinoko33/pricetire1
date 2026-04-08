@@ -58,11 +58,12 @@ async def create_supplier(supplier_data: SupplierCreate):
     supplier_dict['is_active'] = True
     supplier_dict['status'] = SupplierStatus.ACTIVE.value
     supplier_dict['last_test'] = None
-    supplier_dict['created_at'] = datetime.now(timezone.utc).isoformat()
-    
+    supplier_dict['created_at'] = datetime.now(timezone.utc)
+
     await db.suppliers.insert_one(supplier_dict)
+    supplier_dict.pop('_id', None)       # MongoDB injeta _id após insert — remover antes do Pydantic
     supplier_dict['password'] = "********"
-    supplier_dict.pop('password_raw', None)  # Don't return password_raw in response
+    supplier_dict.pop('password_raw', None)
     return Supplier(**supplier_dict)
 
 @api_router.put("/suppliers/{supplier_id}", response_model=Supplier)
