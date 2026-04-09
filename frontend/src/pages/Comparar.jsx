@@ -259,10 +259,11 @@ const Comparar = () => {
 
             <div className="text-center py-4">
               <p className="text-slate-600 mb-4">
-                Clique no botão abaixo para comparar os seus preços com os preços dos fornecedores (scraped_prices).
+                Clique no botão abaixo para comparar os seus preços com os preços dos fornecedores.
               </p>
               <p className="text-sm text-slate-500">
-                A comparação será feita por <strong>Medida + Marca</strong> (case insensitive)
+                Na primeira execução, o scraper vai pesquisar preços em tempo real (pode demorar 2–5 minutos).
+                Execuções seguintes serão instantâneas.
               </p>
             </div>
 
@@ -276,7 +277,7 @@ const Comparar = () => {
               {comparing ? (
                 <>
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  A comparar preços...
+                  A pesquisar preços nos fornecedores... (pode demorar alguns minutos)
                 </>
               ) : (
                 <>
@@ -389,7 +390,7 @@ const Comparar = () => {
                             {item.modelo || '-'}
                           </TableCell>
                           <TableCell className="max-w-[150px] truncate font-medium" title={item.modelo_encontrado}>
-                            {item.modelo_encontrado || '-'}}
+                            {item.modelo_encontrado || '-'}
                           </TableCell>
                           <TableCell className="text-right font-medium">
                             {item.meu_preco ? `€${item.meu_preco.toFixed(2)}` : '-'}
