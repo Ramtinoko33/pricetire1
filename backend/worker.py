@@ -18,7 +18,13 @@ print(f"=== DATABASE_URL: {DATABASE_URL[:40]}... ===", flush=True)
 try:
     import psycopg2
     import psycopg2.extras
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = psycopg2.connect(
+        DATABASE_URL,
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=5,
+    )
     conn.autocommit = False
     print("=== POSTGRESQL CONNECTED OK ===", flush=True)
 except Exception as e:
@@ -27,14 +33,30 @@ except Exception as e:
     sys.exit(1)
 
 
+def _new_conn():
+    """Cria uma nova ligação com keepalive activado."""
+    return psycopg2.connect(
+        DATABASE_URL,
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=5,
+        connect_timeout=15,
+    )
+
+
 def get_conn():
-    """Return the global connection, reconnecting if needed."""
+    """Retorna ligação global, reconectando se necessário."""
     global conn
     try:
         conn.cursor().execute("SELECT 1")
     except Exception:
-        conn = psycopg2.connect(DATABASE_URL)
-        conn.autocommit = False
+        try:
+            conn = _new_conn()
+            conn.autocommit = False
+        except Exception as e:
+            print(f"Reconnect failed: {e}", flush=True)
+            raise
     return conn
 
 
@@ -184,7 +206,14 @@ def main():
             break
         except Exception as e:
             print(f"Worker error: {e}", flush=True)
-            time.sleep(5)
+            # Backoff progressivo: 5s, 10s, 20s, 40s, máx 60s
+            _worker_backoff = getattr(main, '_backoff', 5)
+            print(f"  Retrying in {_worker_backoff}s...", flush=True)
+            time.sleep(_worker_backoff)
+            main._backoff = min(_worker_backoff * 2, 60)
+        else:
+            # Reset backoff após ciclo bem-sucedido
+            main._backoff = 5
 
 
 if __name__ == "__main__":
