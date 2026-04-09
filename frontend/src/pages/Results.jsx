@@ -102,6 +102,12 @@ const Results = () => {
   };
 
   const getStatusBadge = (status) => {
+    if (status === 'no_brand_match') {
+      return <Badge variant="outline" className="text-amber-700 border-amber-400 bg-amber-50">OUTRA MARCA</Badge>;
+    }
+    if (status === 'no_data') {
+      return <Badge variant="outline" className="text-slate-500">SEM DADOS</Badge>;
+    }
     const variants = {
       completed: 'default',
       running: 'secondary',
@@ -247,7 +253,7 @@ const Results = () => {
                     {results.map((item) => (
                       <TableRow
                         key={item.id}
-                        className={item.economia_euro > 0 ? 'bg-green-50' : ''}
+                        className={item.status === 'found' && item.economia_euro > 0 ? 'bg-green-50' : item.status === 'no_brand_match' ? 'bg-amber-50/40' : ''}
                         data-testid={`result-row-${item.id}`}
                       >
                         <TableCell className="font-mono text-sm">{item.ref_id}</TableCell>
@@ -260,12 +266,14 @@ const Results = () => {
                         </TableCell>
                         <TableCell>{item.melhor_fornecedor || '-'}</TableCell>
                         <TableCell>
-                          {item.economia_euro > 0 ? (
+                          {item.status === 'found' && item.economia_euro > 0 ? (
                             <div className="flex items-center gap-1 text-green-700 font-bold">
                               <TrendingDown size={14} />
                               <span className="font-mono">€{item.economia_euro.toFixed(2)}</span>
-                              <span className="text-xs">({item.economia_percent.toFixed(1)}%)</span>
+                              <span className="text-xs">({item.economia_percent?.toFixed(1)}%)</span>
                             </div>
+                          ) : item.status === 'no_brand_match' ? (
+                            <span className="text-xs text-amber-600">outra marca disponível</span>
                           ) : (
                             '-'
                           )}

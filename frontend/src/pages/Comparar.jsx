@@ -350,7 +350,8 @@ const Comparar = () => {
                   </TableHeader>
                   <TableBody>
                     {results.map((item, index) => {
-                      const hasSavings = item.economia_euro && item.economia_euro > 0;
+                      const hasSavings = item.status === 'found' && item.economia_euro && item.economia_euro > 0;
+                      const isOtherBrand = item.status === 'no_brand_match';
                       const matchType = item.match_type;
                       
                       // Define badge styles based on match type
@@ -374,9 +375,9 @@ const Comparar = () => {
                       };
                       
                       return (
-                        <TableRow 
+                        <TableRow
                           key={item.id || index}
-                          className={hasSavings ? 'bg-emerald-50 hover:bg-emerald-100' : matchType === 'medida' ? 'bg-amber-50/30' : ''}
+                          className={hasSavings ? 'bg-emerald-50 hover:bg-emerald-100' : isOtherBrand ? 'bg-amber-50/30' : ''}
                           data-testid={`result-row-${index}`}
                         >
                           <TableCell className="font-mono">{item.medida}</TableCell>
@@ -408,16 +409,18 @@ const Comparar = () => {
                             ) : '-'}
                           </TableCell>
                           <TableCell className="text-right">
-                            {item.economia_euro ? (
-                              <span className={hasSavings ? 'text-emerald-600 font-bold' : 'text-red-500'}>
-                                {hasSavings && <TrendingDown className="inline w-3 h-3 mr-1" />}
+                            {hasSavings ? (
+                              <span className="text-emerald-600 font-bold">
+                                <TrendingDown className="inline w-3 h-3 mr-1" />
                                 €{item.economia_euro.toFixed(2)}
                               </span>
+                            ) : isOtherBrand ? (
+                              <span className="text-xs text-amber-600">outra marca</span>
                             ) : '-'}
                           </TableCell>
                           <TableCell className="text-right">
-                            {item.economia_percent ? (
-                              <span className={hasSavings ? 'text-emerald-600 font-bold' : 'text-red-500'}>
+                            {hasSavings ? (
+                              <span className="text-emerald-600 font-bold">
                                 {item.economia_percent.toFixed(1)}%
                               </span>
                             ) : '-'}

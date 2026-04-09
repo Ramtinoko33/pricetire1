@@ -630,21 +630,36 @@ async def compare_job_with_scraped_prices(job_id: str):
             best_marca    = best.get('marca', '')
             best_modelo   = best.get('modelo', '')
             meu_preco     = item.get('meu_preco', 0)
-            economia_euro    = meu_preco - best_price if meu_preco else None
-            economia_percent = (economia_euro / meu_preco * 100) if meu_preco and economia_euro else None
             sup_prices = {}
             for s in scraped:
                 k = s['supplier_name']
                 if k not in sup_prices or s['price'] < sup_prices[k]:
                     sup_prices[k] = s['price']
 
+            # Só conta poupança real se houver match de marca/modelo
+            # "só medida" = outra marca diferente → preço informativo, não é poupança
+            brand_matched = match_type in ("modelo_exato", "modelo_parcial", "marca", "marca_parcial")
+            if brand_matched and meu_preco:
+                economia_euro    = meu_preco - best_price
+                economia_percent = economia_euro / meu_preco * 100
+            else:
+                economia_euro    = None
+                economia_percent = None
+
+            if match_type == "medida":
+                item_status = "no_brand_match"
+            elif economia_euro and economia_euro > 0:
+                item_status = "found"
+            else:
+                item_status = "processed"
+
             bulk_updates.append((
                 item['id'], best_price, best_supplier, best_marca, best_modelo,
                 match_type,
-                round(economia_euro, 2) if economia_euro else None,
-                round(economia_percent, 2) if economia_percent else None,
+                round(economia_euro, 2) if economia_euro is not None else None,
+                round(economia_percent, 2) if economia_percent is not None else None,
                 sup_prices,
-                "found" if economia_euro and economia_euro > 0 else "processed",
+                item_status,
             ))
             updated_count += 1
             matched_count += 1
