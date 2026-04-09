@@ -50,6 +50,24 @@ async def shutdown():
     await close_db()
 
 
+@app.get("/health")
+async def health():
+    """Endpoint de diagnóstico — sem base de dados."""
+    return {"status": "ok", "service": "pricetire-api"}
+
+
+@app.get("/health/db")
+async def health_db():
+    """Endpoint de diagnóstico — testa ligação à base de dados."""
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            val = await conn.fetchval("SELECT 1")
+        return {"status": "ok", "db": "postgresql", "result": val}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
 # ==================== Suppliers ====================
 
 @api_router.get("/suppliers", response_model=List[Supplier])
