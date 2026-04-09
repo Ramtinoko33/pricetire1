@@ -534,14 +534,22 @@ async def compare_job_with_scraped_prices(job_id: str):
             item['medida'].replace('/', '').replace('R', '').replace('r', '')
             for item in items
         })
-        existing_count = await conn.fetchval(
-            "SELECT COUNT(*) FROM scraped_prices WHERE medida = ANY($1) AND price IS NOT NULL",
+        # Conta registos com marca — se só existirem registos sem marca, re-scrape
+        branded_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM scraped_prices WHERE medida = ANY($1) AND price IS NOT NULL AND marca IS NOT NULL AND marca != ''",
             unique_medidas,
         )
 
-    # Auto-scrape se scraped_prices não tem dados para estas medidas
-    if not existing_count:
-        logger.info(f"scraped_prices vazio para {unique_medidas}. A correr scraper...")
+    # Auto-scrape se scraped_prices não tem dados com marca para estas medidas
+    if not branded_count:
+        # Limpa registos antigos sem marca para não interferir com o resultado
+        pool2 = await get_db()
+        async with pool2.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM scraped_prices WHERE medida = ANY($1) AND marca IS NULL",
+                unique_medidas,
+            )
+        logger.info(f"A correr scraper para {unique_medidas} (sem dados de marca)...")
         env = os.environ.copy()
         env['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
         medidas_str = ','.join(unique_medidas)
