@@ -4,65 +4,132 @@ sys.stdout.flush()
 
 import os
 import time
-from datetime import datetime, timedelta
+import json
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 load_dotenv()
 
 print("=== IMPORTS OK ===", flush=True)
 
-MONGO_URL = os.environ['MONGO_URL']
-DB_NAME = os.environ['DB_NAME']
+DATABASE_URL = os.environ["DATABASE_URL"]
 
-print(f"=== MONGO_URL: {MONGO_URL[:50]}... ===", flush=True)
-print(f"=== DB_NAME: {DB_NAME} ===", flush=True)
+print(f"=== DATABASE_URL: {DATABASE_URL[:40]}... ===", flush=True)
 
 try:
-    from pymongo import MongoClient, ReturnDocument
-    from bson import ObjectId
-    client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=10000)
-    client.admin.command('ping')
-    db = client[DB_NAME]
-    print("=== MONGODB CONNECTED OK ===", flush=True)
+    import psycopg2
+    import psycopg2.extras
+    conn = psycopg2.connect(DATABASE_URL)
+    conn.autocommit = False
+    print("=== POSTGRESQL CONNECTED OK ===", flush=True)
 except Exception as e:
-    print("=== FAILED TO CONNECT TO MONGODB ===", flush=True)
-    print(f"=== MONGODB URL (masked): {MONGO_URL[:50]}... ===", flush=True)
-    print(f"=== MONGODB ERROR: {e} ===", flush=True)
+    print("=== FAILED TO CONNECT TO POSTGRESQL ===", flush=True)
+    print(f"=== POSTGRESQL ERROR: {e} ===", flush=True)
     sys.exit(1)
 
+
+def get_conn():
+    """Return the global connection, reconnecting if needed."""
+    global conn
+    try:
+        conn.cursor().execute("SELECT 1")
+    except Exception:
+        conn = psycopg2.connect(DATABASE_URL)
+        conn.autocommit = False
+    return conn
+
+
 def claim_job():
-    return db.jobs.find_one_and_update(
-        {"status": "queued", "type": "scrape"},
-        {"$set": {"status": "running", "started_at": datetime.utcnow()}},
-        sort=[("created_at", 1)],
-        return_document=ReturnDocument.AFTER
-    )
+    """Atomically claim the oldest queued scrape job (SKIP LOCKED)."""
+    c = get_conn()
+    try:
+        with c.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT * FROM jobs
+                WHERE status = 'queued' AND type = 'scrape'
+                ORDER BY created_at ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+                """,
+            )
+            row = cur.fetchone()
+            if row is None:
+                c.rollback()
+                return None
+            cur.execute(
+                "UPDATE jobs SET status = 'running', started_at = %s WHERE id = %s",
+                (datetime.now(timezone.utc), row["id"]),
+            )
+            c.commit()
+            return dict(row)
+    except Exception as e:
+        c.rollback()
+        print(f"claim_job error: {e}", flush=True)
+        return None
+
 
 def acquire_lock(supplier_id: str, ttl_minutes: int = 10) -> bool:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     expires = now + timedelta(minutes=ttl_minutes)
+    c = get_conn()
     try:
-        doc = db.locks.find_one_and_update(
-            {"_id": supplier_id, "$or": [{"expires_at": {"$lte": now}}, {"expires_at": {"$exists": False}}, {"locked": {"$ne": True}}]},
-            {"$set": {"locked": True, "expires_at": expires, "updated_at": now}},
-            upsert=True,
-            return_document=ReturnDocument.AFTER
-        )
-        return doc and doc.get("expires_at") and doc["expires_at"] > now
+        with c.cursor() as cur:
+            # Insert or update: only acquire if not locked or lock expired
+            cur.execute(
+                """
+                INSERT INTO locks (id, locked, expires_at, updated_at)
+                VALUES (%s, TRUE, %s, %s)
+                ON CONFLICT (id) DO UPDATE
+                  SET locked = TRUE, expires_at = %s, updated_at = %s
+                WHERE locks.locked = FALSE OR locks.expires_at <= %s
+                RETURNING id
+                """,
+                (supplier_id, expires, now, expires, now, now),
+            )
+            result = cur.fetchone()
+            c.commit()
+            return result is not None
     except Exception as e:
-        print(f"Error acquiring lock: {e}", flush=True)
+        c.rollback()
+        print(f"acquire_lock error: {e}", flush=True)
         return False
 
+
 def release_lock(supplier_id: str):
-    db.locks.update_one({"_id": supplier_id}, {"$set": {"locked": False, "updated_at": datetime.utcnow()}})
+    c = get_conn()
+    try:
+        with c.cursor() as cur:
+            cur.execute(
+                "UPDATE locks SET locked = FALSE, updated_at = %s WHERE id = %s",
+                (datetime.now(timezone.utc), supplier_id),
+            )
+        c.commit()
+    except Exception as e:
+        c.rollback()
+        print(f"release_lock error: {e}", flush=True)
+
+
+def update_job(job_id: str, **fields):
+    c = get_conn()
+    set_clauses = ", ".join(f"{k} = %s" for k in fields)
+    values = list(fields.values()) + [job_id]
+    try:
+        with c.cursor() as cur:
+            cur.execute(f"UPDATE jobs SET {set_clauses} WHERE id = %s", values)
+        c.commit()
+    except Exception as e:
+        c.rollback()
+        print(f"update_job error: {e}", flush=True)
+
 
 def run_supplier_scrape(supplier_id: str, sizes: list, job_id: str):
     from run_scraper import run_supplier
     run_supplier(supplier_id=supplier_id, sizes=sizes, job_id=job_id)
 
+
 def main():
     print(f"Worker started at {datetime.now()}", flush=True)
-    print(f"MongoDB: {MONGO_URL[:50]}...", flush=True)
-    print(f"Database: {DB_NAME}", flush=True)
+    print(f"PostgreSQL: {DATABASE_URL[:40]}...", flush=True)
     print("-" * 50, flush=True)
 
     while True:
@@ -74,8 +141,11 @@ def main():
                 continue
 
             supplier_id = job["supplier_id"]
-            job_id = str(job["_id"])
-            sizes = job["payload"]["sizes"]
+            job_id = job["id"]
+            payload = job.get("payload") or {}
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            sizes = payload.get("sizes", [])
 
             print(f"\n[{datetime.now()}] Processing job {job_id}", flush=True)
             print(f"  Supplier: {supplier_id}", flush=True)
@@ -83,23 +153,27 @@ def main():
 
             if not acquire_lock(supplier_id):
                 print(f"  Could not acquire lock for {supplier_id}, returning to queue", flush=True)
-                db.jobs.update_one({"_id": job["_id"]}, {"$set": {"status": "queued", "started_at": None}})
+                update_job(job_id, status="queued", started_at=None)
                 time.sleep(1)
                 continue
 
             try:
                 print(f"  Lock acquired, running scraper...", flush=True)
                 run_supplier_scrape(supplier_id, sizes, job_id)
-                db.jobs.update_one(
-                    {"_id": job["_id"]},
-                    {"$set": {"status": "done", "finished_at": datetime.utcnow(), "last_error": None}}
+                update_job(
+                    job_id,
+                    status="done",
+                    finished_at=datetime.now(timezone.utc),
+                    last_error=None,
                 )
                 print(f"  Job {job_id} completed successfully", flush=True)
             except Exception as e:
                 print(f"  Job {job_id} failed: {e}", flush=True)
-                db.jobs.update_one(
-                    {"_id": job["_id"]},
-                    {"$set": {"status": "failed", "finished_at": datetime.utcnow(), "last_error": str(e)}}
+                update_job(
+                    job_id,
+                    status="failed",
+                    finished_at=datetime.now(timezone.utc),
+                    last_error=str(e),
                 )
             finally:
                 release_lock(supplier_id)
@@ -111,6 +185,7 @@ def main():
         except Exception as e:
             print(f"Worker error: {e}", flush=True)
             time.sleep(5)
+
 
 if __name__ == "__main__":
     main()

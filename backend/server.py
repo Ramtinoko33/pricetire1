@@ -2,7 +2,6 @@ from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, Backgro
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
@@ -11,6 +10,7 @@ import uuid
 from datetime import datetime, timezone
 import asyncio
 from io import BytesIO
+import json
 
 from models import (
     Supplier, SupplierCreate, SupplierUpdate, SupplierStatus,
@@ -20,16 +20,12 @@ from models import (
 from scraper_service import ScraperService
 from excel_service import ExcelService
 from passlib.context import CryptContext
+from db import get_db, init_schema, close_db, row, rows
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
-
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 scraper_service = ScraperService()
 excel_service = ExcelService()
 
@@ -42,994 +38,1019 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+@app.on_event("startup")
+async def startup():
+    await init_schema()
+    logger.info("API pronta.")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    await close_db()
+
+
+# ==================== Suppliers ====================
+
 @api_router.get("/suppliers", response_model=List[Supplier])
 async def get_suppliers():
-    suppliers = await db.suppliers.find({}, {"_id": 0}).to_list(100)
-    for supplier in suppliers:
-        supplier['password'] = "********"
-    return suppliers
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        rs = await conn.fetch("SELECT * FROM suppliers ORDER BY created_at DESC")
+    result = []
+    for r in rs:
+        d = dict(r)
+        d['password'] = "********"
+        result.append(Supplier(**d))
+    return result
+
 
 @api_router.post("/suppliers", response_model=Supplier)
 async def create_supplier(supplier_data: SupplierCreate):
-    supplier_dict = supplier_data.model_dump()
-    supplier_dict['password_raw'] = supplier_dict['password']  # Store plain text for scraping
-    supplier_dict['password'] = pwd_context.hash(supplier_dict['password'])
-    supplier_dict['id'] = str(uuid.uuid4())
-    supplier_dict['is_active'] = True
-    supplier_dict['status'] = SupplierStatus.ACTIVE.value
-    supplier_dict['last_test'] = None
-    supplier_dict['created_at'] = datetime.now(timezone.utc)
+    d = supplier_data.model_dump()
+    supplier_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
 
-    await db.suppliers.insert_one(supplier_dict)
-    supplier_dict.pop('_id', None)       # MongoDB injeta _id após insert — remover antes do Pydantic
-    supplier_dict['password'] = "********"
-    supplier_dict.pop('password_raw', None)
-    return Supplier(**supplier_dict)
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO suppliers
+                (id, name, url_login, url_search, username, password, password_raw,
+                 selectors, is_active, status, last_test, created_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+            """,
+            supplier_id,
+            d['name'],
+            d['url_login'],
+            d['url_search'],
+            d['username'],
+            pwd_context.hash(d['password']),
+            d['password'],          # password_raw — texto simples para o scraper
+            d.get('selectors') or {},
+            True,
+            SupplierStatus.ACTIVE.value,
+            None,
+            now,
+        )
+
+    return Supplier(
+        id=supplier_id,
+        name=d['name'],
+        url_login=d['url_login'],
+        url_search=d['url_search'],
+        username=d['username'],
+        password="********",
+        selectors=d.get('selectors'),
+        is_active=True,
+        status=SupplierStatus.ACTIVE,
+        last_test=None,
+        created_at=now,
+    )
+
 
 @api_router.put("/suppliers/{supplier_id}", response_model=Supplier)
 async def update_supplier(supplier_id: str, supplier_data: SupplierUpdate):
-    update_dict = {k: v for k, v in supplier_data.model_dump().items() if v is not None}
-    if 'password' in update_dict:
-        update_dict['password'] = pwd_context.hash(update_dict['password'])
-        # Also update password_raw for scraping
-        update_dict['password_raw'] = supplier_data.password
-    
-    result = await db.suppliers.update_one({"id": supplier_id}, {"$set": update_dict})
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Supplier not found")
-    
-    supplier = await db.suppliers.find_one({"id": supplier_id}, {"_id": 0})
-    supplier['password'] = "********"
-    return Supplier(**supplier)
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        existing = row(await conn.fetchrow(
+            "SELECT * FROM suppliers WHERE id = $1", supplier_id
+        ))
+        if not existing:
+            raise HTTPException(status_code=404, detail="Supplier not found")
+
+        updates = {k: v for k, v in supplier_data.model_dump().items() if v is not None}
+        if 'password' in updates:
+            updates['password_raw'] = updates['password']
+            updates['password'] = pwd_context.hash(updates['password'])
+
+        if updates:
+            set_clause = ", ".join(f"{k} = ${i+2}" for i, k in enumerate(updates))
+            values = list(updates.values())
+            await conn.execute(
+                f"UPDATE suppliers SET {set_clause} WHERE id = $1",
+                supplier_id, *values
+            )
+
+        updated = row(await conn.fetchrow(
+            "SELECT * FROM suppliers WHERE id = $1", supplier_id
+        ))
+
+    updated['password'] = "********"
+    return Supplier(**updated)
+
 
 @api_router.get("/suppliers/{supplier_id}/selectors")
 async def get_supplier_selectors(supplier_id: str):
-    """Get CSS selectors for a supplier"""
-    supplier = await db.suppliers.find_one({"id": supplier_id}, {"_id": 0})
-    if not supplier:
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        r = row(await conn.fetchrow(
+            "SELECT selectors FROM suppliers WHERE id = $1", supplier_id
+        ))
+    if not r:
         raise HTTPException(status_code=404, detail="Supplier not found")
-    
-    # Default selectors structure
-    default_selectors = {
-        "login_username": "",
-        "login_password": "",
-        "login_button": "",
-        "search_input": "",
-        "search_button": "",
-        "price_pattern": "",
-        "notes": ""
+
+    defaults = {
+        "login_username": "", "login_password": "", "login_button": "",
+        "search_input": "", "search_button": "", "price_pattern": "", "notes": ""
     }
-    
-    current_selectors = supplier.get('selectors') or {}
-    return {**default_selectors, **current_selectors}
+    current = r.get('selectors') or {}
+    return {**defaults, **current}
+
 
 @api_router.put("/suppliers/{supplier_id}/selectors")
 async def update_supplier_selectors(supplier_id: str, selectors: Dict[str, str]):
-    """Update CSS selectors for a supplier"""
-    supplier = await db.suppliers.find_one({"id": supplier_id}, {"_id": 0})
-    if not supplier:
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE suppliers SET selectors = $2 WHERE id = $1",
+            supplier_id, selectors
+        )
+    if result == "UPDATE 0":
         raise HTTPException(status_code=404, detail="Supplier not found")
-    
-    result = await db.suppliers.update_one(
-        {"id": supplier_id},
-        {"$set": {"selectors": selectors}}
-    )
-    
     return {"message": "Selectors updated", "selectors": selectors}
+
 
 @api_router.delete("/suppliers/{supplier_id}")
 async def delete_supplier(supplier_id: str):
-    result = await db.suppliers.delete_one({"id": supplier_id})
-    if result.deleted_count == 0:
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM suppliers WHERE id = $1", supplier_id
+        )
+    if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="Supplier not found")
     return {"message": "Supplier deleted successfully"}
 
+
 @api_router.post("/suppliers/{supplier_id}/test", response_model=TestLoginResponse)
 async def test_supplier_login(supplier_id: str):
-    supplier = await db.suppliers.find_one({"id": supplier_id}, {"_id": 0})
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        supplier = row(await conn.fetchrow(
+            "SELECT * FROM suppliers WHERE id = $1", supplier_id
+        ))
     if not supplier:
         raise HTTPException(status_code=404, detail="Supplier not found")
-    
+
     try:
         success, message, screenshot = await scraper_service.test_supplier_login(supplier)
-        
-        await db.suppliers.update_one(
-            {"id": supplier_id},
-            {"$set": {
-                "last_test": datetime.now(timezone.utc).isoformat(),
-                "status": SupplierStatus.ACTIVE.value if success else SupplierStatus.ERROR.value
-            }}
-        )
-        
-        log_doc = {
-            "id": str(uuid.uuid4()),
-            "supplier_id": supplier_id,
-            "level": "INFO" if success else "ERROR",
-            "message": f"Login test: {message}",
-            "screenshot_path": screenshot,
-            "created_at": datetime.now(timezone.utc).isoformat()
-        }
-        await db.logs.insert_one(log_doc)
-        
+        now = datetime.now(timezone.utc)
+
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE suppliers SET last_test = $2, status = $3 WHERE id = $1",
+                supplier_id,
+                now,
+                SupplierStatus.ACTIVE.value if success else SupplierStatus.ERROR.value,
+            )
+            await conn.execute(
+                """
+                INSERT INTO logs (id, supplier_id, level, message, screenshot_path, created_at)
+                VALUES ($1,$2,$3,$4,$5,$6)
+                """,
+                str(uuid.uuid4()), supplier_id,
+                "INFO" if success else "ERROR",
+                f"Login test: {message}", screenshot, now,
+            )
+
         return TestLoginResponse(success=success, message=message, screenshot_path=screenshot)
-        
     except Exception as e:
         logger.error(f"Test login error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ==================== Jobs ====================
+
 @api_router.post("/jobs/upload", response_model=Job)
-async def upload_excel(file: UploadFile = File(...), threshold_euro: float = 5.0, threshold_percent: float = 10.0):
+async def upload_excel(
+    file: UploadFile = File(...),
+    threshold_euro: float = 5.0,
+    threshold_percent: float = 10.0,
+):
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="File must be Excel format (.xlsx or .xls)")
-    
+
     try:
         content = await file.read()
         items = excel_service.parse_upload(content, file.filename)
-        
         if not items:
             raise HTTPException(status_code=400, detail="No valid items found in Excel file")
-        
+
         job_id = str(uuid.uuid4())
-        job_dict = {
-            "id": job_id,
-            "filename": file.filename,
-            "status": JobStatus.PENDING.value,
-            "total_items": len(items),
-            "processed_items": 0,
-            "found_items": 0,
-            "total_savings": 0.0,
-            "threshold_euro": threshold_euro,
-            "threshold_percent": threshold_percent,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "started_at": None,
-            "completed_at": None,
-            "error_message": None
-        }
-        
-        await db.jobs.insert_one(job_dict)
-        
-        for item in items:
-            item_doc = {
-                "id": str(uuid.uuid4()),
-                "job_id": job_id,
-                "ref_id": item['ref_id'],
-                "medida": item['medida'],
-                "marca": item['marca'],
-                "modelo": item['modelo'],
-                "indice": item['indice'],
-                "meu_preco": item['meu_preco'],
-                "melhor_preco": None,
-                "melhor_fornecedor": None,
-                "economia_euro": None,
-                "economia_percent": None,
-                "status": ItemStatus.PENDING.value,
-                "supplier_prices": {},
-                "created_at": datetime.now(timezone.utc).isoformat()
-            }
-            await db.job_items.insert_one(item_doc)
-        
-        logger.info(f"Created job {job_id} with {len(items)} items")
-        return Job(**job_dict)
-        
+        now = datetime.now(timezone.utc)
+
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    """
+                    INSERT INTO jobs
+                        (id, filename, status, total_items, processed_items, found_items,
+                         total_savings, threshold_euro, threshold_percent, created_at)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                    """,
+                    job_id, file.filename, JobStatus.PENDING.value,
+                    len(items), 0, 0, 0.0,
+                    threshold_euro, threshold_percent, now,
+                )
+                for item in items:
+                    await conn.execute(
+                        """
+                        INSERT INTO job_items
+                            (id, job_id, ref_id, medida, marca, modelo, indice,
+                             meu_preco, status, supplier_prices, created_at)
+                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                        """,
+                        str(uuid.uuid4()), job_id,
+                        item['ref_id'], item['medida'], item['marca'],
+                        item['modelo'], item['indice'], item['meu_preco'],
+                        ItemStatus.PENDING.value, {}, now,
+                    )
+
+        logger.info(f"Job {job_id} criado com {len(items)} itens")
+        return Job(
+            id=job_id, filename=file.filename, status=JobStatus.PENDING,
+            total_items=len(items), processed_items=0, found_items=0,
+            total_savings=0.0, threshold_euro=threshold_euro,
+            threshold_percent=threshold_percent, created_at=now,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Upload error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
 
+
 @api_router.post("/jobs/{job_id}/run")
 async def run_job(job_id: str, background_tasks: BackgroundTasks):
-    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        job = row(await conn.fetchrow("SELECT * FROM jobs WHERE id = $1", job_id))
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    
     if job['status'] == JobStatus.RUNNING.value:
         raise HTTPException(status_code=400, detail="Job is already running")
-    
-    await db.jobs.update_one(
-        {"id": job_id},
-        {"$set": {
-            "status": JobStatus.RUNNING.value,
-            "started_at": datetime.now(timezone.utc).isoformat()
-        }}
-    )
-    
+
+    pool2 = await get_db()
+    async with pool2.acquire() as conn:
+        await conn.execute(
+            "UPDATE jobs SET status = $2, started_at = $3 WHERE id = $1",
+            job_id, JobStatus.RUNNING.value, datetime.now(timezone.utc),
+        )
+
     background_tasks.add_task(run_scraping_job, job_id)
     return {"message": "Job started", "job_id": job_id}
 
+
 async def run_scraping_job(job_id: str):
+    pool = await get_db()
     try:
-        logger.info(f"Starting scraping job {job_id}")
-        
-        job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
-        items = await db.job_items.find({"job_id": job_id}, {"_id": 0}).to_list(10000)
-        suppliers = await db.suppliers.find({"is_active": True}, {"_id": 0}).to_list(100)
-        
+        logger.info(f"A iniciar job de scraping {job_id}")
+
+        async with pool.acquire() as conn:
+            job = row(await conn.fetchrow("SELECT * FROM jobs WHERE id = $1", job_id))
+            items = rows(await conn.fetch(
+                "SELECT * FROM job_items WHERE job_id = $1", job_id
+            ))
+            suppliers = rows(await conn.fetch(
+                "SELECT * FROM suppliers WHERE is_active = TRUE"
+            ))
+
         if not suppliers:
-            await db.jobs.update_one(
-                {"id": job_id},
-                {"$set": {
-                    "status": JobStatus.FAILED.value,
-                    "error_message": "No active suppliers found",
-                    "completed_at": datetime.now(timezone.utc).isoformat()
-                }}
-            )
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE jobs SET status=$2, error_message=$3, completed_at=$4 WHERE id=$1",
+                    job_id, JobStatus.FAILED.value, "No active suppliers found",
+                    datetime.now(timezone.utc),
+                )
             return
-        
-        processed = 0
-        found = 0
+
+        processed = found = 0
         total_savings = 0.0
-        
+
         for item in items:
-            logger.info(f"Processing item {item['ref_id']}: {item['medida']} {item['marca']} {item['modelo']}")
-            
-            await db.job_items.update_one(
-                {"id": item['id']},
-                {"$set": {"status": ItemStatus.PROCESSING.value}}
-            )
-            
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE job_items SET status=$2 WHERE id=$1",
+                    item['id'], ItemStatus.PROCESSING.value,
+                )
+
             supplier_prices = {}
-            best_price = None
-            best_supplier = None
-            
+            best_price = best_supplier = None
+
             for supplier in suppliers:
                 try:
-                    logger.info(f"Searching in {supplier['name']}...")
-                    
                     price = await scraper_service.scrape_product(
-                        supplier,
-                        item['medida'],
-                        item['marca'],
-                        item['modelo'],
-                        item['indice']
+                        supplier, item['medida'], item['marca'],
+                        item['modelo'], item['indice'],
                     )
-                    
-                    if price is not None:
-                        supplier_prices[supplier['name']] = price
-                        
-                        if best_price is None or price < best_price:
-                            best_price = price
-                            best_supplier = supplier['name']
-                        
-                        price_doc = {
-                            "id": str(uuid.uuid4()),
-                            "job_id": job_id,
-                            "item_id": item['id'],
-                            "supplier_id": supplier['id'],
-                            "supplier_name": supplier['name'],
-                            "price": price,
-                            "status": ItemStatus.FOUND.value,
-                            "found_at": datetime.now(timezone.utc).isoformat()
-                        }
-                        await db.prices.insert_one(price_doc)
-                    else:
-                        supplier_prices[supplier['name']] = "NAO_ENCONTRADO"
-                        
-                        price_doc = {
-                            "id": str(uuid.uuid4()),
-                            "job_id": job_id,
-                            "item_id": item['id'],
-                            "supplier_id": supplier['id'],
-                            "supplier_name": supplier['name'],
-                            "price": None,
-                            "status": ItemStatus.NOT_FOUND.value,
-                            "found_at": datetime.now(timezone.utc).isoformat()
-                        }
-                        await db.prices.insert_one(price_doc)
-                    
+                    now = datetime.now(timezone.utc)
+                    async with pool.acquire() as conn:
+                        if price is not None:
+                            supplier_prices[supplier['name']] = price
+                            if best_price is None or price < best_price:
+                                best_price = price
+                                best_supplier = supplier['name']
+                            await conn.execute(
+                                """
+                                INSERT INTO prices
+                                    (id, job_id, item_id, supplier_id, supplier_name,
+                                     price, status, found_at)
+                                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                                """,
+                                str(uuid.uuid4()), job_id, item['id'],
+                                supplier['id'], supplier['name'],
+                                price, ItemStatus.FOUND.value, now,
+                            )
+                        else:
+                            supplier_prices[supplier['name']] = "NAO_ENCONTRADO"
+                            await conn.execute(
+                                """
+                                INSERT INTO prices
+                                    (id, job_id, item_id, supplier_id, supplier_name,
+                                     price, status, found_at)
+                                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                                """,
+                                str(uuid.uuid4()), job_id, item['id'],
+                                supplier['id'], supplier['name'],
+                                None, ItemStatus.NOT_FOUND.value, now,
+                            )
                     await asyncio.sleep(0.7)
-                    
+
                 except Exception as e:
-                    logger.error(f"Error searching {supplier['name']}: {str(e)}")
+                    logger.error(f"Erro a pesquisar {supplier['name']}: {str(e)}")
                     supplier_prices[supplier['name']] = "ERRO"
-                    
-                    log_doc = {
-                        "id": str(uuid.uuid4()),
-                        "job_id": job_id,
-                        "supplier_id": supplier['id'],
-                        "level": "ERROR",
-                        "message": f"Error searching item {item['ref_id']}: {str(e)}",
-                        "created_at": datetime.now(timezone.utc).isoformat()
-                    }
-                    await db.logs.insert_one(log_doc)
-            
-            economia_euro = None
-            economia_percent = None
+                    async with pool.acquire() as conn:
+                        await conn.execute(
+                            """
+                            INSERT INTO logs
+                                (id, job_id, supplier_id, level, message, created_at)
+                            VALUES ($1,$2,$3,$4,$5,$6)
+                            """,
+                            str(uuid.uuid4()), job_id, supplier['id'],
+                            "ERROR", f"Error searching item {item['ref_id']}: {str(e)}",
+                            datetime.now(timezone.utc),
+                        )
+
+            economia_euro = economia_percent = None
             item_status = ItemStatus.NOT_FOUND.value
-            
             if best_price is not None:
                 economia_euro = item['meu_preco'] - best_price
                 economia_percent = (economia_euro / item['meu_preco']) * 100
-                
                 if economia_euro >= job['threshold_euro'] or economia_percent >= job['threshold_percent']:
                     item_status = ItemStatus.FOUND.value
                     found += 1
                     total_savings += economia_euro
-            
-            await db.job_items.update_one(
-                {"id": item['id']},
-                {"$set": {
-                    "melhor_preco": best_price,
-                    "melhor_fornecedor": best_supplier,
-                    "economia_euro": economia_euro,
-                    "economia_percent": economia_percent,
-                    "status": item_status,
-                    "supplier_prices": supplier_prices
-                }}
-            )
-            
+
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE job_items SET
+                        melhor_preco=$2, melhor_fornecedor=$3,
+                        economia_euro=$4, economia_percent=$5,
+                        status=$6, supplier_prices=$7
+                    WHERE id=$1
+                    """,
+                    item['id'], best_price, best_supplier,
+                    economia_euro, economia_percent,
+                    item_status, supplier_prices,
+                )
+
             processed += 1
-            
-            await db.jobs.update_one(
-                {"id": job_id},
-                {"$set": {
-                    "processed_items": processed,
-                    "found_items": found,
-                    "total_savings": total_savings
-                }}
-            )
-        
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE jobs SET processed_items=$2, found_items=$3, total_savings=$4 WHERE id=$1",
+                    job_id, processed, found, total_savings,
+                )
+
         for supplier in suppliers:
             await scraper_service.cleanup_supplier(supplier['id'])
-        
-        await db.jobs.update_one(
-            {"id": job_id},
-            {"$set": {
-                "status": JobStatus.COMPLETED.value,
-                "completed_at": datetime.now(timezone.utc).isoformat()
-            }}
-        )
-        
-        logger.info(f"Job {job_id} completed. Processed: {processed}, Found: {found}, Savings: €{total_savings:.2f}")
-        
+
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE jobs SET status=$2, completed_at=$3 WHERE id=$1",
+                job_id, JobStatus.COMPLETED.value, datetime.now(timezone.utc),
+            )
+        logger.info(f"Job {job_id} concluído. Processados: {processed}, Encontrados: {found}")
+
     except Exception as e:
-        logger.error(f"Job {job_id} failed: {str(e)}")
-        await db.jobs.update_one(
-            {"id": job_id},
-            {"$set": {
-                "status": JobStatus.FAILED.value,
-                "error_message": str(e),
-                "completed_at": datetime.now(timezone.utc).isoformat()
-            }}
-        )
+        logger.error(f"Job {job_id} falhou: {str(e)}")
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE jobs SET status=$2, error_message=$3, completed_at=$4 WHERE id=$1",
+                job_id, JobStatus.FAILED.value, str(e), datetime.now(timezone.utc),
+            )
+
 
 @api_router.get("/jobs", response_model=List[Job])
 async def get_jobs():
-    # Filter out scrape queue jobs (which have type field)
-    jobs = await db.jobs.find({"type": {"$exists": False}}, {"_id": 0}).sort("created_at", -1).to_list(100)
-    return [Job(**job) for job in jobs]
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        rs = rows(await conn.fetch(
+            "SELECT * FROM jobs WHERE type IS NULL ORDER BY created_at DESC LIMIT 100"
+        ))
+    return [Job(**r) for r in rs]
+
 
 @api_router.get("/jobs/{job_id}", response_model=Job)
 async def get_job(job_id: str):
-    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
-    if not job:
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        r = row(await conn.fetchrow("SELECT * FROM jobs WHERE id = $1", job_id))
+    if not r:
         raise HTTPException(status_code=404, detail="Job not found")
-    return Job(**job)
+    return Job(**r)
+
 
 @api_router.get("/jobs/{job_id}/progress", response_model=JobProgress)
 async def get_job_progress(job_id: str):
-    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
-    if not job:
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        r = row(await conn.fetchrow("SELECT * FROM jobs WHERE id = $1", job_id))
+    if not r:
         raise HTTPException(status_code=404, detail="Job not found")
-    
-    progress_percent = (job['processed_items'] / job['total_items'] * 100) if job['total_items'] > 0 else 0
-    
+    pct = (r['processed_items'] / r['total_items'] * 100) if r['total_items'] > 0 else 0
     return JobProgress(
         job_id=job_id,
-        status=JobStatus(job['status']),
-        total_items=job['total_items'],
-        processed_items=job['processed_items'],
-        found_items=job['found_items'],
-        progress_percent=round(progress_percent, 1)
+        status=JobStatus(r['status']),
+        total_items=r['total_items'],
+        processed_items=r['processed_items'],
+        found_items=r['found_items'],
+        progress_percent=round(pct, 1),
     )
+
 
 @api_router.get("/jobs/{job_id}/results")
 async def get_job_results(job_id: str):
-    items = await db.job_items.find({"job_id": job_id}, {"_id": 0}).to_list(10000)
-    return items
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        rs = rows(await conn.fetch(
+            "SELECT * FROM job_items WHERE job_id = $1", job_id
+        ))
+    return rs
+
 
 @api_router.post("/jobs/{job_id}/compare")
 async def compare_job_with_scraped_prices(job_id: str):
     """
-    Compare job items with scraped prices using 3-level hierarchical matching:
-    
-    Nível 1: medida + marca + modelo (regex parcial)
-    Nível 2: medida + marca (se não encontrar modelo)
-    Nível 3: medida apenas (se não encontrar marca)
-    
-    NUNCA mostra linha vazia - sempre mostra o melhor resultado com nível de match
+    Compara itens do job com preços raspados — matching hierárquico 3 níveis:
+    Nível 1: medida + marca + modelo
+    Nível 2: medida + marca
+    Nível 3: medida apenas
     """
     import re
-    
-    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    items = await db.job_items.find({"job_id": job_id}, {"_id": 0}).to_list(10000)
-    
-    if not items:
-        raise HTTPException(status_code=400, detail="No items found in job")
-    
-    # OPTIMIZATION: Bulk fetch all unique medidas from items
-    unique_medidas = set()
-    for item in items:
-        medida_norm = item['medida'].replace('/', '').replace('R', '').replace('r', '')
-        unique_medidas.add(medida_norm)
-    
-    # Fetch ALL scraped prices for these medidas in ONE query
-    all_scraped_prices = await db.scraped_prices.find(
-        {
-            "medida": {"$in": list(unique_medidas)},
-            "price": {"$ne": None}
-        },
-        {"_id": 0}
-    ).to_list(50000)
-    
-    # Index scraped prices by medida for fast lookup
-    prices_by_medida = {}
-    for sp in all_scraped_prices:
-        medida = sp.get('medida', '')
-        if medida not in prices_by_medida:
-            prices_by_medida[medida] = []
-        prices_by_medida[medida].append(sp)
-    
-    updated_count = 0
-    found_count = 0
-    matched_count = 0
+
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        job = row(await conn.fetchrow("SELECT * FROM jobs WHERE id = $1", job_id))
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        items = rows(await conn.fetch(
+            "SELECT * FROM job_items WHERE job_id = $1", job_id
+        ))
+        if not items:
+            raise HTTPException(status_code=400, detail="No items found in job")
+
+        unique_medidas = list({
+            item['medida'].replace('/', '').replace('R', '').replace('r', '')
+            for item in items
+        })
+        all_scraped = rows(await conn.fetch(
+            """
+            SELECT * FROM scraped_prices
+            WHERE medida = ANY($1) AND price IS NOT NULL
+            """,
+            unique_medidas,
+        ))
+
+    # Indexar por medida
+    prices_by_medida: Dict[str, list] = {}
+    for sp in all_scraped:
+        m = sp.get('medida', '')
+        prices_by_medida.setdefault(m, []).append(sp)
+
+    updated_count = found_count = matched_count = 0
     total_savings = 0.0
-    
-    # Prepare bulk updates
     bulk_updates = []
-    
+
     for item in items:
-        # Normalize medida and marca for matching
         medida_norm = item['medida'].replace('/', '').replace('R', '').replace('r', '')
-        marca_norm = (item.get('marca') or '').strip().upper()
+        marca_norm  = (item.get('marca')  or '').strip().upper()
         modelo_norm = (item.get('modelo') or '').strip().upper()
-        
+
         scraped = []
         match_type = None
-        matched_modelo = None
-        
-        # Get all prices for this medida from pre-fetched data
         medida_prices = prices_by_medida.get(medida_norm, [])
-        
+
         if medida_prices:
-            # ============================================================
-            # NÍVEL 1: medida + marca + modelo (regex parcial)
-            # ============================================================
             if marca_norm and modelo_norm:
-                # Filter by marca first
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').upper() == marca_norm]
-                
                 if marca_prices:
-                    # Try exact model match first
-                    modelo_pattern_exact = re.compile(f"^{re.escape(modelo_norm)}$", re.IGNORECASE)
-                    scraped = [p for p in marca_prices if modelo_pattern_exact.match(p.get('modelo') or '')]
-                    
+                    pat_exact = re.compile(f"^{re.escape(modelo_norm)}$", re.IGNORECASE)
+                    scraped = [p for p in marca_prices if pat_exact.match(p.get('modelo') or '')]
                     if scraped:
                         match_type = "modelo_exato"
                     else:
-                        # Try partial model match (model starts with search term)
-                        modelo_pattern_starts = re.compile(f"^{re.escape(modelo_norm)}(\\s|$)", re.IGNORECASE)
-                        scraped = [p for p in marca_prices if modelo_pattern_starts.match(p.get('modelo') or '')]
-                        
+                        pat_start = re.compile(f"^{re.escape(modelo_norm)}(\\s|$)", re.IGNORECASE)
+                        scraped = [p for p in marca_prices if pat_start.match(p.get('modelo') or '')]
                         if scraped:
                             match_type = "modelo_parcial"
                         else:
-                            # Try model contains search term
-                            modelo_pattern_contains = re.compile(re.escape(modelo_norm), re.IGNORECASE)
-                            scraped = [p for p in marca_prices if modelo_pattern_contains.search(p.get('modelo') or '')]
-                            
+                            pat_contains = re.compile(re.escape(modelo_norm), re.IGNORECASE)
+                            scraped = [p for p in marca_prices if pat_contains.search(p.get('modelo') or '')]
                             if scraped:
                                 match_type = "modelo_parcial"
-            
-            # ============================================================
-            # NÍVEL 2: medida + marca (se não encontrou modelo)
-            # ============================================================
+
             if not scraped and marca_norm:
-                # Filter by marca
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').upper() == marca_norm]
-                
                 if marca_prices:
                     scraped = marca_prices
                     match_type = "marca"
                 else:
-                    # Try partial brand match (GOOD YEAR vs GOODYEAR)
-                    marca_pattern = re.compile(f"^{marca_norm.replace(' ', '.*')}$", re.IGNORECASE)
-                    scraped = [p for p in medida_prices if marca_pattern.match(p.get('marca') or '')]
-                    
+                    pat_marca = re.compile(f"^{marca_norm.replace(' ', '.*')}$", re.IGNORECASE)
+                    scraped = [p for p in medida_prices if pat_marca.match(p.get('marca') or '')]
                     if scraped:
                         match_type = "marca_parcial"
-            
-            # ============================================================
-            # NÍVEL 3: medida apenas (se não encontrou marca)
-            # ============================================================
+
             if not scraped:
                 scraped = medida_prices
                 match_type = "medida"
-        
-        # Sort by price and get best result
+
         if scraped:
             scraped = sorted(scraped, key=lambda x: x.get('price', 999999))
             best = scraped[0]
-            best_price = best['price']
+            best_price    = best['price']
             best_supplier = best['supplier_name']
-            best_marca = best.get('marca', '')
-            matched_modelo = best.get('modelo', '')
-            
-            # Calculate savings
-            meu_preco = item.get('meu_preco', 0)
-            economia_euro = meu_preco - best_price if meu_preco else None
+            best_marca    = best.get('marca', '')
+            best_modelo   = best.get('modelo', '')
+            meu_preco     = item.get('meu_preco', 0)
+            economia_euro    = meu_preco - best_price if meu_preco else None
             economia_percent = (economia_euro / meu_preco * 100) if meu_preco and economia_euro else None
-            
-            # Build supplier_prices dict
-            supplier_prices = {}
+            sup_prices = {}
             for s in scraped:
-                key = s['supplier_name']
-                if key not in supplier_prices or s['price'] < supplier_prices[key]:
-                    supplier_prices[key] = s['price']
-            
-            bulk_updates.append({
-                "filter": {"id": item['id']},
-                "update": {"$set": {
-                    "melhor_preco": best_price,
-                    "melhor_fornecedor": best_supplier,
-                    "melhor_marca": best_marca,
-                    "modelo_encontrado": matched_modelo,
-                    "match_type": match_type,
-                    "economia_euro": round(economia_euro, 2) if economia_euro else None,
-                    "economia_percent": round(economia_percent, 2) if economia_percent else None,
-                    "supplier_prices": supplier_prices,
-                    "status": "found" if economia_euro and economia_euro > 0 else "processed"
-                }}
-            })
-            
+                k = s['supplier_name']
+                if k not in sup_prices or s['price'] < sup_prices[k]:
+                    sup_prices[k] = s['price']
+
+            bulk_updates.append((
+                item['id'], best_price, best_supplier, best_marca, best_modelo,
+                match_type,
+                round(economia_euro, 2) if economia_euro else None,
+                round(economia_percent, 2) if economia_percent else None,
+                sup_prices,
+                "found" if economia_euro and economia_euro > 0 else "processed",
+            ))
             updated_count += 1
             matched_count += 1
             if economia_euro and economia_euro > 0:
                 found_count += 1
                 total_savings += economia_euro
         else:
-            # No prices at all for this medida in database
-            bulk_updates.append({
-                "filter": {"id": item['id']},
-                "update": {"$set": {
-                    "melhor_preco": None,
-                    "melhor_fornecedor": None,
-                    "melhor_marca": None,
-                    "modelo_encontrado": None,
-                    "match_type": "sem_dados",
-                    "economia_euro": None,
-                    "economia_percent": None,
-                    "supplier_prices": {},
-                    "status": "no_data"
-                }}
-            })
+            bulk_updates.append((
+                item['id'], None, None, None, None, "sem_dados",
+                None, None, {}, "no_data",
+            ))
             updated_count += 1
-    
-    # Execute bulk updates
-    if bulk_updates:
-        from pymongo import UpdateOne
-        operations = [UpdateOne(u["filter"], u["update"]) for u in bulk_updates]
-        await db.job_items.bulk_write(operations)
-    
-    # Update job stats
-    await db.jobs.update_one(
-        {"id": job_id},
-        {"$set": {
-            "processed_items": updated_count,
-            "found_items": found_count,
-            "matched_items": matched_count,
-            "total_savings": round(total_savings, 2),
-            "status": JobStatus.COMPLETED.value,
-            "completed_at": datetime.now(timezone.utc).isoformat()
-        }}
-    )
-    
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            for u in bulk_updates:
+                await conn.execute(
+                    """
+                    UPDATE job_items SET
+                        melhor_preco=$2, melhor_fornecedor=$3, melhor_marca=$4,
+                        modelo_encontrado=$5, match_type=$6,
+                        economia_euro=$7, economia_percent=$8,
+                        supplier_prices=$9, status=$10
+                    WHERE id=$1
+                    """,
+                    *u,
+                )
+            await conn.execute(
+                """
+                UPDATE jobs SET
+                    processed_items=$2, found_items=$3, matched_items=$4,
+                    total_savings=$5, status=$6, completed_at=$7
+                WHERE id=$1
+                """,
+                job_id, updated_count, found_count, matched_count,
+                round(total_savings, 2), JobStatus.COMPLETED.value,
+                datetime.now(timezone.utc),
+            )
+
     return {
         "message": "Comparison completed",
         "items_processed": updated_count,
         "items_matched": matched_count,
         "items_with_savings": found_count,
-        "total_savings": round(total_savings, 2)
+        "total_savings": round(total_savings, 2),
     }
+
 
 @api_router.delete("/jobs/{job_id}")
 async def delete_job(job_id: str):
-    """Delete job and all related data"""
-    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    # Delete job items
-    await db.job_items.delete_many({"job_id": job_id})
-    
-    # Delete prices
-    await db.prices.delete_many({"job_id": job_id})
-    
-    # Delete logs related to this job
-    await db.logs.delete_many({"job_id": job_id})
-    
-    # Delete job
-    await db.jobs.delete_one({"id": job_id})
-    
-    logger.info(f"Deleted job {job_id} and all related data")
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        r = row(await conn.fetchrow("SELECT id FROM jobs WHERE id = $1", job_id))
+        if not r:
+            raise HTTPException(status_code=404, detail="Job not found")
+        async with conn.transaction():
+            await conn.execute("DELETE FROM job_items WHERE job_id = $1", job_id)
+            await conn.execute("DELETE FROM prices    WHERE job_id = $1", job_id)
+            await conn.execute("DELETE FROM logs      WHERE job_id = $1", job_id)
+            await conn.execute("DELETE FROM jobs      WHERE id     = $1", job_id)
+    logger.info(f"Job {job_id} e dados relacionados eliminados")
     return {"message": "Job deleted successfully"}
+
 
 @api_router.get("/jobs/{job_id}/export")
 async def export_job_results(job_id: str):
-    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    items = await db.job_items.find({"job_id": job_id}, {"_id": 0}).to_list(10000)
-    suppliers = await db.suppliers.find({"is_active": True}, {"_id": 0}).to_list(100)
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        job = row(await conn.fetchrow("SELECT * FROM jobs WHERE id = $1", job_id))
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        items = rows(await conn.fetch("SELECT * FROM job_items WHERE job_id = $1", job_id))
+        suppliers = rows(await conn.fetch("SELECT name FROM suppliers WHERE is_active = TRUE"))
+
     supplier_names = [s['name'] for s in suppliers]
-    
     try:
         excel_bytes = excel_service.generate_results(job, items, supplier_names)
-        
         return StreamingResponse(
             BytesIO(excel_bytes),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename=results_{job_id[:8]}.xlsx"}
+            headers={"Content-Disposition": f"attachment; filename=results_{job_id[:8]}.xlsx"},
         )
     except Exception as e:
         logger.error(f"Export error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ==================== Logs ====================
+
 @api_router.get("/logs")
 async def get_logs(job_id: Optional[str] = None, limit: int = 100):
-    query = {}
-    if job_id:
-        query["job_id"] = job_id
-    
-    logs = await db.logs.find(query, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
-    return logs
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        if job_id:
+            rs = rows(await conn.fetch(
+                "SELECT * FROM logs WHERE job_id = $1 ORDER BY created_at DESC LIMIT $2",
+                job_id, limit,
+            ))
+        else:
+            rs = rows(await conn.fetch(
+                "SELECT * FROM logs ORDER BY created_at DESC LIMIT $1", limit
+            ))
+    return rs
+
+
+# ==================== Stats ====================
 
 @api_router.get("/stats")
 async def get_stats():
-    total_jobs = await db.jobs.count_documents({})
-    completed_jobs = await db.jobs.count_documents({"status": JobStatus.COMPLETED.value})
-    active_suppliers = await db.suppliers.count_documents({"is_active": True})
-    
-    pipeline = [
-        {"$match": {"status": JobStatus.COMPLETED.value}},
-        {"$group": {"_id": None, "total": {"$sum": "$total_savings"}}}
-    ]
-    savings_result = await db.jobs.aggregate(pipeline).to_list(10000)
-    total_savings = savings_result[0]['total'] if savings_result else 0.0
-    
-    recent_jobs = await db.jobs.find({}, {"_id": 0}).sort("created_at", -1).limit(5).to_list(5)
-    
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        total_jobs     = await conn.fetchval("SELECT COUNT(*) FROM jobs WHERE type IS NULL")
+        completed_jobs = await conn.fetchval(
+            "SELECT COUNT(*) FROM jobs WHERE type IS NULL AND status = $1",
+            JobStatus.COMPLETED.value,
+        )
+        active_suppliers = await conn.fetchval(
+            "SELECT COUNT(*) FROM suppliers WHERE is_active = TRUE"
+        )
+        total_savings = await conn.fetchval(
+            "SELECT COALESCE(SUM(total_savings), 0) FROM jobs WHERE status = $1",
+            JobStatus.COMPLETED.value,
+        ) or 0.0
+        recent_jobs = rows(await conn.fetch(
+            "SELECT * FROM jobs WHERE type IS NULL ORDER BY created_at DESC LIMIT 5"
+        ))
+
     return {
         "total_jobs": total_jobs,
         "completed_jobs": completed_jobs,
         "active_suppliers": active_suppliers,
-        "total_savings": round(total_savings, 2),
-        "recent_jobs": recent_jobs
+        "total_savings": round(float(total_savings), 2),
+        "recent_jobs": recent_jobs,
     }
 
-# ==================== Manual Scraper Endpoints ====================
 
-scraper_status = {
-    "running": False,
-    "started_at": None,
-    "progress": "",
-    "results": []
-}
+# ==================== Manual Scraper ====================
+
+scraper_status = {"running": False, "started_at": None, "progress": "", "results": []}
+
 
 async def run_manual_scraper(medidas: list):
-    """Background task to run the scraper"""
     import subprocess
     global scraper_status
-    
-    scraper_status["running"] = True
-    scraper_status["started_at"] = datetime.now(timezone.utc).isoformat()
-    scraper_status["progress"] = "Starting scraper..."
-    scraper_status["results"] = []
-    
+    scraper_status.update(running=True, started_at=datetime.now(timezone.utc).isoformat(),
+                          progress="Starting scraper...", results=[])
     try:
         medidas_str = ','.join(medidas)
-        
         env = os.environ.copy()
         env['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
-        
         process = subprocess.Popen(
             ['python3', '/app/backend/run_scraper.py', '--medidas', medidas_str],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            env=env,
-            cwd='/app/backend'
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            env=env, cwd='/app/backend',
         )
-        
         output_lines = []
         for line in iter(process.stdout.readline, ''):
             if line:
                 output_lines.append(line.strip())
                 scraper_status["progress"] = line.strip()
-                logger.info(f"Scraper: {line.strip()}")
-        
         process.wait()
-        
         scraper_status["progress"] = "Completed"
-        scraper_status["results"] = output_lines[-20:]  # Last 20 lines
-        
+        scraper_status["results"] = output_lines[-20:]
     except Exception as e:
         scraper_status["progress"] = f"Error: {str(e)}"
         logger.error(f"Scraper error: {e}")
     finally:
         scraper_status["running"] = False
 
+
 @api_router.post("/scraper/run")
-async def start_manual_scraper(background_tasks: BackgroundTasks, medidas: list = Body(default=None)):
-    """Start the manual scraper in background"""
+async def start_manual_scraper(
+    background_tasks: BackgroundTasks,
+    medidas: list = Body(default=None),
+):
     global scraper_status
-    
     if scraper_status["running"]:
         raise HTTPException(status_code=409, detail="Scraper is already running")
-    
+
     if not medidas:
-        # Get medidas from pending jobs
-        pending_jobs = await db.jobs.find({"status": {"$in": ["pending", "running"]}}).to_list(10)
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            pending_jobs = rows(await conn.fetch(
+                "SELECT id FROM jobs WHERE status = ANY($1) AND type IS NULL",
+                ['pending', 'running'],
+            ))
         medidas = []
         for job in pending_jobs:
-            job_id = job.get("id")
-            if not job_id:
-                continue
-            items = await db.job_items.find({"job_id": job_id}).to_list(100)
-            for item in items:
-                medida = item.get("medida", "").replace("/", "").replace("R", "")
-                if medida and medida not in medidas:
-                    medidas.append(medida)
-        
+            pool2 = await get_db()
+            async with pool2.acquire() as conn:
+                job_items_list = rows(await conn.fetch(
+                    "SELECT medida FROM job_items WHERE job_id = $1", job['id']
+                ))
+            for it in job_items_list:
+                m = it.get("medida", "").replace("/", "").replace("R", "")
+                if m and m not in medidas:
+                    medidas.append(m)
         if not medidas:
-            medidas = ["2055516"]  # Default test
-    
+            medidas = ["2055516"]
+
     background_tasks.add_task(run_manual_scraper, medidas)
-    
     return {"message": "Scraper started", "medidas": medidas}
+
 
 @api_router.get("/scraper/status")
 async def get_scraper_status():
-    """Get current scraper status"""
     return scraper_status
+
 
 @api_router.get("/scraper/availability")
 async def check_scraper_availability():
-    """Check if Playwright scraper is available in this environment"""
     pw_path = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
-    from pathlib import Path
-    chromium_path = Path(pw_path) / 'chromium_headless_shell-1208'
-    available = chromium_path.exists()
-    
+    chromium_dirs = list(Path(pw_path).glob('chromium_headless_shell-*'))
+    available = len(chromium_dirs) > 0
     return {
         "available": available,
         "playwright_path": pw_path,
-        "message": "Scraping is available" if available else "Playwright browsers not installed. Scraping features are disabled."
+        "message": "Scraping is available" if available else "Playwright browsers not installed.",
     }
 
+
+# ==================== Scraped Prices ====================
+
 @api_router.get("/scraped-prices")
-async def get_scraped_prices(medida: str = None, marca: str = None, modelo: str = None, load_index: str = None):
-    """Get scraped prices from database"""
-    query = {}
+async def get_scraped_prices(
+    medida: str = None, marca: str = None,
+    modelo: str = None, load_index: str = None,
+):
+    conditions = ["TRUE"]
+    params: list = []
+
+    def add(col, val, like=False):
+        params.append(f"%{val}%" if like else val)
+        conditions.append(f"{col} ILIKE ${len(params)}" if like else f"{col} ILIKE ${len(params)}")
+
     if medida:
-        medida_norm = medida.replace("/", "").replace("R", "")
-        query["medida"] = {"$regex": medida_norm, "$options": "i"}
+        mn = medida.replace("/", "").replace("R", "")
+        params.append(f"%{mn}%")
+        conditions.append(f"medida ILIKE ${len(params)}")
     if marca:
-        query["marca"] = {"$regex": marca.strip(), "$options": "i"}
+        params.append(f"%{marca.strip()}%")
+        conditions.append(f"marca ILIKE ${len(params)}")
     if modelo:
-        query["modelo"] = {"$regex": modelo.strip(), "$options": "i"}
+        params.append(f"%{modelo.strip()}%")
+        conditions.append(f"modelo ILIKE ${len(params)}")
     if load_index:
-        query["load_index"] = {"$regex": load_index.strip(), "$options": "i"}
-    
-    prices = await db.scraped_prices.find(query, {"_id": 0}).sort("scraped_at", -1).to_list(100)
-    return prices
+        params.append(f"%{load_index.strip()}%")
+        conditions.append(f"load_index ILIKE ${len(params)}")
+
+    where = " AND ".join(conditions)
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        rs = rows(await conn.fetch(
+            f"SELECT * FROM scraped_prices WHERE {where} ORDER BY scraped_at DESC LIMIT 100",
+            *params,
+        ))
+    return rs
+
 
 @api_router.get("/scraped-prices/best/{medida}")
 async def get_best_price(medida: str):
-    """Get best price for a specific tire size"""
-    medida_norm = medida.replace("/", "").replace("R", "")
-    
-    prices = await db.scraped_prices.find(
-        {"medida": {"$regex": medida_norm, "$options": "i"}, "price": {"$ne": None}},
-        {"_id": 0}
-    ).sort("price", 1).to_list(100)
-    
-    if prices:
-        best = prices[0]
+    mn = medida.replace("/", "").replace("R", "")
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        rs = rows(await conn.fetch(
+            """
+            SELECT * FROM scraped_prices
+            WHERE medida ILIKE $1 AND price IS NOT NULL
+            ORDER BY price ASC LIMIT 100
+            """,
+            f"%{mn}%",
+        ))
+    if rs:
+        best = rs[0]
         return {
             "medida": medida,
             "best_price": best["price"],
             "best_supplier": best["supplier_name"],
             "scraped_at": best.get("scraped_at"),
-            "all_prices": [{"supplier": p["supplier_name"], "price": p["price"]} for p in prices]
+            "all_prices": [{"supplier": p["supplier_name"], "price": p["price"]} for p in rs],
         }
-    
     return {"medida": medida, "best_price": None, "message": "No prices found"}
 
-# ==================== Worker Queue Endpoints ====================
+
+# ==================== Worker Queue ====================
 
 from pydantic import BaseModel as PydanticBaseModel
+
 
 class EnqueueReq(PydanticBaseModel):
     supplier_id: str
     sizes: List[str]
     meta: Optional[dict] = None
 
+
 @api_router.post("/scrape/enqueue")
 async def enqueue_scrape(req: EnqueueReq):
-    """Enqueue a scraping job for the worker"""
-    job = {
-        "type": "scrape",
-        "supplier_id": req.supplier_id,
-        "payload": {"sizes": req.sizes, "meta": req.meta or {}},
-        "status": "queued",
-        "attempts": 0,
-        "created_at": datetime.utcnow(),
-        "started_at": None,
-        "finished_at": None,
-        "last_error": None,
-    }
-    res = await db.jobs.insert_one(job)
-    return {"ok": True, "job_id": str(res.inserted_id)}
+    job_id = str(uuid.uuid4())
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO jobs
+                (id, type, supplier_id, payload, status, attempts, created_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7)
+            """,
+            job_id, "scrape", req.supplier_id,
+            {"sizes": req.sizes, "meta": req.meta or {}},
+            "queued", 0, datetime.now(timezone.utc),
+        )
+    return {"ok": True, "job_id": job_id}
+
 
 @api_router.get("/scrape/jobs")
 async def get_scrape_jobs(status: str = None, limit: int = 20):
-    """Get scraping jobs from queue"""
-    query = {"type": "scrape"}
-    if status:
-        query["status"] = status
-    
-    jobs = await db.jobs.find(query).sort("created_at", -1).limit(limit).to_list(limit)
-    
-    # Convert ObjectId to string
-    for job in jobs:
-        job["_id"] = str(job["_id"])
-    
-    return jobs
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        if status:
+            rs = rows(await conn.fetch(
+                "SELECT * FROM jobs WHERE type='scrape' AND status=$1 ORDER BY created_at DESC LIMIT $2",
+                status, limit,
+            ))
+        else:
+            rs = rows(await conn.fetch(
+                "SELECT * FROM jobs WHERE type='scrape' ORDER BY created_at DESC LIMIT $1", limit
+            ))
+    return rs
+
 
 @api_router.get("/scrape/jobs/{job_id}")
 async def get_scrape_job(job_id: str):
-    """Get a specific scraping job"""
-    from bson import ObjectId
-    try:
-        job = await db.jobs.find_one({"_id": ObjectId(job_id)})
-        if job:
-            job["_id"] = str(job["_id"])
-            return job
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        r = row(await conn.fetchrow(
+            "SELECT * FROM jobs WHERE id = $1 AND type = 'scrape'", job_id
+        ))
+    if not r:
         raise HTTPException(status_code=404, detail="Job not found")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return r
 
-# ============ Worker Management ============
+
+# ==================== Worker Management ====================
 
 @api_router.get("/worker/status")
 async def get_worker_status():
-    """Check if the worker is running"""
     import subprocess
     try:
         result = subprocess.run(
             ["pgrep", "-f", "worker.py"],
-            capture_output=True,
-            text=True,
-            timeout=5
+            capture_output=True, text=True, timeout=5,
         )
         is_running = result.returncode == 0
         pids = result.stdout.strip().split('\n') if is_running else []
-        
-        # Get recent job activity
-        recent_jobs = await db.jobs.find({"type": "scrape"}).sort("created_at", -1).limit(5).to_list(5)
-        queued_count = await db.jobs.count_documents({"type": "scrape", "status": "queued"})
-        running_count = await db.jobs.count_documents({"type": "scrape", "status": "running"})
-        
-        return {
-            "running": is_running,
-            "pids": pids,
-            "queued_jobs": queued_count,
-            "running_jobs": running_count,
-            "recent_jobs": len(recent_jobs)
-        }
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            queued_count  = await conn.fetchval(
+                "SELECT COUNT(*) FROM jobs WHERE type='scrape' AND status='queued'"
+            )
+            running_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM jobs WHERE type='scrape' AND status='running'"
+            )
+        return {"running": is_running, "pids": pids,
+                "queued_jobs": queued_count, "running_jobs": running_count}
     except Exception as e:
         return {"running": False, "error": str(e)}
 
+
 @api_router.post("/worker/start")
 async def start_worker():
-    """Start the worker process if not running"""
     import subprocess
-    import os
-    
-    # Check if already running
     check = subprocess.run(["pgrep", "-f", "worker.py"], capture_output=True, text=True)
     if check.returncode == 0:
         return {"ok": True, "message": "Worker already running", "pid": check.stdout.strip()}
-    
-    # Start worker using the venv python
     try:
-        # Use the same venv as the backend
         python_path = "/root/.venv/bin/python3"
         cmd = f"cd /app/backend && nohup {python_path} worker.py >> /tmp/worker.log 2>&1 &"
         proc = await asyncio.create_subprocess_shell(cmd)
         await proc.wait()
-
-        # Wait a bit and check if it started
         await asyncio.sleep(3)
-        
         check = subprocess.run(["pgrep", "-f", "worker.py"], capture_output=True, text=True)
         if check.returncode == 0:
             return {"ok": True, "message": "Worker started successfully", "pid": check.stdout.strip()}
-        else:
-            # Read log for errors
-            try:
-                with open("/tmp/worker.log", "r") as f:
-                    last_lines = f.read().split('\n')[-10:]
-                return {"ok": False, "message": "Worker failed to start", "log": last_lines}
-            except:
-                return {"ok": False, "message": "Worker failed to start"}
+        try:
+            with open("/tmp/worker.log") as f:
+                last_lines = f.read().split('\n')[-10:]
+            return {"ok": False, "message": "Worker failed to start", "log": last_lines}
+        except Exception:
+            return {"ok": False, "message": "Worker failed to start"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
+
 class EnqueueBatchReq(PydanticBaseModel):
     sizes: List[str]
-    supplier_ids: Optional[List[str]] = None  # If None, use all active suppliers
+    supplier_ids: Optional[List[str]] = None
+
 
 @api_router.post("/scrape/enqueue-batch")
 async def enqueue_batch_scrape(req: EnqueueBatchReq):
-    """Enqueue scraping jobs for multiple suppliers and sizes at once"""
-    # Get suppliers
-    if req.supplier_ids:
-        # Use provided supplier IDs
-        suppliers = []
-        for sid in req.supplier_ids:
-            supplier = await db.suppliers.find_one({"id": sid, "is_active": True}, {"_id": 0})
-            if not supplier:
-                supplier = await db.suppliers.find_one({"name": {"$regex": sid, "$options": "i"}, "is_active": True}, {"_id": 0})
-            if supplier:
-                suppliers.append(supplier)
-    else:
-        # Use all active suppliers
-        suppliers = await db.suppliers.find({"is_active": True}, {"_id": 0}).to_list(100)
-    
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        if req.supplier_ids:
+            suppliers = []
+            for sid in req.supplier_ids:
+                r = row(await conn.fetchrow(
+                    "SELECT * FROM suppliers WHERE (id=$1 OR name ILIKE $2) AND is_active=TRUE",
+                    sid, f"%{sid}%",
+                ))
+                if r:
+                    suppliers.append(r)
+        else:
+            suppliers = rows(await conn.fetch(
+                "SELECT * FROM suppliers WHERE is_active = TRUE"
+            ))
+
     if not suppliers:
         raise HTTPException(status_code=400, detail="No active suppliers found")
-    
-    # Normalize sizes
-    normalized_sizes = []
-    for size in req.sizes:
-        norm = size.strip().replace('/', '').replace('R', '').replace('r', '')
-        if norm:
-            normalized_sizes.append(norm)
-    
-    if not normalized_sizes:
+
+    normalized = [s.strip().replace('/', '').replace('R', '').replace('r', '')
+                  for s in req.sizes if s.strip()]
+    if not normalized:
         raise HTTPException(status_code=400, detail="No valid sizes provided")
-    
-    # Create jobs for each supplier
+
     job_ids = []
-    for supplier in suppliers:
-        job = {
-            "type": "scrape",
-            "supplier_id": supplier['id'],
-            "supplier_name": supplier['name'],
-            "payload": {"sizes": normalized_sizes},
-            "status": "queued",
-            "attempts": 0,
-            "created_at": datetime.utcnow(),
-            "started_at": None,
-            "finished_at": None,
-            "last_error": None,
-        }
-        res = await db.jobs.insert_one(job)
-        job_ids.append(str(res.inserted_id))
-    
+    now = datetime.now(timezone.utc)
+    pool2 = await get_db()
+    async with pool2.acquire() as conn:
+        for supplier in suppliers:
+            job_id = str(uuid.uuid4())
+            await conn.execute(
+                """
+                INSERT INTO jobs
+                    (id, type, supplier_id, supplier_name, payload, status,
+                     attempts, created_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                """,
+                job_id, "scrape", supplier['id'], supplier['name'],
+                {"sizes": normalized}, "queued", 0, now,
+            )
+            job_ids.append(job_id)
+
     return {
         "ok": True,
         "jobs_created": len(job_ids),
         "job_ids": job_ids,
         "suppliers": [s['name'] for s in suppliers],
-        "sizes": normalized_sizes
+        "sizes": normalized,
     }
+
+
+# ==================== App setup ====================
 
 app.include_router(api_router)
 
@@ -1041,7 +1062,3 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
