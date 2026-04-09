@@ -13,6 +13,7 @@ import json
 import os
 import sys
 import argparse
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,13 +21,18 @@ from pathlib import Path
 os.environ.setdefault('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
 sys.path.insert(0, '/app/backend')
 
-from motor.motor_asyncio import AsyncIOMotorClient
+import asyncpg
 from playwright.async_api import async_playwright
 import re
 
-# MongoDB connection
-MONGO_URL = os.environ['MONGO_URL']
-DB_NAME = os.environ['DB_NAME']
+# PostgreSQL connection
+DATABASE_URL = os.environ['DATABASE_URL']
+
+
+async def _pg_connect():
+    conn = await asyncpg.connect(DATABASE_URL)
+    await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
+    return conn
 
 # Results directory
 RESULTS_DIR = Path('/app/tmp/scraper_results')
@@ -1152,46 +1158,44 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str)
 # ============================================================
 
 async def get_suppliers_from_db():
-    """Get active suppliers from MongoDB"""
-    client = AsyncIOMotorClient(MONGO_URL)
-    db = client[DB_NAME]
-    
-    suppliers = []
-    async for doc in db.suppliers.find({"is_active": {"$ne": False}}):
-        # Use password_raw if available, otherwise fall back to password
-        password = doc.get("password_raw") or doc.get("password", "")
-        suppliers.append({
-            "id": str(doc["_id"]) if "_id" in doc else doc.get("id"),
-            "name": doc["name"],
-            "username": doc["username"],
-            "password": password,
-            "url_login": doc.get("url_login", ""),
-        })
-    
-    client.close()
-    return suppliers
+    """Get active suppliers from PostgreSQL"""
+    conn = await _pg_connect()
+    try:
+        rows = await conn.fetch("SELECT * FROM suppliers WHERE is_active = TRUE")
+        suppliers = []
+        for row in rows:
+            d = dict(row)
+            password = d.get("password_raw") or d.get("password", "")
+            suppliers.append({
+                "id": d["id"],
+                "name": d["name"],
+                "username": d["username"],
+                "password": password,
+                "url_login": d.get("url_login", ""),
+            })
+        return suppliers
+    finally:
+        await conn.close()
 
 async def save_price_to_db(supplier_name: str, medida: str, price: float, error: str = None):
-    """Save scraping result to MongoDB"""
-    client = AsyncIOMotorClient(MONGO_URL)
-    db = client[DB_NAME]
-    
-    doc = {
-        "supplier_name": supplier_name,
-        "medida": medida,
-        "price": price,
-        "error": error,
-        "scraped_at": datetime.now(timezone.utc),
-    }
-    
-    # Upsert - update if exists, insert if not
-    await db.scraped_prices.update_one(
-        {"supplier_name": supplier_name, "medida": medida},
-        {"$set": doc},
-        upsert=True
-    )
-    
-    client.close()
+    """Save scraping result to PostgreSQL (upsert by supplier+medida, no brand)"""
+    conn = await _pg_connect()
+    try:
+        # Delete existing record for this supplier+medida with no brand, then insert fresh
+        await conn.execute(
+            "DELETE FROM scraped_prices WHERE supplier_name = $1 AND medida = $2 AND marca IS NULL",
+            supplier_name, medida,
+        )
+        if price is not None:
+            await conn.execute(
+                """
+                INSERT INTO scraped_prices (id, supplier_name, medida, price, scraped_at)
+                VALUES ($1, $2, $3, $4, $5)
+                """,
+                str(uuid.uuid4()), supplier_name, medida, price, datetime.now(timezone.utc),
+            )
+    finally:
+        await conn.close()
 
 async def run_scraper(medidas: list, supplier_filter: str = None):
     """Main scraper function"""
@@ -1295,20 +1299,22 @@ def run_supplier(supplier_id: str, sizes: list, job_id: str = None):
 async def _run_supplier_async(supplier_id: str, sizes: list, job_id: str = None):
     """Async implementation of run_supplier"""
     print(f"Starting scraper for supplier {supplier_id}")
-    
-    # Get supplier from DB
-    client = AsyncIOMotorClient(MONGO_URL)
-    db = client[DB_NAME]
-    
-    # Try finding by id field or by name
-    supplier = await db.suppliers.find_one({"id": supplier_id})
-    if not supplier:
-        supplier = await db.suppliers.find_one({"name": {"$regex": supplier_id, "$options": "i"}})
-    
-    if not supplier:
+
+    # Get supplier from PostgreSQL
+    conn = await _pg_connect()
+    row = await conn.fetchrow("SELECT * FROM suppliers WHERE id = $1", supplier_id)
+    if not row:
+        row = await conn.fetchrow(
+            "SELECT * FROM suppliers WHERE LOWER(name) LIKE $1",
+            f"%{supplier_id.lower()}%",
+        )
+
+    if not row:
         print(f"Supplier not found: {supplier_id}")
-        client.close()
+        await conn.close()
         return
+
+    supplier = dict(row)
     
     supplier_name = supplier['name'].lower()
     username = supplier['username']
@@ -1377,54 +1383,49 @@ async def _run_supplier_async(supplier_id: str, sizes: list, job_id: str = None)
                 result["job_id"] = job_id
                 results.append(result)
                 
-                # Save to database - save ALL products with brand/model
+                # Save to PostgreSQL - save ALL products with brand/model
                 products = result.get('products', [])
-                
+                now = datetime.now(timezone.utc)
+
                 if products:
-                    # Save each product individually
+                    # Delete old records for this supplier+medida+brand+model, then insert fresh
                     for prod in products:
-                        price_doc = {
-                            "supplier_name": supplier['name'],
-                            "supplier_id": supplier_id,
-                            "medida": medida,
-                            "marca": prod.get('brand', '').upper(),
-                            "modelo": prod.get('model', ''),
-                            "price": prod.get('price'),
-                            "job_id": job_id,
-                            "scraped_at": datetime.now(timezone.utc),
-                        }
-                        
-                        # Upsert by supplier + medida + marca + modelo (to keep different models separate)
-                        await db.scraped_prices.update_one(
-                            {
-                                "supplier_name": supplier['name'], 
-                                "medida": medida,
-                                "marca": prod.get('brand', '').upper(),
-                                "modelo": prod.get('model', '')
-                            },
-                            {"$set": price_doc},
-                            upsert=True
+                        marca = prod.get('brand', '').upper()
+                        modelo = prod.get('model', '')
+                        await conn.execute(
+                            """
+                            DELETE FROM scraped_prices
+                            WHERE supplier_name = $1 AND medida = $2
+                              AND COALESCE(marca,'') = $3 AND COALESCE(modelo,'') = $4
+                            """,
+                            supplier['name'], medida, marca, modelo,
+                        )
+                        await conn.execute(
+                            """
+                            INSERT INTO scraped_prices
+                                (id, supplier_name, supplier_id, medida, marca, modelo, price, scraped_at)
+                            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                            """,
+                            str(uuid.uuid4()), supplier['name'], supplier_id,
+                            medida, marca, modelo, prod.get('price'), now,
                         )
                     print(f"  Saved {len(products)} products with brand/model")
                 else:
                     # Fallback: save single price without brand
-                    price_doc = {
-                        "supplier_name": supplier['name'],
-                        "supplier_id": supplier_id,
-                        "medida": medida,
-                        "marca": None,
-                        "modelo": None,
-                        "price": result.get('price'),
-                        "error": result.get('error'),
-                        "job_id": job_id,
-                        "scraped_at": datetime.now(timezone.utc),
-                    }
-                    
-                    await db.scraped_prices.update_one(
-                        {"supplier_name": supplier['name'], "medida": medida, "marca": None},
-                        {"$set": price_doc},
-                        upsert=True
+                    await conn.execute(
+                        "DELETE FROM scraped_prices WHERE supplier_name = $1 AND medida = $2 AND marca IS NULL",
+                        supplier['name'], medida,
                     )
+                    if result.get('price') is not None:
+                        await conn.execute(
+                            """
+                            INSERT INTO scraped_prices
+                                (id, supplier_name, supplier_id, medida, price, scraped_at)
+                            VALUES ($1,$2,$3,$4,$5,$6)
+                            """,
+                            str(uuid.uuid4()), supplier['name'], supplier_id,
+                            medida, result.get('price'), now,
+                        )
                 
                 if result.get('price'):
                     print(f"  Result: €{result['price']}")
@@ -1436,8 +1437,8 @@ async def _run_supplier_async(supplier_id: str, sizes: list, job_id: str = None)
                 results.append({"supplier": supplier['name'], "medida": medida, "error": str(e)})
         
         await browser.close()
-    
-    client.close()
+
+    await conn.close()
     print(f"Finished scraping {supplier['name']}")
     return results
 
