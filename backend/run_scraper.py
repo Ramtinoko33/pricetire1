@@ -1261,12 +1261,55 @@ async def run_scraper(medidas: list, supplier_filter: str = None):
                     
                     result["medida"] = medida
                     results.append(result)
-                    
-                    # Save to database
-                    await save_price_to_db(supplier['name'], medida, result.get('price'), result.get('error'))
-                    
+
+                    # Save to PostgreSQL with full brand/model data
+                    products = result.get('products', [])
+                    now = datetime.now(timezone.utc)
+                    conn_save = await _pg_connect()
+                    try:
+                        if products:
+                            for prod in products:
+                                marca = prod.get('brand', '').upper()
+                                modelo = prod.get('model', '')
+                                await conn_save.execute(
+                                    """
+                                    DELETE FROM scraped_prices
+                                    WHERE supplier_name = $1 AND medida = $2
+                                      AND COALESCE(marca,'') = $3 AND COALESCE(modelo,'') = $4
+                                    """,
+                                    supplier['name'], medida, marca, modelo,
+                                )
+                                await conn_save.execute(
+                                    """
+                                    INSERT INTO scraped_prices
+                                        (id, supplier_name, medida, marca, modelo, price, scraped_at)
+                                    VALUES ($1,$2,$3,$4,$5,$6,$7)
+                                    """,
+                                    str(uuid.uuid4()), supplier['name'], medida,
+                                    marca, modelo, prod.get('price'), now,
+                                )
+                            print(f"  {medida}: saved {len(products)} products with brand/model")
+                        else:
+                            # Fallback: save single price without brand
+                            await conn_save.execute(
+                                "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2 AND marca IS NULL",
+                                supplier['name'], medida,
+                            )
+                            if result.get('price') is not None:
+                                await conn_save.execute(
+                                    """
+                                    INSERT INTO scraped_prices (id, supplier_name, medida, price, scraped_at)
+                                    VALUES ($1,$2,$3,$4,$5)
+                                    """,
+                                    str(uuid.uuid4()), supplier['name'], medida,
+                                    result['price'], now,
+                                )
+                            print(f"  {medida}: €{result.get('price')} (no brand data)")
+                    finally:
+                        await conn_save.close()
+
                     if result.get('price'):
-                        print(f"  {medida}: €{result['price']}")
+                        print(f"  {medida}: best price €{result['price']}")
                     else:
                         print(f"  {medida}: {result.get('error', 'No price found')}")
                         
