@@ -534,6 +534,33 @@ async def compare_job_with_scraped_prices(job_id: str):
             item['medida'].replace('/', '').replace('R', '').replace('r', '')
             for item in items
         })
+        existing_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM scraped_prices WHERE medida = ANY($1) AND price IS NOT NULL",
+            unique_medidas,
+        )
+
+    # Auto-scrape se scraped_prices não tem dados para estas medidas
+    if not existing_count:
+        logger.info(f"scraped_prices vazio para {unique_medidas}. A correr scraper...")
+        env = os.environ.copy()
+        env['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
+        medidas_str = ','.join(unique_medidas)
+        proc = await asyncio.create_subprocess_exec(
+            'python3', '/app/backend/run_scraper.py', '--medidas', medidas_str,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=env,
+            cwd='/app/backend',
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=600)
+            logger.info(f"Scraper concluído. Output final: {stdout.decode()[-500:]}")
+        except asyncio.TimeoutError:
+            proc.kill()
+            logger.warning("Scraper timeout após 10 minutos")
+
+    pool = await get_db()
+    async with pool.acquire() as conn:
         all_scraped = rows(await conn.fetch(
             """
             SELECT * FROM scraped_prices
