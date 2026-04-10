@@ -534,25 +534,27 @@ async def compare_job_with_scraped_prices(job_id: str):
             item['medida'].replace('/', '').replace('R', '').replace('r', '')
             for item in items
         })
-        # Conta registos com marca — se só existirem registos sem marca, re-scrape
-        branded_count = await conn.fetchval(
-            "SELECT COUNT(*) FROM scraped_prices WHERE medida = ANY($1) AND price IS NOT NULL AND marca IS NOT NULL AND marca != ''",
+        # Descobre quais medidas JÁ têm dados com marca
+        rows_with_data = await conn.fetch(
+            "SELECT DISTINCT medida FROM scraped_prices WHERE medida = ANY($1) AND price IS NOT NULL AND marca IS NOT NULL AND marca != ''",
             unique_medidas,
         )
+        medidas_com_dados = {r['medida'] for r in rows_with_data}
+        medidas_sem_dados = [m for m in unique_medidas if m not in medidas_com_dados]
 
-    # Auto-scrape se scraped_prices não tem dados com marca para estas medidas
-    if not branded_count:
-        # Limpa registos antigos sem marca para não interferir com o resultado
+    # Auto-scrape apenas para medidas sem dados de marca
+    if medidas_sem_dados:
+        # Limpa registos sem marca para essas medidas
         pool2 = await get_db()
         async with pool2.acquire() as conn:
             await conn.execute(
                 "DELETE FROM scraped_prices WHERE medida = ANY($1) AND marca IS NULL",
-                unique_medidas,
+                medidas_sem_dados,
             )
-        logger.info(f"A correr scraper para {unique_medidas} (sem dados de marca)...")
+        logger.info(f"A correr scraper para {medidas_sem_dados} ({len(medidas_sem_dados)} medidas sem dados)...")
         env = os.environ.copy()
         env['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
-        medidas_str = ','.join(unique_medidas)
+        medidas_str = ','.join(medidas_sem_dados)
         proc = await asyncio.create_subprocess_exec(
             'python3', '/app/backend/run_scraper.py', '--medidas', medidas_str,
             stdout=asyncio.subprocess.PIPE,
