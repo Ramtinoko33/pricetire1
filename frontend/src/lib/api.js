@@ -27,7 +27,8 @@ export const jobsAPI = {
   getAll: () => api.get('/jobs'),
   getOne: (id) => api.get(`/jobs/${id}`),
   run: (id) => api.post(`/jobs/${id}/run`),
-  compare: (id) => api.post(`/jobs/${id}/compare`, {}, { timeout: 660000 }), // 11 min — scraper can take up to 10 min on first run
+  compare: (id) => api.post(`/jobs/${id}/compare`, {}, { timeout: 660000 }),
+  forceCompare: (id) => api.post(`/jobs/${id}/compare?force=true`, {}, { timeout: 660000 }),
   getProgress: (id) => api.get(`/jobs/${id}/progress`),
   getResults: (id) => api.get(`/jobs/${id}/results`),
   export: (id) => api.get(`/jobs/${id}/export`, { responseType: 'blob' }),

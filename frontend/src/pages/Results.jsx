@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
-import { Download, RefreshCw, TrendingDown, Trash2, Scale, Loader2 } from 'lucide-react';
+import { Download, RefreshCw, TrendingDown, Trash2, Scale, Loader2, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 
 const Results = () => {
@@ -86,10 +86,10 @@ const Results = () => {
     }
   };
 
-  const handleCompare = async (jobId) => {
+  const handleCompare = async (jobId, force = false) => {
     setComparing(true);
     try {
-      const { data } = await jobsAPI.compare(jobId);
+      const { data } = force ? await jobsAPI.forceCompare(jobId) : await jobsAPI.compare(jobId);
       toast.success(`Comparação concluída! ${data.items_with_savings} itens com economia. Total: €${data.total_savings}`);
       loadJobResults(jobId);
       loadJobs();
@@ -140,19 +140,35 @@ const Results = () => {
             Atualizar
           </Button>
           {selectedJob && (
-            <Button 
-              variant="outline" 
-              onClick={() => handleCompare(selectedJob)} 
-              disabled={comparing}
-              data-testid="compare-btn"
-            >
-              {comparing ? (
-                <Loader2 size={18} className="mr-2 animate-spin" />
-              ) : (
-                <Scale size={18} className="mr-2" />
-              )}
-              Comparar Preços
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                onClick={() => handleCompare(selectedJob, false)}
+                disabled={comparing}
+                data-testid="compare-btn"
+              >
+                {comparing ? (
+                  <Loader2 size={18} className="mr-2 animate-spin" />
+                ) : (
+                  <Scale size={18} className="mr-2" />
+                )}
+                Comparar Preços
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => handleCompare(selectedJob, true)}
+                disabled={comparing}
+                title="Apaga o cache e re-scrape para obter preços e stock actualizados"
+                data-testid="force-compare-btn"
+              >
+                {comparing ? (
+                  <Loader2 size={18} className="mr-2 animate-spin" />
+                ) : (
+                  <RotateCcw size={18} className="mr-2" />
+                )}
+                Atualizar Preços
+              </Button>
+            </>
           )}
           {selectedJob && currentJob?.status === 'completed' && (
             <Button onClick={() => handleExport(selectedJob)} data-testid="export-btn">
