@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Scale, Database, FileText, Settings, Play, Search } from 'lucide-react';
+import { LayoutDashboard, Scale, Database, FileText, Settings, Search } from 'lucide-react';
 
 const Layout = ({ children }) => {
   const location = useLocation();
@@ -10,7 +10,6 @@ const Layout = ({ children }) => {
     { path: '/comparar', label: 'Comparar', icon: Scale },
     { path: '/suppliers', label: 'Fornecedores', icon: Database },
     { path: '/results', label: 'Resultados', icon: FileText },
-    { path: '/scraper', label: 'Scraper', icon: Play },
     { path: '/precos', label: 'Preços', icon: Search },
     { path: '/logs', label: 'Logs', icon: Settings },
   ];
