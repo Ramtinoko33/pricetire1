@@ -510,12 +510,14 @@ async def get_job_results(job_id: str):
 
 
 @api_router.post("/jobs/{job_id}/compare")
-async def compare_job_with_scraped_prices(job_id: str):
+async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
     """
     Compara itens do job com preços raspados — matching hierárquico 3 níveis:
     Nível 1: medida + marca + modelo
     Nível 2: medida + marca
     Nível 3: medida apenas
+
+    force=true → apaga cache e re-scrape todas as medidas (verifica stock/preço actual)
     """
     import re
 
@@ -534,15 +536,24 @@ async def compare_job_with_scraped_prices(job_id: str):
             item['medida'].replace('/', '').replace('R', '').replace('r', '')
             for item in items
         })
-        # Descobre quais medidas JÁ têm dados com marca
-        rows_with_data = await conn.fetch(
-            "SELECT DISTINCT medida FROM scraped_prices WHERE medida = ANY($1) AND price IS NOT NULL AND marca IS NOT NULL AND marca != ''",
-            unique_medidas,
-        )
-        medidas_com_dados = {r['medida'] for r in rows_with_data}
-        medidas_sem_dados = [m for m in unique_medidas if m not in medidas_com_dados]
 
-    # Auto-scrape apenas para medidas sem dados de marca
+        if force:
+            # Apaga todo o cache para estas medidas — força re-scrape completo
+            await conn.execute(
+                "DELETE FROM scraped_prices WHERE medida = ANY($1)",
+                unique_medidas,
+            )
+            medidas_sem_dados = unique_medidas
+        else:
+            # Descobre quais medidas JÁ têm dados com marca
+            rows_with_data = await conn.fetch(
+                "SELECT DISTINCT medida FROM scraped_prices WHERE medida = ANY($1) AND price IS NOT NULL AND marca IS NOT NULL AND marca != ''",
+                unique_medidas,
+            )
+            medidas_com_dados = {r['medida'] for r in rows_with_data}
+            medidas_sem_dados = [m for m in unique_medidas if m not in medidas_com_dados]
+
+    # Scrape medidas em falta (ou todas se force=true)
     if medidas_sem_dados:
         # Limpa registos sem marca para essas medidas
         pool2 = await get_db()
