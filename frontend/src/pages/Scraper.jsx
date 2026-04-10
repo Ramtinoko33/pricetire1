@@ -10,6 +10,7 @@ const ScraperPage = () => {
   const [scraperStatus, setScraperStatus] = useState(null);
   const [scrapedPrices, setScrapedPrices] = useState([]);
   const [medida, setMedida] = useState('205/55R16');
+  const [filterMedida, setFilterMedida] = useState('');
   const [loading, setLoading] = useState(false);
   const [polling, setPolling] = useState(false);
 
@@ -77,8 +78,10 @@ const ScraperPage = () => {
     }
   };
 
-  // Group prices by medida
+  // Group prices by medida, with optional filter
+  const norm = (s) => s.replace(/\//g, '').replace(/r/gi, '').toLowerCase();
   const pricesByMedida = scrapedPrices.reduce((acc, price) => {
+    if (filterMedida && !norm(price.medida).includes(norm(filterMedida))) return acc;
     const key = price.medida;
     if (!acc[key]) acc[key] = [];
     acc[key].push(price);
@@ -171,10 +174,18 @@ const ScraperPage = () => {
       {/* Scraped Prices */}
       <Card className="border-slate-200">
         <CardHeader>
-          <CardTitle>Preços Obtidos</CardTitle>
-          <CardDescription>
-            Preços mais recentes obtidos pelo scraper
-          </CardDescription>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <CardTitle>Preços Obtidos</CardTitle>
+              <CardDescription>Preços mais recentes obtidos pelo scraper</CardDescription>
+            </div>
+            <Input
+              value={filterMedida}
+              onChange={(e) => setFilterMedida(e.target.value)}
+              placeholder="Filtrar por medida (ex: 195/65R15)"
+              className="max-w-xs"
+            />
+          </div>
         </CardHeader>
         <CardContent>
           {Object.keys(pricesByMedida).length > 0 ? (
