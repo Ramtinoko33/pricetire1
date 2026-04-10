@@ -838,7 +838,10 @@ async def run_manual_scraper(medidas: list):
         scraper_status["running"] = False
 
 
-class ScrapeRunReq(BaseModel):
+from pydantic import BaseModel as PydanticBaseModel  # noqa: F811 (re-import for local use)
+
+
+class ScrapeRunReq(PydanticBaseModel):
     medidas: Optional[List[str]] = None
 
 
