@@ -823,7 +823,6 @@ scraper_status = {"running": False, "started_at": None, "progress": "", "results
 
 
 async def run_manual_scraper(medidas: list):
-    import subprocess
     global scraper_status
     scraper_status.update(running=True, started_at=datetime.now(timezone.utc).isoformat(),
                           progress="Starting scraper...", results=[])
@@ -831,17 +830,21 @@ async def run_manual_scraper(medidas: list):
         medidas_str = ','.join(medidas)
         env = os.environ.copy()
         env['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
-        process = subprocess.Popen(
-            ['python3', '/app/backend/run_scraper.py', '--medidas', medidas_str],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-            env=env, cwd='/app/backend',
+        proc = await asyncio.create_subprocess_exec(
+            'python3', '/app/backend/run_scraper.py', '--medidas', medidas_str,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=env,
+            cwd='/app/backend',
         )
         output_lines = []
-        for line in iter(process.stdout.readline, ''):
+        # Read output line-by-line without blocking the event loop
+        async for raw_line in proc.stdout:
+            line = raw_line.decode(errors='replace').rstrip()
             if line:
-                output_lines.append(line.strip())
-                scraper_status["progress"] = line.strip()
-        process.wait()
+                output_lines.append(line)
+                scraper_status["progress"] = line
+        await proc.wait()
         scraper_status["progress"] = "Completed"
         scraper_status["results"] = output_lines[-20:]
     except Exception as e:
@@ -919,10 +922,6 @@ async def get_scraped_prices(
 ):
     conditions = ["TRUE"]
     params: list = []
-
-    def add(col, val, like=False):
-        params.append(f"%{val}%" if like else val)
-        conditions.append(f"{col} ILIKE ${len(params)}" if like else f"{col} ILIKE ${len(params)}")
 
     if medida:
         mn = medida.replace("/", "").replace("R", "")
