@@ -56,7 +56,9 @@ const ScraperPage = () => {
       loadScraperStatus();
     } catch (error) {
       console.error('Error starting scraper:', error);
-      alert('Erro ao iniciar scraper: ' + (error.response?.data?.detail || error.message));
+      const detail = error.response?.data?.detail;
+      const msg = typeof detail === 'string' ? detail : JSON.stringify(detail) ?? error.message;
+      alert('Erro ao iniciar scraper: ' + msg);
     } finally {
       setLoading(false);
     }
