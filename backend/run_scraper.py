@@ -6,7 +6,7 @@ Can be triggered manually or via cron.
 Usage:
   python3 run_scraper.py                    # Scrape all active suppliers
   python3 run_scraper.py --supplier MP24    # Scrape specific supplier
-  python3 run_scraper.py --medida 2055516   # Scrape specific tire size
+  python3 run_scraper.py --medidas 2055516  # Scrape specific tire size
 """
 import asyncio
 import json

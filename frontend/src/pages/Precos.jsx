@@ -111,15 +111,18 @@ const Precos = () => {
           setScraping(false);
           setScrapeProgress('');
           toast.success('Scraping concluído!');
-          // Load fresh results from DB filtered by searched medidas
-          const medidaNorm = normMedida(sizes[0]);
+          // Load fresh results for ALL searched medidas
           const { data } = await scrapedPricesAPI.getAll(
-            medidaNorm,
+            null,
             marca.trim() || null,
             modelo.trim() || null,
             loadIndex.trim() || null,
           );
-          processPrices(data);
+          // Filter client-side for all searched sizes
+          const filtered = data.filter(p => sizes.includes(normMedida(p.medida) || p.medida));
+          processPrices(filtered.length > 0 ? filtered : data.filter(p =>
+            sizes.some(s => (p.medida || '').includes(s) || s.includes(p.medida || ''))
+          ));
         }
       } catch (_) {}
     }, 2500);
@@ -148,15 +151,15 @@ const Precos = () => {
               placeholder="Medida(s) — ex: 205/55R16, 195/65R15"
               value={medida}
               onChange={e => setMedida(e.target.value)}
-              onKeyPress={handleKey}
+              onKeyDown={handleKey}
               data-testid="medida-input"
             />
             <Input className="w-36" placeholder="Marca (ex: Michelin)"
-              value={marca} onChange={e => setMarca(e.target.value)} onKeyPress={handleKey} />
+              value={marca} onChange={e => setMarca(e.target.value)} onKeyDown={handleKey} />
             <Input className="w-40" placeholder="Modelo (ex: Primacy)"
-              value={modelo} onChange={e => setModelo(e.target.value)} onKeyPress={handleKey} />
+              value={modelo} onChange={e => setModelo(e.target.value)} onKeyDown={handleKey} />
             <Input className="w-28" placeholder="Índice (91V)"
-              value={loadIndex} onChange={e => setLoadIndex(e.target.value)} onKeyPress={handleKey} />
+              value={loadIndex} onChange={e => setLoadIndex(e.target.value)} onKeyDown={handleKey} />
           </div>
 
           <div className="flex gap-3 flex-wrap">

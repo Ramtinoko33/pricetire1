@@ -90,7 +90,7 @@ const Results = () => {
     setComparing(true);
     try {
       const { data } = force ? await jobsAPI.forceCompare(jobId) : await jobsAPI.compare(jobId);
-      toast.success(`Comparação concluída! ${data.items_with_savings} itens com economia. Total: €${data.total_savings}`);
+      toast.success(`Comparação concluída! ${data.items_with_savings} itens com economia. Total: €${(data.total_savings ?? 0).toFixed(2)}`);
       loadJobResults(jobId);
       loadJobs();
     } catch (error) {
@@ -276,7 +276,7 @@ const Results = () => {
                         <TableCell>{item.medida}</TableCell>
                         <TableCell>{item.marca}</TableCell>
                         <TableCell className="max-w-xs truncate">{item.modelo}</TableCell>
-                        <TableCell className="font-mono">€{item.meu_preco.toFixed(2)}</TableCell>
+                        <TableCell className="font-mono">{item.meu_preco != null ? `€${item.meu_preco.toFixed(2)}` : '-'}</TableCell>
                         <TableCell className="font-mono font-bold">
                           {item.melhor_preco ? `€${item.melhor_preco.toFixed(2)}` : '-'}
                         </TableCell>
