@@ -838,11 +838,16 @@ async def run_manual_scraper(medidas: list):
         scraper_status["running"] = False
 
 
+class ScrapeRunReq(BaseModel):
+    medidas: Optional[List[str]] = None
+
+
 @api_router.post("/scraper/run")
 async def start_manual_scraper(
     background_tasks: BackgroundTasks,
-    medidas: list = Body(default=None),
+    req: Optional[ScrapeRunReq] = Body(default=None),
 ):
+    medidas = req.medidas if req else None
     global scraper_status
     if scraper_status["running"]:
         raise HTTPException(status_code=409, detail="Scraper is already running")
