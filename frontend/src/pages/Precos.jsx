@@ -52,17 +52,18 @@ const Precos = () => {
   const searchLocal = async () => {
     setLoading(true);
     try {
-      const medidaNorm = medida.trim() ? normMedida(medida.split(',')[0]) : null;
+      const hasMultiple = medida.includes(',');
+      // With multiple medidas don't filter server-side — fetch broadly and filter client-side
+      const medidaNorm = medida.trim() && !hasMultiple ? normMedida(medida) : null;
       const { data } = await scrapedPricesAPI.getAll(
         medidaNorm || null,
         marca.trim() || null,
         modelo.trim() || null,
         loadIndex.trim() || null,
       );
-      // handle multiple medidas client-side
-      if (medida.includes(',')) {
+      if (hasMultiple) {
         const sizes = medida.split(',').map(s => normMedida(s)).filter(Boolean);
-        processPrices(data.filter(p => sizes.includes(p.medida)));
+        processPrices(data.filter(p => sizes.includes(normMedida(p.medida || ''))));
       } else {
         processPrices(data);
       }
@@ -119,10 +120,8 @@ const Precos = () => {
             loadIndex.trim() || null,
           );
           // Filter client-side for all searched sizes
-          const filtered = data.filter(p => sizes.includes(normMedida(p.medida) || p.medida));
-          processPrices(filtered.length > 0 ? filtered : data.filter(p =>
-            sizes.some(s => (p.medida || '').includes(s) || s.includes(p.medida || ''))
-          ));
+          const filtered = data.filter(p => sizes.includes(normMedida(p.medida || '')));
+          processPrices(filtered.length > 0 ? filtered : data);
         }
       } catch (_) {}
     }, 2500);

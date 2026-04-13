@@ -55,16 +55,4 @@ export const scrapedPricesAPI = {
   getBest: (medida) => api.get(`/scraped-prices/best/${medida}`),
 };
 
-export const scrapeAPI = {
-  enqueue: (supplier_id, sizes) => api.post('/scrape/enqueue', { supplier_id, sizes }),
-  enqueueBatch: (sizes, supplier_ids = null) => api.post('/scrape/enqueue-batch', { sizes, supplier_ids }),
-  getJobs: (status = null, limit = 20) => api.get('/scrape/jobs', { params: { status, limit } }),
-  getJob: (jobId) => api.get(`/scrape/jobs/${jobId}`),
-};
-
-export const workerAPI = {
-  getStatus: () => api.get('/worker/status'),
-  start: () => api.post('/worker/start'),
-};
-
 export default api;

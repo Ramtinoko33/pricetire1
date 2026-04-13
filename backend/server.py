@@ -941,7 +941,7 @@ async def get_scraped_prices(
     pool = await get_db()
     async with pool.acquire() as conn:
         rs = rows(await conn.fetch(
-            f"SELECT * FROM scraped_prices WHERE {where} ORDER BY scraped_at DESC LIMIT 100",
+            f"SELECT * FROM scraped_prices WHERE {where} ORDER BY scraped_at DESC LIMIT 500",
             *params,
         ))
     return rs
@@ -973,8 +973,6 @@ async def get_best_price(medida: str):
 
 
 # ==================== Worker Queue ====================
-
-from pydantic import BaseModel as PydanticBaseModel
 
 
 class EnqueueReq(PydanticBaseModel):
