@@ -916,22 +916,24 @@ async def get_scraper_status():
 
 
 @api_router.get("/scraper/debug-html")
-async def get_scraper_debug_html(file: str = "results"):
-    """Return content of /tmp/sjose_*.html debug files saved during scraping.
-    ?file=after_login | search_page | results (default)
-    Returns first 8000 chars to avoid huge payloads.
+async def get_scraper_debug_html(file: str = "results", supplier: str = "sjose"):
+    """Return content of /tmp/{supplier}_{file}.html debug files.
+    ?supplier=sjose|soledad  &file=pre_login|after_login|search_page|results
     """
-    allowed = {"pre_login", "after_login", "search_page", "results"}
-    if file not in allowed:
-        raise HTTPException(status_code=400, detail=f"file must be one of {allowed}")
-    path = f"/tmp/sjose_{file}.html"
+    allowed_files = {"pre_login", "after_login", "search_page", "results"}
+    allowed_suppliers = {"sjose", "soledad"}
+    if file not in allowed_files:
+        raise HTTPException(status_code=400, detail=f"file must be one of {allowed_files}")
+    if supplier not in allowed_suppliers:
+        raise HTTPException(status_code=400, detail=f"supplier must be one of {allowed_suppliers}")
+    path = f"/tmp/{supplier}_{file}.html"
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             content = fh.read(8000)
         return {"file": path, "size": len(content), "content": content}
     except FileNotFoundError:
         return {"file": path, "size": 0, "content": None,
-                "note": "File not found — run a scrape for S. José Pneus first"}
+                "note": f"File not found — run a scrape for that supplier first"}
 
 
 @api_router.get("/scraper/debug-forms")
