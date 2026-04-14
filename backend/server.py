@@ -920,6 +920,72 @@ async def get_scraper_debug_html(file: str = "results"):
                 "note": "File not found — run a scrape for S. José Pneus first"}
 
 
+@api_router.get("/scraper/debug-forms")
+async def get_scraper_debug_forms(file: str = "after_login"):
+    """Parse /tmp/sjose_*.html and return all form inputs (id, name, type, value).
+    Useful for finding the correct CSS selectors for the login/search forms.
+    """
+    from html.parser import HTMLParser
+
+    allowed = {"after_login", "search_page", "results"}
+    if file not in allowed:
+        raise HTTPException(status_code=400, detail=f"file must be one of {allowed}")
+    path = f"/tmp/sjose_{file}.html"
+
+    class InputParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.inputs = []
+            self.forms = []
+
+        def handle_starttag(self, tag, attrs):
+            d = dict(attrs)
+            if tag == "input":
+                self.inputs.append({
+                    "id":    d.get("id", ""),
+                    "name":  d.get("name", ""),
+                    "type":  d.get("type", "text"),
+                    "value": d.get("value", "")[:60],
+                })
+            elif tag == "form":
+                self.forms.append({
+                    "id":     d.get("id", ""),
+                    "action": d.get("action", ""),
+                    "method": d.get("method", ""),
+                })
+            elif tag == "button":
+                self.inputs.append({
+                    "id":    d.get("id", ""),
+                    "name":  d.get("name", ""),
+                    "type":  f"button/{d.get('type', '')}",
+                    "value": d.get("value", "")[:60],
+                })
+            elif tag == "a":
+                href = d.get("href", "")
+                if "javascript" in href.lower() or d.get("id"):
+                    self.inputs.append({
+                        "id":    d.get("id", ""),
+                        "name":  "",
+                        "type":  "link",
+                        "value": href[:80],
+                    })
+
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            html = fh.read()
+        parser = InputParser()
+        parser.feed(html)
+        return {
+            "file": path,
+            "forms": parser.forms,
+            "inputs": [i for i in parser.inputs if i["type"] not in ("hidden",)],
+            "hidden_count": sum(1 for i in parser.inputs if i["type"] == "hidden"),
+        }
+    except FileNotFoundError:
+        return {"file": path, "forms": [], "inputs": [],
+                "note": "File not found — run a scrape for S. José Pneus first"}
+
+
 @api_router.get("/scraper/availability")
 async def check_scraper_availability():
     pw_path = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
