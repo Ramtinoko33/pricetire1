@@ -593,9 +593,11 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
 
             # Login button — try specific ID first, then any submit
             btn_selectors = [
-                '#ContentPlaceHolder1_ctrlLogin_Login_LoginButton',
+                '#ContentPlaceHolder1_ctrlLogin_Login_btnLogin',   # S. José real ID
+                '#ContentPlaceHolder1_ctrlLogin_Login_LoginButton', # fallback variant
                 '#ContentPlaceHolder1_Login1_LoginButton',
                 '#ctl00_ContentPlaceHolder1_Login1_LoginButton',
+                'input[id$="_btnLogin"]',
                 'input[id$="_LoginButton"]',
                 'input[type="submit"]',
                 'button[type="submit"]',
@@ -641,33 +643,49 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
 
         # ── Navigate to search page ───────────────────────────────────────────
         medida_norm = normalize_medida(medida)
-        # Also prepare alternative search terms (portals often use original format)
-        # e.g. "1956515" → also try "195/65R15", "195/65/15", "195 65 15"
-        medida_orig = medida.strip()   # e.g. "195/65R15"
-        medida_slash = medida_orig     # keep slashes
-        # Build a set of substrings that confirm the page is about the RIGHT size
-        # We check that the page actually contains the searched size, not just any prices
-        def _size_in_content(content: str, mnorm: str, morig: str) -> bool:
+        medida_orig = medida.strip()
+
+        # Reconstruct the slashed format from a normalized medida
+        # e.g. "1956515" → "195/65R15"  (3-digit width + 2-digit ratio + 2-digit rim)
+        import re as _re
+        _m = _re.match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
+        medida_slashed = f"{_m.group(1)}/{_m.group(2)}R{_m.group(3)}" if _m else medida_orig
+
+        # All formats to try for form filling (deduplicated, slashed first)
+        all_search_terms = list(dict.fromkeys([medida_slashed, medida_orig, medida_norm]))
+
+        def _size_in_content(content: str, mnorm: str, mslashed: str) -> bool:
+            """Check that the page actually contains the searched tire size."""
             cl = content.lower()
-            return (mnorm.lower() in cl or
-                    morig.lower().replace('r', '') in cl or
-                    morig.lower() in cl)
+            # Check normalized form (e.g. "1956515")
+            if mnorm.lower() in cl:
+                return True
+            # Check slashed form (e.g. "195/65r15")
+            if mslashed.lower() in cl:
+                return True
+            # Check without R (e.g. "195/65/15")
+            if mslashed.lower().replace('r', '/') in cl:
+                return True
+            # Check with space (e.g. "195 65 15")
+            if mslashed.lower().replace('/', ' ').replace('r', ' ') in cl:
+                return True
+            return False
 
         print(f"  [S. José] Navigating to search page: {url_search}")
-        print(f"  [S. José] Searching for: {medida_norm} (orig: {medida_orig})")
+        print(f"  [S. José] Searching for: {medida_norm} → slashed: {medida_slashed}")
 
         # Strategy 1: try URL query parameters with BOTH normalized and original format
         # Only accept the page if the searched medida actually appears in the response
         search_url_tried = False
         for param in ['q', 'pesquisa', 'search', 'medida', 'codigo', 'ref']:
-            for search_term in [medida_norm, medida_orig, medida_orig.replace('/', '%2F')]:
+            for search_term in all_search_terms:
                 try_url = f"{url_search}?{param}={search_term}"
                 await page.goto(try_url, wait_until="networkidle", timeout=30000)
                 await asyncio.sleep(2)
                 content_check = await page.content()
                 # Accept only if the page has prices AND references the searched size
                 has_prices = any(c in content_check for c in ['€', 'preco', 'Preco', 'PVP', 'pvp'])
-                has_size   = _size_in_content(content_check, medida_norm, medida_orig)
+                has_size   = _size_in_content(content_check, medida_norm, medida_slashed)
                 if has_prices and has_size:
                     print(f"  [S. José] URL param '{param}'={search_term!r} has matching results")
                     search_url_tried = True
@@ -722,9 +740,8 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
 
         search_found = search_url_tried  # already searched via URL params
         if not search_found:
-            # Try original medida format first (portals often expect "195/65R15")
-            # then fall back to normalized ("1956515")
-            search_terms_to_try = list(dict.fromkeys([medida_orig, medida_norm]))
+            # Try slashed format first (e.g. "195/65R15"), then original, then normalized
+            search_terms_to_try = all_search_terms
             for sel in search_selectors:
                 el = page.locator(sel).first
                 if await el.count() > 0:
@@ -746,7 +763,7 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                         await page.wait_for_load_state("networkidle")
                         # Check if results page references the searched size
                         after_submit = await page.content()
-                        if _size_in_content(after_submit, medida_norm, medida_orig):
+                        if _size_in_content(after_submit, medida_norm, medida_slashed):
                             print(f"  [S. José] Search with term {term!r} returned relevant content")
                             search_found = True
                             break
