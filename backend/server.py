@@ -846,7 +846,7 @@ async def run_manual_scraper(medidas: list):
                 scraper_status["progress"] = line
         await proc.wait()
         scraper_status["progress"] = "Completed"
-        scraper_status["results"] = output_lines[-20:]
+        scraper_status["results"] = output_lines[-100:]
     except Exception as e:
         scraper_status["progress"] = f"Error: {str(e)}"
         logger.error(f"Scraper error: {e}")
@@ -899,6 +899,25 @@ async def start_manual_scraper(
 @api_router.get("/scraper/status")
 async def get_scraper_status():
     return scraper_status
+
+
+@api_router.get("/scraper/debug-html")
+async def get_scraper_debug_html(file: str = "results"):
+    """Return content of /tmp/sjose_*.html debug files saved during scraping.
+    ?file=after_login | search_page | results (default)
+    Returns first 8000 chars to avoid huge payloads.
+    """
+    allowed = {"after_login", "search_page", "results"}
+    if file not in allowed:
+        raise HTTPException(status_code=400, detail=f"file must be one of {allowed}")
+    path = f"/tmp/sjose_{file}.html"
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            content = fh.read(8000)
+        return {"file": path, "size": len(content), "content": content}
+    except FileNotFoundError:
+        return {"file": path, "size": 0, "content": None,
+                "note": "File not found — run a scrape for S. José Pneus first"}
 
 
 @api_router.get("/scraper/availability")
