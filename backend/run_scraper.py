@@ -496,63 +496,217 @@ async def scrape_dispnal(page, username: str, password: str, medida: str) -> dic
     return result
 
 async def scrape_sjose(page, username: str, password: str, medida: str) -> dict:
-    """Scrape S. José Pneus"""
-    result = {"supplier": "S. José Pneus", "price": None, "error": None, "timestamp": datetime.now(timezone.utc).isoformat()}
-    
+    """Scrape S. José Pneus (ASP.NET B2B portal).
+
+    On first run the page HTML is saved to /tmp/sjose_after_login.html and
+    /tmp/sjose_results.html so selectors can be verified if anything goes wrong.
+    """
+    result = {
+        "supplier": "S. José Pneus",
+        "price": None,
+        "error": None,
+        "products": [],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    def _save_debug(path: str, content: str):
+        try:
+            with open(path, 'w', encoding='utf-8') as fh:
+                fh.write(content)
+        except Exception:
+            pass
+
     try:
-        print("  [S. José] Logging in...")
-        await page.goto("https://b2b.sjosepneus.com/login.aspx", wait_until="networkidle", timeout=60000)
+        # ── Login ────────────────────────────────────────────────────────────
+        print("  [S. José] Navigating to login page...")
+        await page.goto("https://b2b.sjosepneus.com/login.aspx",
+                        wait_until="networkidle", timeout=60000)
         await asyncio.sleep(2)
-        
-        # Fill login form
-        username_input = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_UserName')
-        if await username_input.count() > 0:
-            await username_input.fill(username)
-        
-        password_input = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_Password')
-        if await password_input.count() > 0:
-            await password_input.fill(password)
-        
-        # Click login button
-        login_btn = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_LoginButton, input[type="submit"]')
-        if await login_btn.count() > 0:
-            await login_btn.first.click()
-        await asyncio.sleep(5)
-        
-        print("  [S. José] Searching for products...")
-        medida_norm = normalize_medida(medida)
-        
-        # Try to find search field
-        search_input = page.locator('input[type="text"][id*="search"], input[type="text"][name*="pesq"]').first
-        if await search_input.count() > 0:
-            await search_input.fill(medida_norm)
-            await search_input.press('Enter')
-            await asyncio.sleep(5)
-            
-            content = await page.content()
-            prices = extract_prices(content)
-            if prices:
-                result["price"] = min(prices)
-                result["all_prices"] = sorted(prices)[:10]
-                print(f"  [S. José] Found {len(prices)} prices, best: €{result['price']}")
+
+        current_url = page.url
+        print(f"  [S. José] URL after navigation: {current_url}")
+
+        if 'login' in current_url.lower():
+            # ASP.NET Login control — standard generated IDs
+            user_loc = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_UserName')
+            if await user_loc.count() > 0:
+                await user_loc.fill(username)
             else:
-                result["error"] = "No prices found"
+                await page.locator('input[type="text"]').first.fill(username)
+                print("  [S. José] Used generic username selector")
+
+            pass_loc = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_Password')
+            if await pass_loc.count() > 0:
+                await pass_loc.fill(password)
+            else:
+                await page.locator('input[type="password"]').first.fill(password)
+                print("  [S. José] Used generic password selector")
+
+            # Login button — try specific ID first, then any submit
+            btn_loc = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_LoginButton')
+            if await btn_loc.count() > 0:
+                await btn_loc.click()
+            else:
+                await page.locator('input[type="submit"], button[type="submit"]').first.click()
+
+            await asyncio.sleep(5)
+            await page.wait_for_load_state("networkidle")
+
+        print(f"  [S. José] URL after login: {page.url}")
+        _save_debug('/tmp/sjose_after_login.html', await page.content())
+
+        # ── Search ───────────────────────────────────────────────────────────
+        medida_norm = normalize_medida(medida)
+        print(f"  [S. José] Searching for: {medida_norm}")
+
+        # Ordered list of selectors seen in ASP.NET B2B tire portals
+        search_selectors = [
+            '#ContentPlaceHolder1_txtPesquisa',
+            '#ContentPlaceHolder1_txtMedida',
+            '#ContentPlaceHolder1_txtSearch',
+            '#ContentPlaceHolder1_TextBox1',
+            'input[id*="Pesquisa"]',
+            'input[id*="Medida"]',
+            'input[id*="txtP"]',
+            'input[id*="Search"]',
+            'input[id*="search"]',
+            'input[name*="pesq"]',
+            'input[name*="Pesq"]',
+            'input[type="text"]',   # last-resort generic
+        ]
+
+        submit_selectors = [
+            '#ContentPlaceHolder1_btnPesquisar',
+            '#ContentPlaceHolder1_btnSearch',
+            '#ContentPlaceHolder1_ImageButton1',  # ASP.NET ImageButton
+            'input[type="submit"]',
+            'input[type="image"]',
+            'button[type="submit"]',
+        ]
+
+        search_found = False
+        for sel in search_selectors:
+            el = page.locator(sel).first
+            if await el.count() > 0:
+                await el.fill(medida_norm)
+                print(f"  [S. José] Filled search field via: {sel}")
+                submitted = False
+                for btn_sel in submit_selectors:
+                    btn = page.locator(btn_sel).first
+                    if await btn.count() > 0:
+                        await btn.click()
+                        submitted = True
+                        print(f"  [S. José] Clicked submit via: {btn_sel}")
+                        break
+                if not submitted:
+                    await el.press('Enter')
+                    print("  [S. José] Submitted via Enter key")
+                await asyncio.sleep(5)
+                await page.wait_for_load_state("networkidle")
+                search_found = True
+                break
+
+        content = await page.content()
+        _save_debug('/tmp/sjose_results.html', content)
+
+        if not search_found:
+            result["error"] = "Search field not found — HTML saved to /tmp/sjose_after_login.html"
+            return result
+
+        # ── Extract products from ASP.NET GridView table ─────────────────────
+        products = await page.evaluate('''() => {
+            const products = [];
+
+            for (const table of document.querySelectorAll("table")) {
+                const rows = table.querySelectorAll("tr");
+                if (rows.length < 2) continue;
+
+                // Detect column positions from header row
+                let brandCol = -1, modelCol = -1, priceCol = -1;
+                const headerCells = rows[0].querySelectorAll("th, td");
+                headerCells.forEach((h, i) => {
+                    const t = h.textContent.trim().toLowerCase();
+                    if (/marca|brand|fabricante/.test(t))         brandCol = i;
+                    else if (/modelo|descri|perfil|artigo|denom/.test(t)) modelCol = i;
+                    else if (/pre[çc]o|valor|pvp|unit/.test(t))   priceCol = i;
+                });
+
+                for (let i = 1; i < rows.length; i++) {
+                    const cells = rows[i].querySelectorAll("td");
+                    if (cells.length < 2) continue;
+
+                    let brand = "", model = "", price = null;
+
+                    if (brandCol >= 0 && brandCol < cells.length)
+                        brand = cells[brandCol].textContent.trim().toUpperCase();
+                    if (modelCol >= 0 && modelCol < cells.length)
+                        model = cells[modelCol].textContent.trim();
+
+                    // Price from detected column
+                    if (priceCol >= 0 && priceCol < cells.length) {
+                        const m = cells[priceCol].textContent.match(/(\d+[,\\.]\d{2})/);
+                        if (m) price = parseFloat(m[1].replace(",", "."));
+                    }
+
+                    // Price fallback: scan each cell for standalone currency value
+                    if (!price) {
+                        for (const cell of cells) {
+                            const m = cell.textContent.trim().match(/^€?\\s*(\d+[,\\.]\d{2})\\s*€?$/);
+                            if (m) {
+                                const p = parseFloat(m[1].replace(",", "."));
+                                if (p > 15 && p < 500) { price = p; break; }
+                            }
+                        }
+                    }
+
+                    // Brand fallback: scan full row text for known brand names
+                    if (!brand) {
+                        const rowText = Array.from(cells).map(c => c.textContent).join(" ").toUpperCase();
+                        const bm = rowText.match(
+                            /(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL|SEMPERIT|BARUM|LASSA|SAVA|KLEBER|FULDA|GISLAVED|MATADOR|DEBICA|KELLY)/
+                        );
+                        if (bm) brand = bm[1];
+                    }
+
+                    if (price && price > 15 && price < 500)
+                        products.push({ brand, model, price });
+                }
+
+                if (products.length > 0) break; // stop at first table with results
+            }
+            return products;
+        }''')
+
+        if products:
+            # Deduplicate by brand+model keeping lowest price
+            seen = {}
+            for p in products:
+                key = f"{p.get('brand','')}|{p.get('model','')}"
+                if key not in seen or p['price'] < seen[key]['price']:
+                    seen[key] = p
+            products = list(seen.values())
+
+            result["products"] = products
+            prices_list = [p['price'] for p in products]
+            result["price"] = min(prices_list)
+            result["all_prices"] = sorted(prices_list)[:10]
+            print(f"  [S. José] {len(products)} products found. Best: €{result['price']}")
+            for p in sorted(products, key=lambda x: x['price'])[:3]:
+                print(f"    - {p.get('brand','-')} {p.get('model','-')}: €{p['price']}")
         else:
-            # Look for tire category link
-            tyre_link = page.locator('a:has-text("Pneu"), a:has-text("Turismo")')
-            if await tyre_link.count() > 0:
-                await tyre_link.first.click()
-                await asyncio.sleep(3)
-            
-            content = await page.content()
-            with open('/app/tmp/sjose_after_login.html', 'w') as f:
-                f.write(content)
-            result["error"] = "Search interface not found"
-            
+            # Final fallback: regex price extraction from raw HTML
+            prices_list = extract_prices(content)
+            if prices_list:
+                result["price"] = min(prices_list)
+                result["all_prices"] = sorted(prices_list)[:10]
+                print(f"  [S. José] Fallback regex: {len(prices_list)} prices, best: €{result['price']}")
+            else:
+                result["error"] = "No products found — check /tmp/sjose_results.html"
+
     except Exception as e:
         result["error"] = str(e)
         print(f"  [S. José] Error: {e}")
-    
+
     return result
 
 async def scrape_euromais(page, username: str, password: str, medida: str) -> dict:
