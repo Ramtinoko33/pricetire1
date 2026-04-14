@@ -538,33 +538,101 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
 
         # Login form present if we're still on a login/default page (not yet authenticated)
         if 'login' in current_url.lower() or 'default' in current_url.lower():
-            # ASP.NET Login control — standard generated IDs
-            user_loc = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_UserName')
-            if await user_loc.count() > 0:
-                await user_loc.fill(username)
-            else:
+            # Log all input IDs to help diagnose selector mismatches
+            input_ids = await page.evaluate(
+                "() => Array.from(document.querySelectorAll('input')).map(i => "
+                "({id: i.id, name: i.name, type: i.type}))"
+            )
+            print(f"  [S. José] Inputs on login page: {input_ids}")
+
+            # ASP.NET Login control — try several known ID patterns
+            user_selectors = [
+                '#ContentPlaceHolder1_ctrlLogin_Login_UserName',
+                '#ContentPlaceHolder1_Login1_UserName',
+                '#ctl00_ContentPlaceHolder1_Login1_UserName',
+                'input[id$="_UserName"]',
+                'input[name$="UserName"]',
+                'input[autocomplete="username"]',
+            ]
+            filled_user = False
+            for sel in user_selectors:
+                loc = page.locator(sel).first
+                if await loc.count() > 0:
+                    await loc.fill(username)
+                    print(f"  [S. José] Filled username via: {sel}")
+                    filled_user = True
+                    break
+            if not filled_user:
                 await page.locator('input[type="text"]').first.fill(username)
                 print("  [S. José] Used generic username selector")
 
-            pass_loc = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_Password')
-            if await pass_loc.count() > 0:
-                await pass_loc.fill(password)
-            else:
+            pass_selectors = [
+                '#ContentPlaceHolder1_ctrlLogin_Login_Password',
+                '#ContentPlaceHolder1_Login1_Password',
+                '#ctl00_ContentPlaceHolder1_Login1_Password',
+                'input[id$="_Password"]',
+                'input[name$="Password"]',
+                'input[autocomplete="current-password"]',
+            ]
+            filled_pass = False
+            for sel in pass_selectors:
+                loc = page.locator(sel).first
+                if await loc.count() > 0:
+                    await loc.fill(password)
+                    print(f"  [S. José] Filled password via: {sel}")
+                    filled_pass = True
+                    break
+            if not filled_pass:
                 await page.locator('input[type="password"]').first.fill(password)
                 print("  [S. José] Used generic password selector")
 
             # Login button — try specific ID first, then any submit
-            btn_loc = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_LoginButton')
-            if await btn_loc.count() > 0:
-                await btn_loc.click()
-            else:
-                await page.locator('input[type="submit"], button[type="submit"]').first.click()
+            btn_selectors = [
+                '#ContentPlaceHolder1_ctrlLogin_Login_LoginButton',
+                '#ContentPlaceHolder1_Login1_LoginButton',
+                '#ctl00_ContentPlaceHolder1_Login1_LoginButton',
+                'input[id$="_LoginButton"]',
+                'input[type="submit"]',
+                'button[type="submit"]',
+            ]
+            for btn_sel in btn_selectors:
+                btn_loc = page.locator(btn_sel).first
+                if await btn_loc.count() > 0:
+                    print(f"  [S. José] Clicking login button via: {btn_sel}")
+                    await btn_loc.click()
+                    break
 
             await asyncio.sleep(5)
             await page.wait_for_load_state("networkidle")
 
-        print(f"  [S. José] URL after login: {page.url}")
-        _save_debug('/tmp/sjose_after_login.html', await page.content())
+        url_after_login = page.url
+        print(f"  [S. José] URL after login: {url_after_login}")
+        after_login_html = await page.content()
+        _save_debug('/tmp/sjose_after_login.html', after_login_html)
+
+        # Check if login succeeded (URL should have changed away from default/login)
+        login_failed = (
+            'login' in url_after_login.lower() or 'default' in url_after_login.lower()
+        )
+        if login_failed:
+            # Could be a login error message on the page
+            error_texts = ['inválido', 'invalido', 'incorrect', 'wrong', 'failed',
+                           'erro', 'error', 'senha', 'password']
+            page_lower = after_login_html.lower()
+            login_error_msg = next((t for t in error_texts if t in page_lower), None)
+            print(f"  [S. José] WARNING: still on login/default page after login attempt. "
+                  f"Possible error hint: {login_error_msg}")
+            # Try to detect if there's actually a login error vs just a slow redirect
+            # Wait a bit more and check again
+            await asyncio.sleep(3)
+            url_after_login = page.url
+            if 'login' in url_after_login.lower() or 'default' in url_after_login.lower():
+                result["error"] = (
+                    f"Login may have failed — still on {url_after_login} after submit. "
+                    f"Check credentials or HTML at /tmp/sjose_after_login.html"
+                )
+                # Still try to continue in case it's an unusual redirect flow
+                print(f"  [S. José] Continuing despite possible login failure...")
 
         # ── Navigate to search page ───────────────────────────────────────────
         medida_norm = normalize_medida(medida)
@@ -589,7 +657,17 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
         if not search_url_tried:
             await page.goto(url_search, wait_until="networkidle", timeout=60000)
             await asyncio.sleep(2)
+            search_page_url = page.url
+            print(f"  [S. José] Search page actual URL: {search_page_url}")
             _save_debug('/tmp/sjose_search_page.html', await page.content())
+            # Guard: if navigating to the search page redirected back to login,
+            # don't fill the search box (we'd be filling into the username field)
+            if 'login' in search_page_url.lower() or 'default' in search_page_url.lower():
+                result["error"] = (
+                    f"Navigating to {url_search} redirected to login page ({search_page_url}). "
+                    "Login appears to have failed — check credentials and HTML at /tmp/sjose_after_login.html"
+                )
+                return result
 
         # Ordered list of selectors seen in ASP.NET B2B tire portals
         search_selectors = [
@@ -604,7 +682,7 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
             'input[id*="search"]',
             'input[name*="pesq"]',
             'input[name*="Pesq"]',
-            'input[type="text"]',   # last-resort generic
+            'input[type="text"]',   # last-resort generic (EXCLUDE if on login page)
         ]
 
         submit_selectors = [
