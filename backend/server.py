@@ -613,20 +613,34 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
             if marca_norm and modelo_norm:
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').upper() == marca_norm]
                 if marca_prices:
+                    # Level 1: exact match
                     pat_exact = re.compile(f"^{re.escape(modelo_norm)}$", re.IGNORECASE)
                     scraped = [p for p in marca_prices if pat_exact.match(p.get('modelo') or '')]
                     if scraped:
                         match_type = "modelo_exato"
                     else:
-                        pat_start = re.compile(f"^{re.escape(modelo_norm)}(\\s|$)", re.IGNORECASE)
-                        scraped = [p for p in marca_prices if pat_start.match(p.get('modelo') or '')]
+                        # Level 2: scraped description ends with the user's model name
+                        # e.g. user="crossclimate 2", scraped="MICHELIN 205/55R16 91W CROSSCLIMATE 2"
+                        # Also handles "CROSSCLIMATE 2 XL" (model + suffix like XL/SUV/etc)
+                        pat_end = re.compile(
+                            r'(?:^|\s)' + re.escape(modelo_norm) + r'(\s+\w+)?$',
+                            re.IGNORECASE
+                        )
+                        scraped = [p for p in marca_prices if pat_end.search(p.get('modelo') or '')]
                         if scraped:
-                            match_type = "modelo_parcial"
+                            match_type = "modelo_exato"
                         else:
-                            pat_contains = re.compile(re.escape(modelo_norm), re.IGNORECASE)
-                            scraped = [p for p in marca_prices if pat_contains.search(p.get('modelo') or '')]
+                            # Level 3: model name at start of description
+                            pat_start = re.compile(f"^{re.escape(modelo_norm)}(\\s|$)", re.IGNORECASE)
+                            scraped = [p for p in marca_prices if pat_start.match(p.get('modelo') or '')]
                             if scraped:
                                 match_type = "modelo_parcial"
+                            else:
+                                # Level 4: model name anywhere in description
+                                pat_contains = re.compile(re.escape(modelo_norm), re.IGNORECASE)
+                                scraped = [p for p in marca_prices if pat_contains.search(p.get('modelo') or '')]
+                                if scraped:
+                                    match_type = "modelo_parcial"
 
             if not scraped and marca_norm:
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').upper() == marca_norm]
