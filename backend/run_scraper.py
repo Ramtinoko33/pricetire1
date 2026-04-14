@@ -641,22 +641,43 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
 
         # ── Navigate to search page ───────────────────────────────────────────
         medida_norm = normalize_medida(medida)
-        print(f"  [S. José] Navigating to search page: {url_search}")
-        print(f"  [S. José] Searching for: {medida_norm}")
+        # Also prepare alternative search terms (portals often use original format)
+        # e.g. "1956515" → also try "195/65R15", "195/65/15", "195 65 15"
+        medida_orig = medida.strip()   # e.g. "195/65R15"
+        medida_slash = medida_orig     # keep slashes
+        # Build a set of substrings that confirm the page is about the RIGHT size
+        # We check that the page actually contains the searched size, not just any prices
+        def _size_in_content(content: str, mnorm: str, morig: str) -> bool:
+            cl = content.lower()
+            return (mnorm.lower() in cl or
+                    morig.lower().replace('r', '') in cl or
+                    morig.lower() in cl)
 
-        # Strategy 1: try URL query parameters (common in ASP.NET listing pages)
+        print(f"  [S. José] Navigating to search page: {url_search}")
+        print(f"  [S. José] Searching for: {medida_norm} (orig: {medida_orig})")
+
+        # Strategy 1: try URL query parameters with BOTH normalized and original format
+        # Only accept the page if the searched medida actually appears in the response
         search_url_tried = False
         for param in ['q', 'pesquisa', 'search', 'medida', 'codigo', 'ref']:
-            try_url = f"{url_search}?{param}={medida_norm}"
-            await page.goto(try_url, wait_until="networkidle", timeout=30000)
-            await asyncio.sleep(2)
-            content_check = await page.content()
-            # If the page returned results (has price-like content), use it
-            if any(c in content_check for c in ['€', 'preco', 'Preco', 'PVP', 'pvp']):
-                print(f"  [S. José] URL query param '{param}' appears to have results")
-                search_url_tried = True
+            for search_term in [medida_norm, medida_orig, medida_orig.replace('/', '%2F')]:
+                try_url = f"{url_search}?{param}={search_term}"
+                await page.goto(try_url, wait_until="networkidle", timeout=30000)
+                await asyncio.sleep(2)
+                content_check = await page.content()
+                # Accept only if the page has prices AND references the searched size
+                has_prices = any(c in content_check for c in ['€', 'preco', 'Preco', 'PVP', 'pvp'])
+                has_size   = _size_in_content(content_check, medida_norm, medida_orig)
+                if has_prices and has_size:
+                    print(f"  [S. José] URL param '{param}'={search_term!r} has matching results")
+                    search_url_tried = True
+                    break
+                elif has_prices:
+                    print(f"  [S. José] Param '{param}'={search_term!r} has prices but NOT the searched size — ignoring")
+                else:
+                    print(f"  [S. José] Param '{param}'={search_term!r} — no prices")
+            if search_url_tried:
                 break
-            print(f"  [S. José] Param '{param}' — no results, trying next")
 
         # Strategy 2: navigate to search page and fill form
         if not search_url_tried:
@@ -701,25 +722,46 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
 
         search_found = search_url_tried  # already searched via URL params
         if not search_found:
+            # Try original medida format first (portals often expect "195/65R15")
+            # then fall back to normalized ("1956515")
+            search_terms_to_try = list(dict.fromkeys([medida_orig, medida_norm]))
             for sel in search_selectors:
                 el = page.locator(sel).first
                 if await el.count() > 0:
-                    await el.fill(medida_norm)
-                    print(f"  [S. José] Filled search field via: {sel}")
-                    submitted = False
-                    for btn_sel in submit_selectors:
-                        btn = page.locator(btn_sel).first
-                        if await btn.count() > 0:
-                            await btn.click()
-                            submitted = True
-                            print(f"  [S. José] Clicked submit via: {btn_sel}")
+                    for term in search_terms_to_try:
+                        await el.fill(term)
+                        print(f"  [S. José] Filled search field via {sel!r} with {term!r}")
+                        submitted = False
+                        for btn_sel in submit_selectors:
+                            btn = page.locator(btn_sel).first
+                            if await btn.count() > 0:
+                                await btn.click()
+                                submitted = True
+                                print(f"  [S. José] Clicked submit via: {btn_sel}")
+                                break
+                        if not submitted:
+                            await el.press('Enter')
+                            print("  [S. José] Submitted via Enter key")
+                        await asyncio.sleep(5)
+                        await page.wait_for_load_state("networkidle")
+                        # Check if results page references the searched size
+                        after_submit = await page.content()
+                        if _size_in_content(after_submit, medida_norm, medida_orig):
+                            print(f"  [S. José] Search with term {term!r} returned relevant content")
+                            search_found = True
                             break
-                    if not submitted:
-                        await el.press('Enter')
-                        print("  [S. José] Submitted via Enter key")
-                    await asyncio.sleep(5)
-                    await page.wait_for_load_state("networkidle")
-                    search_found = True
+                        print(f"  [S. José] Search with {term!r} didn't return size-specific content, trying next term")
+                        # Navigate back to search page for next attempt
+                        if term != search_terms_to_try[-1]:
+                            await page.goto(url_search, wait_until="networkidle", timeout=30000)
+                            await asyncio.sleep(2)
+                            el = page.locator(sel).first  # re-find after navigation
+                    if search_found:
+                        break
+                    # If no term produced relevant results, still mark as searched (best effort)
+                    if not search_found:
+                        print(f"  [S. José] No search term produced size-specific results, using last attempt")
+                        search_found = True
                     break
 
         content = await page.content()
