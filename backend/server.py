@@ -907,7 +907,7 @@ async def get_scraper_debug_html(file: str = "results"):
     ?file=after_login | search_page | results (default)
     Returns first 8000 chars to avoid huge payloads.
     """
-    allowed = {"after_login", "search_page", "results"}
+    allowed = {"pre_login", "after_login", "search_page", "results"}
     if file not in allowed:
         raise HTTPException(status_code=400, detail=f"file must be one of {allowed}")
     path = f"/tmp/sjose_{file}.html"
@@ -927,7 +927,7 @@ async def get_scraper_debug_forms(file: str = "after_login"):
     """
     from html.parser import HTMLParser
 
-    allowed = {"after_login", "search_page", "results"}
+    allowed = {"pre_login", "after_login", "search_page", "results"}
     if file not in allowed:
         raise HTTPException(status_code=400, detail=f"file must be one of {allowed}")
     path = f"/tmp/sjose_{file}.html"

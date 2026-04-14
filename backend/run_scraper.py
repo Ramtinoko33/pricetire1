@@ -536,14 +536,19 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
         current_url = page.url
         print(f"  [S. José] URL after navigation: {current_url}")
 
+        # Save the page BEFORE login attempt so we can inspect the form structure
+        _save_debug('/tmp/sjose_pre_login.html', await page.content())
+
+        # Log ALL input IDs (visible and hidden) to diagnose selector issues
+        input_ids = await page.evaluate(
+            "() => Array.from(document.querySelectorAll('input')).map(i => "
+            "({id: i.id, name: i.name, type: i.type, visible: i.offsetParent !== null}))"
+        )
+        visible_inputs = [x for x in input_ids if x.get('type') not in ('hidden',)]
+        print(f"  [S. José] ALL visible inputs on page: {visible_inputs}")
+
         # Login form present if we're still on a login/default page (not yet authenticated)
         if 'login' in current_url.lower() or 'default' in current_url.lower():
-            # Log all input IDs to help diagnose selector mismatches
-            input_ids = await page.evaluate(
-                "() => Array.from(document.querySelectorAll('input')).map(i => "
-                "({id: i.id, name: i.name, type: i.type}))"
-            )
-            print(f"  [S. José] Inputs on login page: {input_ids}")
 
             # ASP.NET Login control — try several known ID patterns
             user_selectors = [
