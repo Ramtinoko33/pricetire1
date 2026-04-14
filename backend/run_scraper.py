@@ -495,8 +495,13 @@ async def scrape_dispnal(page, username: str, password: str, medida: str) -> dic
     
     return result
 
-async def scrape_sjose(page, username: str, password: str, medida: str) -> dict:
+async def scrape_sjose(page, username: str, password: str, medida: str,
+                       url_login: str = "https://b2b.sjosepneus.com/default.aspx",
+                       url_search: str = "https://b2b.sjosepneus.com/articles/articles.aspx") -> dict:
     """Scrape S. José Pneus (ASP.NET B2B portal).
+
+    url_login  — login page URL (stored in suppliers.url_login)
+    url_search — product search URL (stored in suppliers.url_search)
 
     On first run the page HTML is saved to /tmp/sjose_after_login.html and
     /tmp/sjose_results.html so selectors can be verified if anything goes wrong.
@@ -509,6 +514,12 @@ async def scrape_sjose(page, username: str, password: str, medida: str) -> dict:
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
+    # Use sensible defaults if empty strings were passed
+    if not url_login:
+        url_login = "https://b2b.sjosepneus.com/default.aspx"
+    if not url_search:
+        url_search = "https://b2b.sjosepneus.com/articles/articles.aspx"
+
     def _save_debug(path: str, content: str):
         try:
             with open(path, 'w', encoding='utf-8') as fh:
@@ -518,15 +529,15 @@ async def scrape_sjose(page, username: str, password: str, medida: str) -> dict:
 
     try:
         # ── Login ────────────────────────────────────────────────────────────
-        print("  [S. José] Navigating to login page...")
-        await page.goto("https://b2b.sjosepneus.com/login.aspx",
-                        wait_until="networkidle", timeout=60000)
+        print(f"  [S. José] Navigating to login: {url_login}")
+        await page.goto(url_login, wait_until="networkidle", timeout=60000)
         await asyncio.sleep(2)
 
         current_url = page.url
         print(f"  [S. José] URL after navigation: {current_url}")
 
-        if 'login' in current_url.lower():
+        # Login form present if we're still on a login/default page (not yet authenticated)
+        if 'login' in current_url.lower() or 'default' in current_url.lower():
             # ASP.NET Login control — standard generated IDs
             user_loc = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_UserName')
             if await user_loc.count() > 0:
@@ -555,9 +566,30 @@ async def scrape_sjose(page, username: str, password: str, medida: str) -> dict:
         print(f"  [S. José] URL after login: {page.url}")
         _save_debug('/tmp/sjose_after_login.html', await page.content())
 
-        # ── Search ───────────────────────────────────────────────────────────
+        # ── Navigate to search page ───────────────────────────────────────────
         medida_norm = normalize_medida(medida)
+        print(f"  [S. José] Navigating to search page: {url_search}")
         print(f"  [S. José] Searching for: {medida_norm}")
+
+        # Strategy 1: try URL query parameters (common in ASP.NET listing pages)
+        search_url_tried = False
+        for param in ['q', 'pesquisa', 'search', 'medida', 'codigo', 'ref']:
+            try_url = f"{url_search}?{param}={medida_norm}"
+            await page.goto(try_url, wait_until="networkidle", timeout=30000)
+            await asyncio.sleep(2)
+            content_check = await page.content()
+            # If the page returned results (has price-like content), use it
+            if any(c in content_check for c in ['€', 'preco', 'Preco', 'PVP', 'pvp']):
+                print(f"  [S. José] URL query param '{param}' appears to have results")
+                search_url_tried = True
+                break
+            print(f"  [S. José] Param '{param}' — no results, trying next")
+
+        # Strategy 2: navigate to search page and fill form
+        if not search_url_tried:
+            await page.goto(url_search, wait_until="networkidle", timeout=60000)
+            await asyncio.sleep(2)
+            _save_debug('/tmp/sjose_search_page.html', await page.content())
 
         # Ordered list of selectors seen in ASP.NET B2B tire portals
         search_selectors = [
@@ -584,33 +616,34 @@ async def scrape_sjose(page, username: str, password: str, medida: str) -> dict:
             'button[type="submit"]',
         ]
 
-        search_found = False
-        for sel in search_selectors:
-            el = page.locator(sel).first
-            if await el.count() > 0:
-                await el.fill(medida_norm)
-                print(f"  [S. José] Filled search field via: {sel}")
-                submitted = False
-                for btn_sel in submit_selectors:
-                    btn = page.locator(btn_sel).first
-                    if await btn.count() > 0:
-                        await btn.click()
-                        submitted = True
-                        print(f"  [S. José] Clicked submit via: {btn_sel}")
-                        break
-                if not submitted:
-                    await el.press('Enter')
-                    print("  [S. José] Submitted via Enter key")
-                await asyncio.sleep(5)
-                await page.wait_for_load_state("networkidle")
-                search_found = True
-                break
+        search_found = search_url_tried  # already searched via URL params
+        if not search_found:
+            for sel in search_selectors:
+                el = page.locator(sel).first
+                if await el.count() > 0:
+                    await el.fill(medida_norm)
+                    print(f"  [S. José] Filled search field via: {sel}")
+                    submitted = False
+                    for btn_sel in submit_selectors:
+                        btn = page.locator(btn_sel).first
+                        if await btn.count() > 0:
+                            await btn.click()
+                            submitted = True
+                            print(f"  [S. José] Clicked submit via: {btn_sel}")
+                            break
+                    if not submitted:
+                        await el.press('Enter')
+                        print("  [S. José] Submitted via Enter key")
+                    await asyncio.sleep(5)
+                    await page.wait_for_load_state("networkidle")
+                    search_found = True
+                    break
 
         content = await page.content()
         _save_debug('/tmp/sjose_results.html', content)
 
         if not search_found:
-            result["error"] = "Search field not found — HTML saved to /tmp/sjose_after_login.html"
+            result["error"] = "Search field not found — HTML saved to /tmp/sjose_search_page.html"
             return result
 
         # ── Extract products from ASP.NET GridView table ─────────────────────
@@ -1395,7 +1428,8 @@ async def run_scraper(medidas: list, supplier_filter: str = None):
                     elif 'dispnal' in supplier_name:
                         result = await scrape_dispnal(page, supplier['username'], supplier['password'], medida)
                     elif 'josé' in supplier_name or 'jose' in supplier_name:
-                        result = await scrape_sjose(page, supplier['username'], supplier['password'], medida)
+                        result = await scrape_sjose(page, supplier['username'], supplier['password'], medida,
+                                                    supplier.get('url_login', ''), supplier.get('url_search', ''))
                     elif 'euromais' in supplier_name or 'eurotyre' in supplier_name:
                         result = await scrape_euromais(page, supplier['username'], supplier['password'], medida)
                     elif 'soledad' in supplier_name:
@@ -1558,7 +1592,8 @@ async def _run_supplier_async(supplier_id: str, sizes: list, job_id: str = None)
                 elif 'dispnal' in supplier_name:
                     result = await scrape_dispnal(page, username, password, medida)
                 elif 'josé' in supplier_name or 'jose' in supplier_name:
-                    result = await scrape_sjose(page, username, password, medida)
+                    result = await scrape_sjose(page, username, password, medida,
+                                                supplier.get('url_login', ''), supplier.get('url_search', ''))
                 elif 'euromais' in supplier_name or 'eurotyre' in supplier_name:
                     result = await scrape_euromais(page, username, password, medida)
                 elif 'soledad' in supplier_name:
