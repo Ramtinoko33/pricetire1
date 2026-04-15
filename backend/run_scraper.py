@@ -1640,23 +1640,26 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str) -> d
                 result["error"] = "Password field not found on TugaPneus login page"
                 return result
 
-            # Submit
+            # Submit — o botão chama-se "EFETUAR LOGIN"
             submit_btn = page.locator(
+                'button:has-text("EFETUAR LOGIN"), '
+                'button:has-text("Efetuar Login"), '
                 'button[type="submit"], input[type="submit"], '
                 'button:has-text("Login"), button:has-text("Entrar"), '
-                'a:has-text("Login"), a:has-text("Entrar")'
+                'a:has-text("EFETUAR LOGIN")'
             ).first
             if await submit_btn.count() > 0:
                 await submit_btn.click()
+                print(f"  [TugaPneus] Botão de login clicado")
             else:
                 await password_input.press("Enter")
+                print(f"  [TugaPneus] Submit via Enter")
 
-            # Poll until password field disappears (handles AJAX/SPA login
-            # where URL stays at /login even after success)
-            for _i in range(30):  # Up to 15 seconds
+            # Aguardar até o campo password desaparecer (login AJAX — URL pode manter-se em /login)
+            for _i in range(40):  # até 20 segundos
                 await asyncio.sleep(0.5)
                 if await page.locator('input[type="password"]').count() == 0:
-                    print(f"  [TugaPneus] Password field gone after ~{_i*0.5:.0f}s")
+                    print(f"  [TugaPneus] Campo password desapareceu ao fim de ~{_i*0.5:.0f}s")
                     break
             try:
                 await page.wait_for_load_state("networkidle", timeout=10000)
@@ -1664,31 +1667,60 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str) -> d
                 pass
             await asyncio.sleep(2)
 
+            # Tratar popup obrigatório "TOMEI CONHECIMENTO" que aparece após login
+            try:
+                popup_btn = page.locator(
+                    'button:has-text("TOMEI CONHECIMENTO"), '
+                    'button:has-text("Tomei Conhecimento"), '
+                    'a:has-text("TOMEI CONHECIMENTO"), '
+                    '[class*="modal"] button, [class*="popup"] button, '
+                    '[role="dialog"] button'
+                ).first
+                if await popup_btn.count() > 0:
+                    await popup_btn.click()
+                    print(f"  [TugaPneus] Popup dispensado ('TOMEI CONHECIMENTO')")
+                    await asyncio.sleep(2)
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=10000)
+                    except Exception:
+                        pass
+                else:
+                    # Esperar um pouco mais e tentar novamente
+                    await asyncio.sleep(3)
+                    if await popup_btn.count() > 0:
+                        await popup_btn.click()
+                        print(f"  [TugaPneus] Popup dispensado (2ª tentativa)")
+                        await asyncio.sleep(2)
+            except Exception as pe:
+                print(f"  [TugaPneus] Aviso popup: {pe}")
+
             url_after = page.url
             content_after = await page.content()
-            print(f"  [TugaPneus] After login: {url_after}")
+            print(f"  [TugaPneus] URL após login: {url_after}")
 
-            # Check success: password form gone OR content has logged-in indicators
+            # Verificar sucesso: URL mudou para /produtos OU campo password desapareceu
             pw_still_visible = await page.locator('input[type="password"]').count() > 0
-            success_content = any(t in content_after.lower() for t in [
+            url_ok = 'produtos' in url_after.lower() or 'conhecimento' in url_after.lower()
+            content_ok = any(t in content_after.lower() for t in [
                 'sair', 'logout', 'minha conta', 'bem-vindo', 'olá,', 'carrinho'
             ])
-            if pw_still_visible and not success_content:
-                result["error"] = f"Login failed — credentials rejected or login blocked ({url_after})"
+            if pw_still_visible and not url_ok and not content_ok:
+                result["error"] = f"Login falhou — credenciais rejeitadas ({url_after})"
                 return result
-            print(f"  [TugaPneus] Login successful")
+            print(f"  [TugaPneus] Login efectuado com sucesso (URL: {url_after})")
 
-        # Navigate to products page
-        print(f"  [TugaPneus] Navigating to products...")
-        await page.goto("https://www.tugapneus.pt/produtos", wait_until="domcontentloaded", timeout=60000)
-        try:
-            await page.wait_for_load_state("networkidle", timeout=20000)
-        except Exception:
-            pass
-        await asyncio.sleep(3)
+        # Se o login redireccionou para /produtos, já estamos no sítio certo
+        if 'produtos' not in page.url.lower():
+            print(f"  [TugaPneus] A navegar para produtos...")
+            await page.goto("https://www.tugapneus.pt/produtos", wait_until="domcontentloaded", timeout=60000)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=20000)
+            except Exception:
+                pass
+            await asyncio.sleep(3)
 
         if 'login' in page.url.lower():
-            result["error"] = "Redirected to login when navigating to products — session issue"
+            result["error"] = "Redireccionado para login ao navegar para produtos — sessão inválida"
             return result
 
         # Search

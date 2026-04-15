@@ -478,38 +478,78 @@ async def scrape_tugapneus(username: str, password: str, medida: str) -> dict:
                     'input[name="username"], input[type="text"]'
                 ).first
                 if await email_input.count() > 0:
-                    await email_input.fill(username)
+                    await email_input.click()
+                    await email_input.type(username, delay=80)
                 password_input = page.locator('input[type="password"]').first
                 if await password_input.count() > 0:
-                    await password_input.fill(password)
+                    await password_input.click()
+                    await password_input.type(password, delay=80)
                 await asyncio.sleep(0.5)
+                # O botão chama-se "EFETUAR LOGIN"
                 submit_btn = page.locator(
+                    'button:has-text("EFETUAR LOGIN"), '
+                    'button:has-text("Efetuar Login"), '
                     'button[type="submit"], input[type="submit"], '
-                    'button:has-text("Login"), button:has-text("Entrar")'
+                    'button:has-text("Login"), button:has-text("Entrar"), '
+                    'a:has-text("EFETUAR LOGIN")'
                 ).first
                 if await submit_btn.count() > 0:
                     await submit_btn.click()
                 else:
                     await page.keyboard.press("Enter")
-                await asyncio.sleep(5)
+
+                # Aguardar até o campo password desaparecer (login AJAX)
+                for _i in range(40):  # até 20 segundos
+                    await asyncio.sleep(0.5)
+                    if await page.locator('input[type="password"]').count() == 0:
+                        break
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=15000)
+                    await page.wait_for_load_state("networkidle", timeout=10000)
                 except Exception:
                     pass
-                if 'login' in page.url.lower():
-                    result["error"] = "Login failed"
+                await asyncio.sleep(2)
+
+                # Tratar popup obrigatório "TOMEI CONHECIMENTO"
+                try:
+                    popup_btn = page.locator(
+                        'button:has-text("TOMEI CONHECIMENTO"), '
+                        'button:has-text("Tomei Conhecimento"), '
+                        'a:has-text("TOMEI CONHECIMENTO"), '
+                        '[class*="modal"] button, [role="dialog"] button'
+                    ).first
+                    if await popup_btn.count() > 0:
+                        await popup_btn.click()
+                        await asyncio.sleep(2)
+                        try:
+                            await page.wait_for_load_state("networkidle", timeout=10000)
+                        except Exception:
+                            pass
+                    else:
+                        await asyncio.sleep(3)
+                        if await popup_btn.count() > 0:
+                            await popup_btn.click()
+                            await asyncio.sleep(2)
+                except Exception:
+                    pass
+
+                url_after = page.url
+                pw_visible = await page.locator('input[type="password"]').count() > 0
+                url_ok = 'produtos' in url_after.lower() or 'conhecimento' in url_after.lower()
+                if pw_visible and not url_ok:
+                    result["error"] = f"Login falhou (URL: {url_after})"
                     return result
 
-            # Navigate to products
-            await page.goto("https://www.tugapneus.pt/produtos", wait_until="domcontentloaded", timeout=60000)
-            try:
-                await page.wait_for_load_state("networkidle", timeout=20000)
-            except Exception:
-                pass
-            await asyncio.sleep(3)
+            # Se já redireccionou para /produtos após o popup, não navegar de novo
+            if 'produtos' not in page.url.lower():
+                await page.goto("https://www.tugapneus.pt/produtos", wait_until="domcontentloaded", timeout=60000)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=20000)
+                except Exception:
+                    pass
+                await asyncio.sleep(3)
 
             if 'login' in page.url.lower():
-                result["error"] = "Redirected to login on products page"
+                result["error"] = "Redireccionado para login na página de produtos"
                 return result
 
             # Search

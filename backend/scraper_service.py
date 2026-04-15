@@ -919,26 +919,29 @@ class TugaPneusAdapter(ScraperBase):
             else:
                 return False, "Password input not found"
 
-            # Submit
+            # Submit — o botão chama-se "EFETUAR LOGIN"
             submit_btn = self.page.locator(
+                'button:has-text("EFETUAR LOGIN"), '
+                'button:has-text("Efetuar Login"), '
                 'button[type="submit"], input[type="submit"], '
                 'button:has-text("Login"), button:has-text("Entrar"), '
-                'a:has-text("Login"), a:has-text("Entrar")'
+                'a:has-text("EFETUAR LOGIN")'
             ).first
             if await submit_btn.count() > 0:
                 await submit_btn.click()
+                logger.info("TugaPneus: Botão de login clicado")
             else:
                 await password_input.press("Enter")
+                logger.info("TugaPneus: Submit via Enter")
 
-            # Wait for login: poll until password field disappears (handles AJAX/SPA logins
-            # where the URL stays at /login even after success)
-            for _i in range(30):  # Up to 15 seconds
+            # Aguardar até o campo password desaparecer (login AJAX)
+            for _i in range(40):  # até 20 segundos
                 await asyncio.sleep(0.5)
                 if await self.page.locator('input[type="password"]').count() == 0:
-                    logger.info(f"TugaPneus: Password field gone after ~{_i*0.5:.0f}s")
+                    logger.info(f"TugaPneus: Campo password desapareceu ao fim de ~{_i*0.5:.0f}s")
                     break
             else:
-                logger.warning("TugaPneus: Password field still visible after 15s")
+                logger.warning("TugaPneus: Campo password ainda visível após 20s")
 
             try:
                 await self.page.wait_for_load_state("networkidle", timeout=10000)
@@ -946,62 +949,65 @@ class TugaPneusAdapter(ScraperBase):
                 pass
             await asyncio.sleep(2)
 
+            # Tratar popup obrigatório "TOMEI CONHECIMENTO"
+            try:
+                popup_btn = self.page.locator(
+                    'button:has-text("TOMEI CONHECIMENTO"), '
+                    'button:has-text("Tomei Conhecimento"), '
+                    'a:has-text("TOMEI CONHECIMENTO"), '
+                    '[class*="modal"] button, [class*="popup"] button, '
+                    '[role="dialog"] button'
+                ).first
+                if await popup_btn.count() > 0:
+                    await popup_btn.click()
+                    logger.info("TugaPneus: Popup 'TOMEI CONHECIMENTO' dispensado")
+                    await asyncio.sleep(2)
+                    try:
+                        await self.page.wait_for_load_state("networkidle", timeout=10000)
+                    except Exception:
+                        pass
+                else:
+                    await asyncio.sleep(3)
+                    if await popup_btn.count() > 0:
+                        await popup_btn.click()
+                        logger.info("TugaPneus: Popup dispensado (2ª tentativa)")
+                        await asyncio.sleep(2)
+            except Exception as pe:
+                logger.warning(f"TugaPneus: Aviso popup: {pe}")
+
             await self.take_screenshot("after_login")
 
-            content = await self.page.content()
             current_url = self.page.url
-            logger.info(f"TugaPneus: After submit URL={current_url}")
+            content = await self.page.content()
+            logger.info(f"TugaPneus: URL após submit = {current_url}")
 
-            # Success indicators in page content (handles SPA where URL stays the same)
-            success_signals = [
-                'sair' in content.lower(),
-                'logout' in content.lower(),
-                'minha conta' in content.lower(),
-                'a minha conta' in content.lower(),
-                'bem-vindo' in content.lower(),
-                'olá,' in content.lower(),
-                'olá ' in content.lower(),
-                await self.page.locator('input[type="password"]').count() == 0
-                    and 'login' in current_url.lower(),
-            ]
-            if any(success_signals):
-                logger.info("TugaPneus: Login succeeded (content indicators)")
-                # Navigate to products to confirm session
-                try:
-                    await self.page.goto("https://www.tugapneus.pt/produtos",
-                                         wait_until="domcontentloaded", timeout=25000)
-                    await asyncio.sleep(3)
-                    if 'login' not in self.page.url.lower():
-                        return True, "Login successful"
-                    # Products redirected to login — but we had success signals, so odd
-                    return True, "Login successful (products page may require navigation)"
-                except Exception:
-                    return True, "Login successful"
-
-            # Hard failure: password form still present and URL still at login
+            # Verificar sucesso
             pw_still_visible = await self.page.locator('input[type="password"]').count() > 0
-            if pw_still_visible:
-                # Check if there's a visible error message
+            url_ok = 'produtos' in current_url.lower() or 'conhecimento' in current_url.lower()
+            content_ok = any(t in content.lower() for t in [
+                'sair', 'logout', 'minha conta', 'bem-vindo', 'olá,', 'carrinho'
+            ])
+
+            if pw_still_visible and not url_ok and not content_ok:
                 error_msg = ""
-                for err_sel in ['.alert-danger', '.error', '.alert-error', '[class*="error"]',
-                                 '.invalid-feedback', '.msg-error']:
+                for err_sel in ['.alert-danger', '.error', '[class*="error"]', '.invalid-feedback']:
                     err_el = self.page.locator(err_sel).first
                     if await err_el.count() > 0:
                         error_msg = (await err_el.text_content() or "").strip()[:100]
                         break
-                return False, f"Login failed — credentials rejected{': ' + error_msg if error_msg else ''}"
+                return False, f"Login falhou — credenciais rejeitadas{': ' + error_msg if error_msg else ''}"
 
-            # URL changed away from /login = success
-            if 'login' not in current_url.lower():
-                return True, "Login successful"
+            # Se ficou em /produtos após popup = sucesso total
+            if url_ok:
+                return True, f"Login efectuado com sucesso (URL: {current_url})"
 
-            # Try products page as final check
+            # Navegar para produtos como verificação final
             await self.page.goto("https://www.tugapneus.pt/produtos",
                                  wait_until="domcontentloaded", timeout=25000)
             await asyncio.sleep(3)
             if 'login' not in self.page.url.lower():
-                return True, "Login successful"
-            return False, f"Login failed — products page redirected to login ({self.page.url})"
+                return True, "Login efectuado com sucesso"
+            return False, f"Login falhou — página de produtos redireccionou para login ({self.page.url})"
 
         except Exception as e:
             logger.error(f"TugaPneus login error: {str(e)}")
