@@ -1618,13 +1618,14 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str) -> d
         if '/produtos' in current_url or 'login' not in current_url.lower():
             print(f"  [TugaPneus] Already logged in, on: {current_url}")
         else:
-            # Fill email
+            # Fill email — use type() for human-like input (avoids bot detection)
             email_input = page.locator(
                 'input[type="email"], input[name="email"], input[name*="mail"], '
                 'input[name="username"], input[type="text"]'
             ).first
             if await email_input.count() > 0:
-                await email_input.fill(username)
+                await email_input.click()
+                await email_input.type(username, delay=80)
                 await asyncio.sleep(0.4)
             else:
                 result["error"] = "Email field not found on TugaPneus login page"
@@ -1632,7 +1633,8 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str) -> d
 
             password_input = page.locator('input[type="password"]').first
             if await password_input.count() > 0:
-                await password_input.fill(password)
+                await password_input.click()
+                await password_input.type(password, delay=80)
                 await asyncio.sleep(0.4)
             else:
                 result["error"] = "Password field not found on TugaPneus login page"
@@ -1649,17 +1651,32 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str) -> d
             else:
                 await password_input.press("Enter")
 
-            await asyncio.sleep(5)
+            # Poll until password field disappears (handles AJAX/SPA login
+            # where URL stays at /login even after success)
+            for _i in range(30):  # Up to 15 seconds
+                await asyncio.sleep(0.5)
+                if await page.locator('input[type="password"]').count() == 0:
+                    print(f"  [TugaPneus] Password field gone after ~{_i*0.5:.0f}s")
+                    break
             try:
-                await page.wait_for_load_state("networkidle", timeout=15000)
+                await page.wait_for_load_state("networkidle", timeout=10000)
             except Exception:
                 pass
+            await asyncio.sleep(2)
 
             url_after = page.url
+            content_after = await page.content()
             print(f"  [TugaPneus] After login: {url_after}")
-            if 'login' in url_after.lower():
-                result["error"] = f"Login failed — still on login page ({url_after})"
+
+            # Check success: password form gone OR content has logged-in indicators
+            pw_still_visible = await page.locator('input[type="password"]').count() > 0
+            success_content = any(t in content_after.lower() for t in [
+                'sair', 'logout', 'minha conta', 'bem-vindo', 'olá,', 'carrinho'
+            ])
+            if pw_still_visible and not success_content:
+                result["error"] = f"Login failed — credentials rejected or login blocked ({url_after})"
                 return result
+            print(f"  [TugaPneus] Login successful")
 
         # Navigate to products page
         print(f"  [TugaPneus] Navigating to products...")
