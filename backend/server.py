@@ -920,7 +920,7 @@ async def get_scraper_debug_html(file: str = "results", supplier: str = "sjose")
     """Return content of /tmp/{supplier}_{file}.html debug files.
     ?supplier=sjose|soledad  &file=pre_login|after_login|search_page|results
     """
-    allowed_files = {"pre_login", "after_login", "search_page", "results"}
+    allowed_files = {"pre_login", "after_login", "search_page", "results", "inputs", "api"}
     allowed_suppliers = {"sjose", "soledad"}
     if file not in allowed_files:
         raise HTTPException(status_code=400, detail=f"file must be one of {allowed_files}")
@@ -929,7 +929,7 @@ async def get_scraper_debug_html(file: str = "results", supplier: str = "sjose")
     path = f"/tmp/{supplier}_{file}.html"
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            content = fh.read(8000)
+            content = fh.read(30000)
         return {"file": path, "size": len(content), "content": content}
     except FileNotFoundError:
         return {"file": path, "size": 0, "content": None,

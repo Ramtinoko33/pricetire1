@@ -1080,9 +1080,25 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         search_page_url = page.url
         print(f"  [Soledad] Search page URL: {search_page_url}")
 
+        # Diagnostic: dump all visible inputs on the search page
+        page_inputs = await page.evaluate('''() => {
+            return Array.from(document.querySelectorAll("input, textarea, select, button"))
+                .slice(0, 30)
+                .map(el => ({
+                    tag: el.tagName, type: el.type || "",
+                    id: el.id || "", name: el.name || "",
+                    placeholder: (el.placeholder || "").substring(0, 60),
+                    classes: (el.className || "").toString().substring(0, 80),
+                    text: el.textContent.trim().substring(0, 40),
+                    visible: el.offsetWidth > 0 && el.offsetHeight > 0
+                }));
+        }''')
+        inputs_summary = [f"{e['tag']}[{e['type']}] id={e['id']} name={e['name']} ph={e['placeholder']!r}" for e in page_inputs]
+        print(f"  [Soledad] Dashboard inputs: {inputs_summary}")
+        _save_debug('/tmp/soledad_inputs.html', json.dumps(page_inputs, indent=2, ensure_ascii=False))
+
         # Check if we were bounced back to login
         if 'login' in search_page_url.lower() and url_origin.lower() not in search_page_url.lower().replace('/login', ''):
-            # Only treat it as login bounce if the URL is actually a login endpoint
             pw_count = await page.locator('input[type="password"]').count()
             if pw_count > 0:
                 result["error"] = f"Session not valid for {url_origin} — redirected to login"
@@ -1272,6 +1288,15 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             elif isinstance(data, dict):
                 for v in data.values():
                     _parse_api_json(v, depth + 1)
+
+        # Save API debug info (first 500 chars of each response body + URL)
+        api_debug_info = [
+            {'url': r['url'], 'len': len(r['body']), 'preview': r['body'][:500]}
+            for r in api_responses
+        ]
+        _save_debug('/tmp/soledad_api.html', json.dumps(api_debug_info, indent=2, ensure_ascii=False))
+        print(f"  [Soledad] {len(api_responses)} JSON API responses captured: "
+              f"{[r['url'].split('?')[0][-40:] for r in api_responses]}")
 
         for resp in api_responses:
             try:
