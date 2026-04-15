@@ -952,29 +952,55 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
     _m2 = _re2.match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
     medida_slashed = f"{_m2.group(1)}/{_m2.group(2)}R{_m2.group(3)}" if _m2 else medida
 
+    # ── Intercept JSON API responses (primary method for Angular SPAs) ────────
+    api_responses = []
+
+    async def _capture_api_response(response):
+        try:
+            if response.status != 200:
+                return
+            ct = response.headers.get('content-type') or ''
+            if 'json' not in ct:
+                return
+            body = await response.text()
+            if len(body) > 80:
+                api_responses.append({'url': response.url, 'body': body})
+                print(f"  [Soledad] API: {response.url.split('?')[0][-60:]} ({len(body)}b)")
+        except Exception:
+            pass
+
+    page.on('response', _capture_api_response)
+
     try:
         # ── Login ────────────────────────────────────────────────────────────
         print(f"  [Soledad] Navigating to: {url_login}")
-        await page.goto(url_login, wait_until="networkidle", timeout=60000)
+        try:
+            await page.goto(url_login, wait_until="domcontentloaded", timeout=60000)
+        except Exception:
+            await page.goto(url_login, wait_until="commit", timeout=60000)
+        try:
+            await page.wait_for_load_state("load", timeout=20000)
+        except Exception:
+            pass
         await asyncio.sleep(2)
         _save_debug('/tmp/soledad_pre_login.html', await page.content())
+        print(f"  [Soledad] Login page URL: {page.url}")
 
-        current_url = page.url
-        print(f"  [Soledad] URL after navigation: {current_url}")
-
-        # Fill login form with human-like typing
+        # Fill username (try multiple field name patterns)
         user_field = page.locator(
-            'input[name="username"], input[name="email"], input[name="user"], '
-            'input[type="email"], input[id*="user" i], input[id*="email" i], '
+            'input[name="userId"], input[name="username"], input[name="email"], '
+            'input[name="user"], input[type="email"], '
+            'input[id*="userId" i], input[id*="user" i], input[id*="email" i], '
             'input[placeholder*="user" i], input[placeholder*="email" i], '
+            'input[placeholder*="utilizador" i], input[placeholder*="usuario" i], '
             'input[type="text"]'
         ).first
         if await user_field.count() > 0:
             await user_field.click()
             await user_field.type(username, delay=80)
-            print(f"  [Soledad] Typed username")
+            print(f"  [Soledad] Username entered")
         else:
-            result["error"] = "Username field not found on login page"
+            result["error"] = "Username field not found"
             return result
 
         await asyncio.sleep(0.4)
@@ -983,275 +1009,379 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         if await pass_field.count() > 0:
             await pass_field.click()
             await pass_field.type(password, delay=80)
-            print(f"  [Soledad] Typed password")
+            print(f"  [Soledad] Password entered")
         else:
-            result["error"] = "Password field not found on login page"
+            result["error"] = "Password field not found"
             return result
 
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.5)
 
-        # Submit — try button text variants common in Spanish/Portuguese portals
+        # Click submit button
         submit = page.locator(
             'button[type="submit"], input[type="submit"], '
             'button:has-text("Entrar"), button:has-text("Login"), '
-            'button:has-text("Iniciar"), button:has-text("Acceder")'
+            'button:has-text("Iniciar"), button:has-text("Acceder"), '
+            'button:has-text("Sign In"), button:has-text("Iniciar sesión")'
         ).first
         if await submit.count() > 0:
             await submit.click()
-            print(f"  [Soledad] Clicked submit")
+            print(f"  [Soledad] Submit clicked")
         else:
             await pass_field.press('Enter')
-            print(f"  [Soledad] Submitted via Enter")
+            print(f"  [Soledad] Submit via Enter")
 
-        # Wait for redirect away from login page
+        # Wait for login: poll until password field disappears (works for any SPA/MPA)
+        print(f"  [Soledad] Waiting for login to complete...")
+        for _i in range(40):  # Up to 20 seconds
+            await asyncio.sleep(0.5)
+            if await page.locator('input[type="password"]').count() == 0:
+                print(f"  [Soledad] Password field gone after ~{_i * 0.5:.0f}s")
+                break
+        else:
+            print(f"  [Soledad] Warning: password field still present after 20s")
+
         try:
-            await page.wait_for_url(
-                lambda u: 'login' not in u.lower() and 'current' not in u.lower(),
-                timeout=20000
-            )
-        except Exception:
-            pass
-        # Use load (not networkidle) — SPAs never reach networkidle
-        try:
-            await page.wait_for_load_state("load", timeout=30000)
+            await page.wait_for_load_state("load", timeout=15000)
         except Exception:
             pass
         await asyncio.sleep(3)
 
         url_after = page.url
-        print(f"  [Soledad] URL after login: {url_after}")
         _save_debug('/tmp/soledad_after_login.html', await page.content())
+        print(f"  [Soledad] After login: {url_after}")
 
-        # Check login success
+        # Verify login success
         login_form_still_visible = await page.locator('input[type="password"]').count() > 0
-        if login_form_still_visible or 'login' in url_after.lower():
-            result["error"] = f"Login failed — still on login page ({url_after})"
+        if login_form_still_visible:
+            result["error"] = f"Login failed — password form still visible at {url_after}"
             print(f"  [Soledad] {result['error']}")
             return result
+        print(f"  [Soledad] Login succeeded")
 
-        print(f"  [Soledad] Login successful, current URL: {url_after}")
+        # ── Navigate to search page ───────────────────────────────────────────
+        url_origin = '/'.join(url_search.split('/')[:3])  # https://b2b.new.gruposoledad.com
 
-        # ── Navigate to search / dashboard ───────────────────────────────────
-        # If we're already on the search/dashboard page (login redirected there), skip navigate
-        if url_after.rstrip('/') != url_search.rstrip('/'):
-            print(f"  [Soledad] Navigating to search: {url_search}")
-            try:
-                await page.goto(url_search, wait_until="domcontentloaded", timeout=60000)
-            except Exception as nav_err:
-                print(f"  [Soledad] Navigation warning: {nav_err}")
-            try:
-                await page.wait_for_load_state("load", timeout=20000)
-            except Exception:
-                pass
-        else:
-            print(f"  [Soledad] Already on search page")
-        await asyncio.sleep(3)
+        # Clear any API responses captured during login — we only want search responses
+        api_responses.clear()
+
+        # Navigate to the B2B search dashboard
+        print(f"  [Soledad] Navigating to: {url_search}")
+        try:
+            await page.goto(url_search, wait_until="domcontentloaded", timeout=60000)
+        except Exception as nav_e:
+            print(f"  [Soledad] Navigation warning: {nav_e}")
+        try:
+            await page.wait_for_load_state("load", timeout=20000)
+        except Exception:
+            pass
+        await asyncio.sleep(4)  # Extra wait for Angular to render
+
         _save_debug('/tmp/soledad_search_page.html', await page.content())
+        search_page_url = page.url
+        print(f"  [Soledad] Search page URL: {search_page_url}")
 
-        search_url_after = page.url
-        print(f"  [Soledad] Search page URL: {search_url_after}")
+        # Check if we were bounced back to login
+        if 'login' in search_page_url.lower() and url_origin.lower() not in search_page_url.lower().replace('/login', ''):
+            # Only treat it as login bounce if the URL is actually a login endpoint
+            pw_count = await page.locator('input[type="password"]').count()
+            if pw_count > 0:
+                result["error"] = f"Session not valid for {url_origin} — redirected to login"
+                return result
 
-        if 'login' in search_url_after.lower():
-            result["error"] = f"Navigating to {url_search} redirected to login — session expired"
-            return result
+        # ── Search ────────────────────────────────────────────────────────────
+        print(f"  [Soledad] Searching: {medida_slashed}")
 
-        # ── Search for the medida ─────────────────────────────────────────────
-        print(f"  [Soledad] Searching for: {medida_slashed} (norm: {medida_norm})")
-
-        # Strategy A: URL-based search (common in Hybris/SAP Commerce B2B portals)
-        # Try common search URL patterns first — much faster than UI interaction
-        base_search_url = url_search.split('/dashboard')[0].split('/main')[0]
-        # e.g. https://b2b.new.gruposoledad.com
-        url_origin = '/'.join(url_search.split('/')[:3])
+        # Strategy A: URL-based search (Spartacus / SAP Commerce patterns)
         search_url_candidates = [
+            f"{url_origin}/search?query={medida_slashed}",
             f"{url_origin}/search?q={medida_slashed}",
+            f"{url_origin}/products?search={medida_slashed}",
+            f"{url_origin}/catalog?q={medida_slashed}",
+            f"{url_origin}/b2b/current/search?text={medida_slashed}",
             f"{url_origin}/b2b/current/search?q={medida_slashed}",
-            f"{url_origin}/b2b/current/pneus?q={medida_slashed}",
-            f"{url_origin}/b2b/current/products?medida={medida_slashed}",
         ]
 
-        url_search_worked = False
+        search_done = False
         for surl in search_url_candidates:
             try:
-                print(f"  [Soledad] Trying URL search: {surl}")
-                await page.goto(surl, wait_until="domcontentloaded", timeout=30000)
+                print(f"  [Soledad] URL search: {surl}")
+                await page.goto(surl, wait_until="domcontentloaded", timeout=25000)
                 try:
                     await page.wait_for_load_state("load", timeout=15000)
                 except Exception:
                     pass
-                await asyncio.sleep(3)
+                await asyncio.sleep(5)  # Angular needs time to render after route change
+
                 cur = page.url
-                if 'login' in cur.lower():
-                    print(f"  [Soledad] URL search redirected to login, skipping URL approach")
-                    # Go back to dashboard and try UI search
+                if await page.locator('input[type="password"]').count() > 0:
+                    print(f"  [Soledad] URL search redirected to login, trying UI search")
                     await page.goto(url_search, wait_until="domcontentloaded", timeout=30000)
                     try:
                         await page.wait_for_load_state("load", timeout=15000)
                     except Exception:
                         pass
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(4)
                     break
-                page_content = await page.content()
-                if medida_slashed.lower() in page_content.lower() or medida_norm in page_content:
-                    print(f"  [Soledad] URL-based search returned results at {cur}")
-                    url_search_worked = True
-                    _save_debug('/tmp/soledad_results.html', page_content)
+
+                html = await page.content()
+                has_size = medida_slashed.lower() in html.lower() or medida_norm in html
+                has_price = bool(re.search(r'[€£$]\s*\d{2,3}|\d{2,3}[,\.]\d{2}\s*[€£$]', html))
+                if has_size and has_price:
+                    print(f"  [Soledad] URL search found results at: {cur}")
+                    search_done = True
+                    _save_debug('/tmp/soledad_results.html', html)
                     break
+                print(f"  [Soledad] {surl.split('?')[0]} — no size+price in HTML")
             except Exception as ue:
                 print(f"  [Soledad] URL search error: {ue}")
                 continue
 
-        # Strategy B: UI search — find a search input and type the medida
-        searched = url_search_worked
-        if not searched:
-            search_selectors = [
+        # Strategy B: UI search (type in search box)
+        if not search_done:
+            print(f"  [Soledad] Trying UI search...")
+            # Make sure we're on the dashboard, not login
+            if await page.locator('input[type="password"]').count() > 0:
+                print(f"  [Soledad] Login page detected, can't search")
+                result["error"] = "Redirected to login before search — session issue"
+                _save_debug('/tmp/soledad_results.html', await page.content())
+                return result
+
+            ui_selectors = [
+                'cx-searchbox input',                     # Spartacus searchbox
                 'input[placeholder*="medida" i]',
                 'input[placeholder*="pesqui" i]',
                 'input[placeholder*="buscar" i]',
                 'input[placeholder*="search" i]',
-                'input[placeholder*="referê" i]',
+                'input[placeholder*="referência" i]',
                 'input[placeholder*="dimensão" i]',
                 'input[placeholder*="referencia" i]',
                 'input[name*="search" i]',
                 'input[name*="pesqui" i]',
                 'input[name*="medida" i]',
                 'input[name*="query" i]',
-                'input[type="search"]',
+                'input[name*="texto" i]',
+                '[class*="search"] input',
                 '[role="search"] input',
-                'input[type="text"]:not([name*="user" i]):not([name*="email" i])',
+                'input[type="search"]',
+                'input[type="text"]:not([name*="user" i]):not([name*="email" i]):not([autocomplete*="email" i])',
             ]
 
-            for sel in search_selectors:
-                el = page.locator(sel).first
-                if await el.count() > 0:
+            for sel in ui_selectors:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() == 0:
+                        continue
+                    print(f"  [Soledad] Found input: {sel}")
+
                     for term in [medida_slashed, medida_norm]:
+                        await el.click()
+                        await el.triple_click()
+                        await el.fill("")
+                        await el.type(term, delay=60)
+                        print(f"  [Soledad] Typed '{term}'")
+                        await asyncio.sleep(0.5)
+                        await el.press('Enter')
+                        await asyncio.sleep(6)  # Generous wait for SPA render
                         try:
-                            await el.click()
+                            await page.wait_for_load_state("load", timeout=15000)
+                        except Exception:
+                            pass
+                        await asyncio.sleep(2)
+
+                        html_after = await page.content()
+                        has_s = medida_slashed.lower() in html_after.lower() or medida_norm in html_after
+                        has_p = bool(re.search(r'[€£$]\s*\d{2,3}|\d{2,3}[,\.]\d{2}\s*[€£$]', html_after))
+                        if has_s:
+                            print(f"  [Soledad] UI search ok for '{term}' (has_price={has_p})")
+                            search_done = True
+                            _save_debug('/tmp/soledad_results.html', html_after)
+                            break
+                        print(f"  [Soledad] '{term}' not in results HTML")
+                        try:
                             await el.triple_click()
-                            await el.type(term, delay=60)
-                            print(f"  [Soledad] Typed {term!r} into {sel!r}")
-                            await asyncio.sleep(0.5)
-                            await el.press('Enter')
-                            await asyncio.sleep(4)
-                            try:
-                                await page.wait_for_load_state("load", timeout=15000)
-                            except Exception:
-                                pass
-                            content_after = await page.content()
-                            if medida_slashed.lower() in content_after.lower() or medida_norm in content_after:
-                                print(f"  [Soledad] UI search: results found for {term!r}")
-                                searched = True
-                                break
-                            print(f"  [Soledad] UI search: no size-specific results for {term!r}")
-                            if term != medida_norm:
-                                await el.triple_click()
-                        except Exception as se:
-                            print(f"  [Soledad] Search input error: {se}")
-                    if not searched:
-                        searched = True  # Accept whatever was returned
+                        except Exception:
+                            pass
+
+                    if not search_done:
+                        # Still accept whatever state we're in — save for debug
+                        _save_debug('/tmp/soledad_results.html', await page.content())
+                        search_done = True
                     break
 
-        content = await page.content()
-        if not url_search_worked:  # only overwrite if URL-based search didn't already save
-            _save_debug('/tmp/soledad_results.html', content)
+                except Exception as se:
+                    print(f"  [Soledad] Input error ({sel}): {se}")
+                    continue
 
-        if not searched:
-            result["error"] = "Search field not found — check /tmp/soledad_search_page.html"
-            return result
+        # Save final page state regardless
+        final_html = await page.content()
+        if not search_done:
+            _save_debug('/tmp/soledad_results.html', final_html)
+            print(f"  [Soledad] No search input found")
 
         # ── Extract products ──────────────────────────────────────────────────
-        products = await page.evaluate('''() => {
-            const products = [];
+        # Primary: parse intercepted JSON API responses
+        products = []
 
-            // Strategy 1: table rows (common in B2B portals)
-            for (const table of document.querySelectorAll("table")) {
-                const rows = table.querySelectorAll("tr");
-                if (rows.length < 2) continue;
+        def _parse_api_json(data, depth=0):
+            """Recursively search JSON for objects that look like tire products."""
+            if depth > 6:
+                return
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict):
+                        # Try to find price
+                        price_val = None
+                        for pk in ['price', 'preco', 'pvp', 'valor', 'netPrice',
+                                   'purchasePrice', 'salePrice', 'unitPrice']:
+                            v = item.get(pk)
+                            if v is None:
+                                continue
+                            if isinstance(v, dict):
+                                v = v.get('value') or v.get('formattedValue') or v.get('amount') or 0
+                            try:
+                                price_val = float(str(v).replace(',', '.').replace('€', '').strip())
+                                if price_val < 10 or price_val > 2000:
+                                    price_val = None
+                            except Exception:
+                                pass
+                            if price_val:
+                                break
 
-                let brandCol = -1, modelCol = -1, priceCol = -1;
-                const headers = rows[0].querySelectorAll("th, td");
-                headers.forEach((h, i) => {
-                    const t = h.textContent.trim().toLowerCase();
-                    if (/marca|brand|fabricante/.test(t))              brandCol = i;
-                    else if (/modelo|descri|artigo|referê|denom/.test(t)) modelCol = i;
-                    else if (/pre[çc]o|valor|pvp|unit|importe/.test(t)) priceCol = i;
-                });
+                        if not price_val:
+                            _parse_api_json(item, depth + 1)
+                            continue
 
-                for (let i = 1; i < rows.length; i++) {
-                    const cells = rows[i].querySelectorAll("td");
-                    if (cells.length < 2) continue;
-                    let brand = brandCol >= 0 ? cells[brandCol]?.textContent.trim().toUpperCase() : "";
-                    let model = modelCol >= 0 ? cells[modelCol]?.textContent.trim() : "";
-                    let price = null;
+                        brand_val = ''
+                        for bk in ['marca', 'brand', 'manufacturer', 'fabricante', 'brandName']:
+                            v = item.get(bk)
+                            if v:
+                                brand_val = str(v).upper()
+                                break
 
-                    if (priceCol >= 0) {
-                        const m = cells[priceCol]?.textContent.match(/(\d+[,\.]\d{2})/);
-                        if (m) price = parseFloat(m[1].replace(",", "."));
-                    }
-                    if (!price) {
-                        for (const cell of cells) {
-                            const m = cell.textContent.trim().match(/^€?\s*(\d+[,\.]\d{2})\s*€?$/);
-                            if (m) { const p = parseFloat(m[1].replace(",",".")); if (p>15&&p<600){price=p;break;} }
-                        }
-                    }
-                    if (!brand) {
-                        const rowText = Array.from(cells).map(c=>c.textContent).join(" ").toUpperCase();
-                        const bm = rowText.match(/(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL|SEMPERIT|BARUM|LASSA|SAVA|KLEBER|FULDA|GISLAVED)/);
-                        if (bm) brand = bm[1];
-                    }
-                    if (price && price > 15 && price < 600) products.push({ brand, model, price });
-                }
-                if (products.length > 0) break;
-            }
+                        model_val = ''
+                        for mk in ['modelo', 'model', 'description', 'descricao',
+                                   'name', 'nome', 'designation', 'title']:
+                            v = item.get(mk)
+                            if v:
+                                model_val = str(v)
+                                break
 
-            // Strategy 2: card/list items (SPA style)
-            if (products.length === 0) {
-                const cards = document.querySelectorAll(
-                    '[class*="product"], [class*="item"], [class*="card"], [class*="result"], [class*="tire"], [class*="tyre"]'
-                );
-                cards.forEach(card => {
-                    const texts = card.querySelectorAll("*");
-                    let brand = "", model = "", price = null;
-                    texts.forEach(el => {
-                        const t = el.textContent.trim();
-                        if (/^(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA)/i.test(t) && !brand)
-                            brand = t.toUpperCase();
-                        const pm = t.match(/^€?\s*(\d+[,\.]\d{2})\s*€?$/);
-                        if (pm && !price) { const p = parseFloat(pm[1].replace(",",".")); if(p>15&&p<600) price=p; }
+                        products.append({'brand': brand_val, 'model': model_val, 'price': price_val})
+                    else:
+                        _parse_api_json(item, depth + 1)
+            elif isinstance(data, dict):
+                for v in data.values():
+                    _parse_api_json(v, depth + 1)
+
+        for resp in api_responses:
+            try:
+                data = json.loads(resp['body'])
+                before = len(products)
+                _parse_api_json(data)
+                if len(products) > before:
+                    print(f"  [Soledad] +{len(products)-before} products from {resp['url'].split('?')[0][-50:]}")
+            except Exception:
+                pass
+
+        if products:
+            print(f"  [Soledad] {len(products)} products from API interception")
+        else:
+            # Secondary: DOM extraction
+            print(f"  [Soledad] No API products — trying DOM extraction")
+            products = await page.evaluate(r'''() => {
+                const products = [];
+                const BRANDS = /MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL|SEMPERIT|BARUM|LASSA|SAVA|KLEBER|FULDA|GISLAVED|COOPER|NANKANG|LINGLONG|TRIANGLE|SAILUN|WESTLAKE/i;
+
+                // Strategy 1: tables
+                for (const tbl of document.querySelectorAll("table")) {
+                    const rows = Array.from(tbl.querySelectorAll("tr"));
+                    if (rows.length < 2) continue;
+                    const hdr = Array.from(rows[0].querySelectorAll("th,td")).map(h=>h.textContent.trim().toLowerCase());
+                    let bC=-1,mC=-1,pC=-1;
+                    hdr.forEach((t,i)=>{
+                        if(/marca|brand|fab/.test(t)) bC=i;
+                        else if(/model|descri|artig|ref|denom/.test(t)) mC=i;
+                        else if(/pre[cç]o|pvp|valor|unit|price/.test(t)) pC=i;
                     });
-                    if (price) products.push({ brand, model: card.textContent.trim().substring(0, 80), price });
-                });
-            }
+                    for (let i=1;i<rows.length;i++){
+                        const cells=Array.from(rows[i].querySelectorAll("td"));
+                        if(cells.length<2) continue;
+                        let brand=bC>=0?cells[bC]?.textContent.trim().toUpperCase():"";
+                        let model=mC>=0?cells[mC]?.textContent.trim():"";
+                        let price=null;
+                        if(pC>=0){const m=cells[pC]?.textContent.match(/(\d+[,.]?\d*)/);if(m)price=parseFloat(m[1].replace(",","."));}
+                        if(!price){for(const c of cells){const m=c.textContent.trim().match(/^[€$]?\s*(\d{2,3}[,.]\d{2})\s*[€$]?$/);if(m){const p=parseFloat(m[1].replace(",","."));if(p>15&&p<2000){price=p;break;}}}}
+                        if(!brand){const t=cells.map(c=>c.textContent).join(" ").toUpperCase();const bm=t.match(BRANDS);if(bm)brand=bm[0];}
+                        if(price&&price>15&&price<2000) products.push({brand,model,price});
+                    }
+                    if(products.length>0) break;
+                }
 
-            // Deduplicate brand+model keeping lowest price
-            const seen = {};
-            for (const p of products) {
-                const k = (p.brand||"") + "|" + (p.model||"");
-                if (!seen[k] || p.price < seen[k].price) seen[k] = p;
-            }
-            return Object.values(seen);
-        }''')
+                // Strategy 2: any element containing a price near a brand name
+                if(products.length===0){
+                    const allEls = Array.from(document.querySelectorAll("*"));
+                    for(const el of allEls){
+                        const t = el.childNodes.length===1&&el.childNodes[0].nodeType===3 ? el.textContent.trim() : "";
+                        if(!t) continue;
+                        const pm=t.match(/^[€$]?\s*(\d{2,3}[,.]\d{2})\s*[€$]?$/);
+                        if(!pm) continue;
+                        const price=parseFloat(pm[1].replace(",","."));
+                        if(price<15||price>2000) continue;
+                        // Find nearby brand in ancestor text
+                        let brand="",model="";
+                        let ancestor=el.parentElement;
+                        for(let d=0;d<5&&ancestor;d++,ancestor=ancestor.parentElement){
+                            const at=ancestor.textContent.toUpperCase();
+                            const bm=at.match(BRANDS);
+                            if(bm){brand=bm[0];model=ancestor.textContent.trim().substring(0,120);break;}
+                        }
+                        if(brand) products.push({brand,model,price});
+                    }
+                }
+
+                // Deduplicate keeping lowest price
+                const seen={};
+                for(const p of products){
+                    const k=(p.brand||"")+(p.model||"").substring(0,30);
+                    if(!seen[k]||p.price<seen[k].price) seen[k]=p;
+                }
+                return Object.values(seen);
+            }''')
+            if products:
+                print(f"  [Soledad] {len(products)} products from DOM")
 
         if products:
             result["products"] = products
             prices = [p['price'] for p in products]
             result["price"] = min(prices)
             result["all_prices"] = sorted(prices)[:10]
-            print(f"  [Soledad] {len(products)} products. Best: €{result['price']}")
+            print(f"  [Soledad] Best price: €{result['price']}")
         else:
-            # Fallback: regex price scan
-            prices_list = extract_prices(content)
+            # Last resort: regex price scan on final HTML
+            prices_list = extract_prices(final_html)
             if prices_list:
                 result["price"] = min(prices_list)
                 result["all_prices"] = sorted(prices_list)[:10]
-                print(f"  [Soledad] Fallback regex: {len(prices_list)} prices, best: €{result['price']}")
+                print(f"  [Soledad] Regex fallback: {len(prices_list)} prices, best €{result['price']}")
             else:
-                result["error"] = "No products found — check /tmp/soledad_results.html"
-                print(f"  [Soledad] No products found")
+                result["error"] = (
+                    f"No products found — "
+                    f"API responses: {len(api_responses)}, "
+                    f"search_done: {search_done}. "
+                    f"Check /tmp/soledad_results.html and /api/scraper/debug-html?supplier=soledad&file=results"
+                )
+                print(f"  [Soledad] {result['error']}")
 
     except Exception as e:
         result["error"] = str(e)
-        print(f"  [Soledad] Error: {e}")
+        print(f"  [Soledad] Exception: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        try:
+            page.remove_listener('response', _capture_api_response)
+        except Exception:
+            pass
 
     return result
 
