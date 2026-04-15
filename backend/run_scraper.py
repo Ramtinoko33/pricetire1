@@ -1591,7 +1591,7 @@ async def scrape_abt_tyres(page, username: str, password: str, medida: str) -> d
     return result
 
 async def scrape_tugapneus(page, username: str, password: str, medida: str) -> dict:
-    """Scrape TugaPneus"""
+    """Scrape TugaPneus (tugapneus.pt)"""
     result = {
         "supplier": "TugaPneus",
         "price": None,
@@ -1599,52 +1599,208 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str) -> d
         "products": [],
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
-    
+
+    medida_norm = normalize_medida(medida)
+    # Reconstruct slashed format for search (e.g. 1956515 → 195/65R15)
+    _m = re.match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
+    medida_slashed = f"{_m.group(1)}/{_m.group(2)}R{_m.group(3)}" if _m else medida_norm
+
     try:
-        print("  [TugaPneus] Logging in...")
-        await page.goto("http://tugapneus.pt/login", wait_until="networkidle", timeout=60000)
+        print(f"  [TugaPneus] Logging in as {username}...")
+        await page.goto("https://www.tugapneus.pt/login", wait_until="domcontentloaded", timeout=60000)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=20000)
+        except Exception:
+            pass
         await asyncio.sleep(2)
-        
-        # Fill login form
-        email_input = page.locator('input[type="email"], input[name="email"], input[name="username"]').first
-        if await email_input.count() > 0:
-            await email_input.fill(username)
-        
-        password_input = page.locator('input[type="password"]').first
-        if await password_input.count() > 0:
-            await password_input.fill(password)
-        
-        # Submit login
-        submit_btn = page.locator('button[type="submit"], input[type="submit"]').first
-        if await submit_btn.count() > 0:
-            await submit_btn.click()
-        await asyncio.sleep(5)
-        
-        # Search for tires
-        medida_norm = normalize_medida(medida)
-        print(f"  [TugaPneus] Searching for: {medida_norm}")
-        
-        search_input = page.locator('input[type="search"], input[placeholder*="pesq"], input[name*="search"], #search').first
-        if await search_input.count() > 0:
-            await search_input.fill(medida_norm)
-            await search_input.press('Enter')
-            await asyncio.sleep(5)
-        
-        # Extract products
-        content = await page.content()
-        prices = extract_prices(content)
-        
-        if prices:
-            result["price"] = min(prices)
-            result["all_prices"] = sorted(prices)[:10]
-            print(f"  [TugaPneus] Found {len(prices)} prices, best: €{result['price']}")
+
+        current_url = page.url
+        if '/produtos' in current_url or 'login' not in current_url.lower():
+            print(f"  [TugaPneus] Already logged in, on: {current_url}")
         else:
-            result["error"] = "No products found"
-                
+            # Fill email
+            email_input = page.locator(
+                'input[type="email"], input[name="email"], input[name*="mail"], '
+                'input[name="username"], input[type="text"]'
+            ).first
+            if await email_input.count() > 0:
+                await email_input.fill(username)
+                await asyncio.sleep(0.4)
+            else:
+                result["error"] = "Email field not found on TugaPneus login page"
+                return result
+
+            password_input = page.locator('input[type="password"]').first
+            if await password_input.count() > 0:
+                await password_input.fill(password)
+                await asyncio.sleep(0.4)
+            else:
+                result["error"] = "Password field not found on TugaPneus login page"
+                return result
+
+            # Submit
+            submit_btn = page.locator(
+                'button[type="submit"], input[type="submit"], '
+                'button:has-text("Login"), button:has-text("Entrar"), '
+                'a:has-text("Login"), a:has-text("Entrar")'
+            ).first
+            if await submit_btn.count() > 0:
+                await submit_btn.click()
+            else:
+                await password_input.press("Enter")
+
+            await asyncio.sleep(5)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+
+            url_after = page.url
+            print(f"  [TugaPneus] After login: {url_after}")
+            if 'login' in url_after.lower():
+                result["error"] = f"Login failed — still on login page ({url_after})"
+                return result
+
+        # Navigate to products page
+        print(f"  [TugaPneus] Navigating to products...")
+        await page.goto("https://www.tugapneus.pt/produtos", wait_until="domcontentloaded", timeout=60000)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=20000)
+        except Exception:
+            pass
+        await asyncio.sleep(3)
+
+        if 'login' in page.url.lower():
+            result["error"] = "Redirected to login when navigating to products — session issue"
+            return result
+
+        # Search
+        print(f"  [TugaPneus] Searching: {medida_slashed}")
+        search_selectors = [
+            'input[type="search"]',
+            'input[name*="search" i]',
+            'input[name*="pesq" i]',
+            'input[placeholder*="pesq" i]',
+            'input[placeholder*="search" i]',
+            'input[placeholder*="medida" i]',
+            '#search',
+            '.search-input input',
+            'input[type="text"]',
+        ]
+
+        searched = False
+        for sel in search_selectors:
+            el = page.locator(sel).first
+            if await el.count() > 0:
+                for term in [medida_slashed, medida_norm]:
+                    await el.clear()
+                    await el.fill(term)
+                    await asyncio.sleep(0.5)
+                    # Try clicking search button, then fallback to Enter
+                    btn = page.locator(
+                        'button:has-text("Pesquisar"), button:has-text("Buscar"), '
+                        'button[type="submit"], .search-btn, .btn-search'
+                    ).first
+                    if await btn.count() > 0:
+                        await btn.click()
+                    else:
+                        await el.press("Enter")
+                    await asyncio.sleep(5)
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=15000)
+                    except Exception:
+                        pass
+                    html_after = await page.content()
+                    if medida_slashed.lower() in html_after.lower() or medida_norm in html_after:
+                        print(f"  [TugaPneus] Search returned results for '{term}'")
+                        searched = True
+                        break
+                    print(f"  [TugaPneus] No results for '{term}', trying next")
+                if not searched:
+                    searched = True  # Accept whatever was returned
+                break
+
+        if not searched:
+            # Fallback: URL search
+            await page.goto(
+                f"https://www.tugapneus.pt/produtos?search={medida_slashed}",
+                wait_until="domcontentloaded", timeout=30000
+            )
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            await asyncio.sleep(3)
+
+        content = await page.content()
+
+        # Check for "no results" messages
+        no_results_texts = [
+            "sem resultado", "nenhum registo", "não foram encontrados",
+            "nenhum produto", "sem produtos", "0 resultado", "0 produtos"
+        ]
+        if any(t in content.lower() for t in no_results_texts):
+            result["error"] = f"No products found for {medida_slashed}"
+            return result
+
+        # Extract products via JS
+        products = await page.evaluate(r'''() => {
+            const products = [];
+            const BRANDS = /(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|BF\s*GOODRICH|KUMHO|TOYO|NEXEN|FALKEN|COOPER|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL|SEMPERIT|BARUM|LASSA|SAVA|KLEBER|FULDA|GISLAVED|MATADOR|DEBICA|NANKANG|FEDERAL|LINGLONG|TRIANGLE|WESTLAKE|GOODRIDE|SAILUN|HIFLY|POWERTRAC|JINYU|INSA\s*TURBO|ROADSTONE)/i;
+            const selectors = [
+                '.product', '.product-item', '.produto', '[class*="product"]',
+                '.item', '.card', '.list-item', 'tr', '[class*="pneu"]',
+                '[class*="tire"]', '[class*="item"]'
+            ];
+            for (const sel of selectors) {
+                const items = document.querySelectorAll(sel);
+                if (items.length > 1) {
+                    items.forEach(item => {
+                        const text = item.textContent || '';
+                        const pm = text.match(/(\d+[,.]\d{2})\s*€|€\s*(\d+[,.]\d{2})/);
+                        if (pm) {
+                            const price = parseFloat((pm[1]||pm[2]).replace(',','.'));
+                            if (price > 15 && price < 600) {
+                                const bm = text.match(BRANDS);
+                                products.push({
+                                    brand: bm ? bm[1].toUpperCase() : '',
+                                    model: text.trim().substring(0, 100),
+                                    price
+                                });
+                            }
+                        }
+                    });
+                    if (products.length > 0) break;
+                }
+            }
+            // Deduplicate by price keeping lowest
+            const seen = {};
+            for (const p of products) {
+                const k = (p.brand||'') + '|' + String(p.price);
+                if (!seen[k]) seen[k] = p;
+            }
+            return Object.values(seen);
+        }''')
+
+        if products:
+            result["products"] = products
+            result["price"] = min(p['price'] for p in products)
+            result["all_prices"] = sorted(p['price'] for p in products)[:10]
+            print(f"  [TugaPneus] {len(products)} products, best: €{result['price']}")
+        else:
+            prices = extract_prices(content)
+            if prices:
+                result["price"] = min(prices)
+                result["all_prices"] = sorted(prices)[:10]
+                print(f"  [TugaPneus] Regex fallback: {len(prices)} prices, best: €{result['price']}")
+            else:
+                result["error"] = "No products found"
+                print(f"  [TugaPneus] No products found")
+
     except Exception as e:
         result["error"] = str(e)
         print(f"  [TugaPneus] Error: {e}")
-    
+
     return result
 
 async def scrape_inter_sprint(page, username: str, password: str, medida: str) -> dict:

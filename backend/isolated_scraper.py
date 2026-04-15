@@ -435,6 +435,121 @@ async def scrape_euromais(username: str, password: str, medida: str) -> dict:
     
     return result
 
+async def scrape_tugapneus(username: str, password: str, medida: str) -> dict:
+    """Scrape TugaPneus — isolated process version"""
+    result = {
+        "supplier": "TugaPneus",
+        "price": None,
+        "error": None,
+        "products": [],
+        "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+    }
+
+    medida_norm = normalize_medida(medida)
+    _m = __import__('re').match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
+    medida_slashed = f"{_m.group(1)}/{_m.group(2)}R{_m.group(3)}" if _m else medida_norm
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=True,
+            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+                  '--disable-blink-features=AutomationControlled']
+        )
+        context = await browser.new_context(
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            viewport={'width': 1920, 'height': 1080},
+            locale='pt-PT',
+        )
+        page = await context.new_page()
+        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
+
+        try:
+            # Login
+            await page.goto("https://www.tugapneus.pt/login", wait_until="domcontentloaded", timeout=60000)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=20000)
+            except Exception:
+                pass
+            await asyncio.sleep(3)
+
+            if 'login' in page.url.lower():
+                email_input = page.locator(
+                    'input[type="email"], input[name="email"], input[name*="mail"], '
+                    'input[name="username"], input[type="text"]'
+                ).first
+                if await email_input.count() > 0:
+                    await email_input.fill(username)
+                password_input = page.locator('input[type="password"]').first
+                if await password_input.count() > 0:
+                    await password_input.fill(password)
+                await asyncio.sleep(0.5)
+                submit_btn = page.locator(
+                    'button[type="submit"], input[type="submit"], '
+                    'button:has-text("Login"), button:has-text("Entrar")'
+                ).first
+                if await submit_btn.count() > 0:
+                    await submit_btn.click()
+                else:
+                    await page.keyboard.press("Enter")
+                await asyncio.sleep(5)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=15000)
+                except Exception:
+                    pass
+                if 'login' in page.url.lower():
+                    result["error"] = "Login failed"
+                    return result
+
+            # Navigate to products
+            await page.goto("https://www.tugapneus.pt/produtos", wait_until="domcontentloaded", timeout=60000)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=20000)
+            except Exception:
+                pass
+            await asyncio.sleep(3)
+
+            if 'login' in page.url.lower():
+                result["error"] = "Redirected to login on products page"
+                return result
+
+            # Search
+            for sel in ['input[type="search"]', 'input[name*="search" i]', 'input[name*="pesq" i]',
+                        'input[placeholder*="pesq" i]', '#search', 'input[type="text"]']:
+                el = page.locator(sel).first
+                if await el.count() > 0:
+                    await el.clear()
+                    await el.fill(medida_slashed)
+                    await asyncio.sleep(0.5)
+                    btn = page.locator(
+                        'button:has-text("Pesquisar"), button[type="submit"], .search-btn'
+                    ).first
+                    if await btn.count() > 0:
+                        await btn.click()
+                    else:
+                        await el.press("Enter")
+                    await asyncio.sleep(5)
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=15000)
+                    except Exception:
+                        pass
+                    break
+
+            content = await page.content()
+            prices = extract_prices(content)
+            if prices:
+                result["price"] = min(prices)
+                result["all_prices"] = sorted(prices)[:10]
+            else:
+                result["error"] = "No products found"
+
+        except Exception as e:
+            result["error"] = str(e)
+        finally:
+            await browser.close()
+
+    return result
+
+
 async def main():
     """Main entry point - expects JSON config from stdin"""
     # Read config from stdin
@@ -455,6 +570,8 @@ async def main():
         result = await scrape_sjose(username, password, medida)
     elif 'euromais' in supplier or 'eurotyre' in supplier:
         result = await scrape_euromais(username, password, medida)
+    elif 'tugapneus' in supplier or 'tuga' in supplier:
+        result = await scrape_tugapneus(username, password, medida)
     else:
         result = {"supplier": supplier, "price": None, "error": f"Unknown supplier: {supplier}"}
     

@@ -872,6 +872,166 @@ class PrismanilAdapter(ScraperBase):
             logger.error(f"Prismanil search error: {str(e)}")
             return None
 
+class TugaPneusAdapter(ScraperBase):
+    """Adapter for TugaPneus B2B website (tugapneus.pt)"""
+
+    def normalize_medida(self, medida: str) -> str:
+        return medida.replace('/', '').replace('R', '').replace('r', '')
+
+    def normalize_indice(self, indice: str) -> str:
+        return indice.replace(' XL', '').replace('XL', '').strip()
+
+    async def login(self) -> tuple[bool, str]:
+        """Login to TugaPneus portal"""
+        try:
+            logger.info(f"TugaPneus: Navigating to {self.url_login}")
+            await self.page.goto(self.url_login, wait_until="domcontentloaded", timeout=60000)
+            try:
+                await self.page.wait_for_load_state("networkidle", timeout=20000)
+            except Exception:
+                pass
+            await asyncio.sleep(3)
+
+            current_url = self.page.url
+            if '/produtos' in current_url or 'login' not in current_url.lower():
+                return True, "Already logged in"
+
+            await self.take_screenshot("before_login")
+
+            # Fill email
+            email_input = self.page.locator(
+                'input[type="email"], input[name="email"], input[name*="mail"], '
+                'input[name="username"], input[type="text"]'
+            ).first
+            if await email_input.count() > 0:
+                await email_input.fill(self.username)
+                await asyncio.sleep(0.5)
+            else:
+                return False, "Email input not found"
+
+            # Fill password
+            password_input = self.page.locator('input[type="password"]').first
+            if await password_input.count() > 0:
+                await password_input.fill(self.password)
+                await asyncio.sleep(0.5)
+            else:
+                return False, "Password input not found"
+
+            # Submit
+            submit_btn = self.page.locator(
+                'button[type="submit"], input[type="submit"], '
+                'button:has-text("Login"), button:has-text("Entrar"), '
+                'a:has-text("Login"), a:has-text("Entrar")'
+            ).first
+            if await submit_btn.count() > 0:
+                await submit_btn.click()
+            else:
+                await self.page.keyboard.press("Enter")
+
+            await asyncio.sleep(5)
+            try:
+                await self.page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+
+            await self.take_screenshot("after_login")
+
+            current_url = self.page.url
+            if 'login' in current_url.lower():
+                return False, f"Login failed — still on login page ({current_url})"
+
+            # Verify by navigating to products
+            await self.page.goto("https://www.tugapneus.pt/produtos",
+                                 wait_until="domcontentloaded", timeout=20000)
+            await asyncio.sleep(2)
+            if 'login' not in self.page.url.lower():
+                return True, "Login successful"
+            return False, "Login failed — products page redirected to login"
+
+        except Exception as e:
+            logger.error(f"TugaPneus login error: {str(e)}")
+            await self.take_screenshot("login_error")
+            return False, f"Login error: {str(e)}"
+
+    async def search_product(self, medida: str, marca: str, modelo: str, indice: str) -> Optional[float]:
+        """Search for tire on TugaPneus and return best price"""
+        try:
+            medida_norm = self.normalize_medida(medida)
+            import re as _re_tp
+            _m = _re_tp.match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
+            medida_slashed = f"{_m.group(1)}/{_m.group(2)}R{_m.group(3)}" if _m else medida_norm
+
+            await asyncio.sleep(1)
+
+            if '/produtos' not in self.page.url.lower():
+                await self.page.goto("https://www.tugapneus.pt/produtos",
+                                     wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(3)
+
+            if 'login' in self.page.url.lower():
+                return None
+
+            search_selectors = [
+                'input[type="search"]',
+                'input[name*="search" i]',
+                'input[name*="pesq" i]',
+                'input[placeholder*="pesq" i]',
+                'input[placeholder*="search" i]',
+                '#search',
+                '.search-input input',
+                'input[type="text"]',
+            ]
+
+            for sel in search_selectors:
+                el = self.page.locator(sel).first
+                if await el.count() > 0:
+                    await el.clear()
+                    await el.fill(medida_slashed)
+                    await asyncio.sleep(0.5)
+                    btn = self.page.locator(
+                        'button:has-text("Pesquisar"), button:has-text("Buscar"), '
+                        'button[type="submit"], .search-btn'
+                    ).first
+                    if await btn.count() > 0:
+                        await btn.click()
+                    else:
+                        await el.press("Enter")
+                    await asyncio.sleep(5)
+                    try:
+                        await self.page.wait_for_load_state("networkidle", timeout=15000)
+                    except Exception:
+                        pass
+                    break
+
+            content = await self.page.content()
+
+            # Check no results
+            if any(t in content.lower() for t in [
+                "sem resultado", "nenhum registo", "não foram encontrados",
+                "nenhum produto", "sem produtos", "0 resultado"
+            ]):
+                return None
+
+            # Extract prices
+            found_prices = []
+            for pattern in [r'(\d+[,\.]\d{2})\s*€', r'€\s*(\d+[,\.]\d{2})']:
+                for match in re.findall(pattern, content, re.IGNORECASE):
+                    try:
+                        price = float(match.replace(',', '.'))
+                        if 15 < price < 600:
+                            found_prices.append(price)
+                    except ValueError:
+                        continue
+
+            if found_prices:
+                return min(set(found_prices))
+            return None
+
+        except Exception as e:
+            logger.error(f"TugaPneus search error for {medida}: {str(e)}")
+            return None
+
+
 class ScraperService:
     """Main scraper service that orchestrates scraping jobs"""
     
@@ -928,6 +1088,17 @@ class ScraperService:
                 supplier_name=supplier['name'],
                 url_login=supplier['url_login'],
                 url_search=supplier['url_search'],
+                username=supplier['username'],
+                password=password,
+                selectors=supplier.get('selectors')
+            )
+        elif 'tugapneus' in supplier_name_lower or 'tuga' in supplier_name_lower or 'tugapneus' in supplier_url_lower:
+            logger.info(f"Creating TugaPneusAdapter for {supplier['name']}")
+            return TugaPneusAdapter(
+                supplier_id=supplier_id,
+                supplier_name=supplier['name'],
+                url_login=supplier.get('url_login') or 'https://www.tugapneus.pt/login',
+                url_search=supplier.get('url_search') or 'https://www.tugapneus.pt/produtos',
                 username=supplier['username'],
                 password=password,
                 selectors=supplier.get('selectors')
