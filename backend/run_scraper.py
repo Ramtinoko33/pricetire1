@@ -1007,11 +1007,16 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         try:
             await page.wait_for_url(
                 lambda u: 'login' not in u.lower() and 'current' not in u.lower(),
-                timeout=15000
+                timeout=20000
             )
         except Exception:
             pass
-        await page.wait_for_load_state("networkidle", timeout=30000)
+        # Use load (not networkidle) — SPAs never reach networkidle
+        try:
+            await page.wait_for_load_state("load", timeout=30000)
+        except Exception:
+            pass
+        await asyncio.sleep(3)
 
         url_after = page.url
         print(f"  [Soledad] URL after login: {url_after}")
@@ -1024,11 +1029,22 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             print(f"  [Soledad] {result['error']}")
             return result
 
-        print(f"  [Soledad] Login successful")
+        print(f"  [Soledad] Login successful, current URL: {url_after}")
 
         # ── Navigate to search / dashboard ───────────────────────────────────
-        print(f"  [Soledad] Navigating to search: {url_search}")
-        await page.goto(url_search, wait_until="networkidle", timeout=60000)
+        # If we're already on the search/dashboard page (login redirected there), skip navigate
+        if url_after.rstrip('/') != url_search.rstrip('/'):
+            print(f"  [Soledad] Navigating to search: {url_search}")
+            try:
+                await page.goto(url_search, wait_until="domcontentloaded", timeout=60000)
+            except Exception as nav_err:
+                print(f"  [Soledad] Navigation warning: {nav_err}")
+            try:
+                await page.wait_for_load_state("load", timeout=20000)
+            except Exception:
+                pass
+        else:
+            print(f"  [Soledad] Already on search page")
         await asyncio.sleep(3)
         _save_debug('/tmp/soledad_search_page.html', await page.content())
 
@@ -1042,49 +1058,102 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         # ── Search for the medida ─────────────────────────────────────────────
         print(f"  [Soledad] Searching for: {medida_slashed} (norm: {medida_norm})")
 
-        search_selectors = [
-            'input[placeholder*="medida" i]',
-            'input[placeholder*="pesqui" i]',
-            'input[placeholder*="buscar" i]',
-            'input[placeholder*="search" i]',
-            'input[placeholder*="referê" i]',
-            'input[placeholder*="dimensão" i]',
-            'input[name*="search" i]',
-            'input[name*="pesqui" i]',
-            'input[name*="medida" i]',
-            'input[type="search"]',
-            'input[type="text"]',
+        # Strategy A: URL-based search (common in Hybris/SAP Commerce B2B portals)
+        # Try common search URL patterns first — much faster than UI interaction
+        base_search_url = url_search.split('/dashboard')[0].split('/main')[0]
+        # e.g. https://b2b.new.gruposoledad.com
+        url_origin = '/'.join(url_search.split('/')[:3])
+        search_url_candidates = [
+            f"{url_origin}/search?q={medida_slashed}",
+            f"{url_origin}/b2b/current/search?q={medida_slashed}",
+            f"{url_origin}/b2b/current/pneus?q={medida_slashed}",
+            f"{url_origin}/b2b/current/products?medida={medida_slashed}",
         ]
 
-        searched = False
-        for sel in search_selectors:
-            el = page.locator(sel).first
-            if await el.count() > 0:
-                for term in [medida_slashed, medida_norm]:
-                    await el.click()
-                    await el.triple_click()  # select all existing text
-                    await el.type(term, delay=60)
-                    print(f"  [Soledad] Typed {term!r} into {sel!r}")
-                    await asyncio.sleep(0.5)
-                    await el.press('Enter')
-                    await asyncio.sleep(4)
-                    await page.wait_for_load_state("networkidle", timeout=20000)
-                    content_after = await page.content()
-                    if medida_slashed.lower() in content_after.lower() or medida_norm in content_after:
-                        print(f"  [Soledad] Results found for {term!r}")
-                        searched = True
-                        break
-                    print(f"  [Soledad] No size-specific results for {term!r}, trying next")
-                    if term != medida_norm:
-                        # Reset field for next attempt
-                        await el.triple_click()
-                if not searched:
-                    # Accept whatever the last search returned
-                    searched = True
-                break
+        url_search_worked = False
+        for surl in search_url_candidates:
+            try:
+                print(f"  [Soledad] Trying URL search: {surl}")
+                await page.goto(surl, wait_until="domcontentloaded", timeout=30000)
+                try:
+                    await page.wait_for_load_state("load", timeout=15000)
+                except Exception:
+                    pass
+                await asyncio.sleep(3)
+                cur = page.url
+                if 'login' in cur.lower():
+                    print(f"  [Soledad] URL search redirected to login, skipping URL approach")
+                    # Go back to dashboard and try UI search
+                    await page.goto(url_search, wait_until="domcontentloaded", timeout=30000)
+                    try:
+                        await page.wait_for_load_state("load", timeout=15000)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(3)
+                    break
+                page_content = await page.content()
+                if medida_slashed.lower() in page_content.lower() or medida_norm in page_content:
+                    print(f"  [Soledad] URL-based search returned results at {cur}")
+                    url_search_worked = True
+                    _save_debug('/tmp/soledad_results.html', page_content)
+                    break
+            except Exception as ue:
+                print(f"  [Soledad] URL search error: {ue}")
+                continue
+
+        # Strategy B: UI search — find a search input and type the medida
+        searched = url_search_worked
+        if not searched:
+            search_selectors = [
+                'input[placeholder*="medida" i]',
+                'input[placeholder*="pesqui" i]',
+                'input[placeholder*="buscar" i]',
+                'input[placeholder*="search" i]',
+                'input[placeholder*="referê" i]',
+                'input[placeholder*="dimensão" i]',
+                'input[placeholder*="referencia" i]',
+                'input[name*="search" i]',
+                'input[name*="pesqui" i]',
+                'input[name*="medida" i]',
+                'input[name*="query" i]',
+                'input[type="search"]',
+                '[role="search"] input',
+                'input[type="text"]:not([name*="user" i]):not([name*="email" i])',
+            ]
+
+            for sel in search_selectors:
+                el = page.locator(sel).first
+                if await el.count() > 0:
+                    for term in [medida_slashed, medida_norm]:
+                        try:
+                            await el.click()
+                            await el.triple_click()
+                            await el.type(term, delay=60)
+                            print(f"  [Soledad] Typed {term!r} into {sel!r}")
+                            await asyncio.sleep(0.5)
+                            await el.press('Enter')
+                            await asyncio.sleep(4)
+                            try:
+                                await page.wait_for_load_state("load", timeout=15000)
+                            except Exception:
+                                pass
+                            content_after = await page.content()
+                            if medida_slashed.lower() in content_after.lower() or medida_norm in content_after:
+                                print(f"  [Soledad] UI search: results found for {term!r}")
+                                searched = True
+                                break
+                            print(f"  [Soledad] UI search: no size-specific results for {term!r}")
+                            if term != medida_norm:
+                                await el.triple_click()
+                        except Exception as se:
+                            print(f"  [Soledad] Search input error: {se}")
+                    if not searched:
+                        searched = True  # Accept whatever was returned
+                    break
 
         content = await page.content()
-        _save_debug('/tmp/soledad_results.html', content)
+        if not url_search_worked:  # only overwrite if URL-based search didn't already save
+            _save_debug('/tmp/soledad_results.html', content)
 
         if not searched:
             result["error"] = "Search field not found — check /tmp/soledad_search_page.html"
