@@ -532,8 +532,14 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
         if not items:
             raise HTTPException(status_code=400, detail="No items found in job")
 
-        unique_medidas = list({
-            item['medida'].replace('/', '').replace('R', '').replace('r', '')
+        def _norm_medida(m: str) -> str:
+            return m.replace('/', '').replace('R', '').replace('r', '')
+
+        unique_medidas = list({_norm_medida(item['medida']) for item in items})
+
+        # Unique (medida, marca) pairs — usado para cache check mais granular
+        unique_pairs = list({
+            (_norm_medida(item['medida']), (item.get('marca') or '').strip().upper())
             for item in items
         })
 
@@ -543,18 +549,21 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                 "DELETE FROM scraped_prices WHERE medida = ANY($1)",
                 unique_medidas,
             )
-            medidas_sem_dados = unique_medidas
+            pairs_sem_dados = unique_pairs
         else:
-            # Descobre quais medidas JÁ têm dados com marca
+            # Descobre quais (medida, marca) JÁ têm dados raspados
             rows_with_data = await conn.fetch(
-                "SELECT DISTINCT medida FROM scraped_prices WHERE medida = ANY($1) AND price IS NOT NULL AND marca IS NOT NULL AND marca != ''",
+                """SELECT DISTINCT medida, UPPER(COALESCE(marca,'')) AS marca_up
+                   FROM scraped_prices
+                   WHERE medida = ANY($1) AND price IS NOT NULL AND marca IS NOT NULL AND marca != ''""",
                 unique_medidas,
             )
-            medidas_com_dados = {r['medida'] for r in rows_with_data}
-            medidas_sem_dados = [m for m in unique_medidas if m not in medidas_com_dados]
+            pairs_com_dados = {(r['medida'], r['marca_up']) for r in rows_with_data}
+            pairs_sem_dados = [(m, b) for m, b in unique_pairs if (m, b) not in pairs_com_dados]
 
-    # Scrape medidas em falta (ou todas se force=true)
-    if medidas_sem_dados:
+    # Scrape pares (medida, marca) em falta (ou todos se force=true)
+    if pairs_sem_dados:
+        medidas_sem_dados = list({p[0] for p in pairs_sem_dados})
         # Limpa registos sem marca para essas medidas
         pool2 = await get_db()
         async with pool2.acquire() as conn:
@@ -562,12 +571,15 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                 "DELETE FROM scraped_prices WHERE medida = ANY($1) AND marca IS NULL",
                 medidas_sem_dados,
             )
-        logger.info(f"A correr scraper para {medidas_sem_dados} ({len(medidas_sem_dados)} medidas sem dados)...")
+        items_json = json.dumps([{"medida": m, "marca": b} for m, b in pairs_sem_dados])
+        logger.info(f"A correr scraper para {len(pairs_sem_dados)} pares medida+marca...")
         env = os.environ.copy()
         env['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
         medidas_str = ','.join(medidas_sem_dados)
         proc = await asyncio.create_subprocess_exec(
-            'python3', '/app/backend/run_scraper.py', '--medidas', medidas_str,
+            'python3', '/app/backend/run_scraper.py',
+            '--medidas', medidas_str,
+            '--items-json', items_json,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             env=env,
