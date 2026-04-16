@@ -621,45 +621,53 @@ async def scrape_tugapneus(username: str, password: str, medida: str,
             content = await page.content()
 
             # ── Extracção via Python regex sobre HTML bruto ───────────────
-            # Os dados estão no HTML mas o DOM pode não ter <tr> em headless.
+            # Os dados estão no HTML mas o DOM pode ter trs=0 em headless.
+            # Nota: em JSON o / é escapado como \/, por isso usamos [/\\] na medida.
             import re as _re
-            def _parse_tuga_html(html: str, medida_filter: str) -> list:
+            def _parse_tuga_html(html: str) -> list:
                 products_out = []
                 desc_re = _re.compile(
-                    r'PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}/\d{2}R\d{2})\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s+([^<\n]{0,60})',
+                    r'PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}[/\\]\d{2}R\d{2})\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s*([^<\n"\']{0,80})',
                     _re.IGNORECASE
                 )
-                price_re = _re.compile(r'(\d+[,.]\d{2})\s*(?:&euro;|€|&#8364;)', _re.IGNORECASE)
-                chunks = _re.split(r'(?=PNEU\s+\w)', html, flags=_re.IGNORECASE)
-                for chunk in chunks:
-                    m = desc_re.match(chunk.strip())
-                    if not m:
-                        continue
-                    if medida_filter and medida_filter.upper() not in chunk.upper():
-                        continue
-                    marca  = m.group(1).strip().upper()
-                    medida_v = m.group(2).strip().upper()
-                    indice = m.group(3).strip().upper()
-                    modelo = m.group(4).strip().upper()
-                    snippet = chunk[:300]
-                    prices_f = [float(p.replace(',', '.')) for p in price_re.findall(snippet)
-                                if 15 < float(p.replace(',', '.')) < 800]
-                    if not prices_f:
-                        prices_f = [float(p.replace(',', '.'))
-                                    for p in _re.findall(r'\b(\d{2,3}[,.]\d{2})\b', snippet)
-                                    if 15 < float(p.replace(',', '.')) < 800]
-                    if prices_f:
+                price_patterns = [
+                    _re.compile(r'(\d+[,.]\d{2})\s*(?:&euro;|€|&#8364;)', _re.IGNORECASE),
+                    _re.compile(r'"(?:price|preco|pvp|valor)"\s*:\s*"?(\d+[,.]\d{2})"?', _re.IGNORECASE),
+                ]
+                for m in desc_re.finditer(html):
+                    marca   = m.group(1).strip().upper().replace('\\', '')
+                    medida_v = m.group(2).strip().upper().replace('\\', '')
+                    indice  = m.group(3).strip().upper()
+                    modelo  = m.group(4).strip().upper()
+                    pos = m.end()
+                    snippet = html[pos:pos+600]
+                    price_val = None
+                    for pat in price_patterns:
+                        found = [float(p.replace(',', '.')) for p in pat.findall(snippet)
+                                 if 15 < float(p.replace(',', '.')) < 800]
+                        if found:
+                            price_val = min(found)
+                            break
+                    if price_val is None:
+                        nums = [float(n.replace(',', '.'))
+                                for n in _re.findall(r'\b(\d{2,3}[,.]\d{2})\b', html[pos:pos+400])
+                                if 15 < float(n.replace(',', '.')) < 800]
+                        if nums:
+                            price_val = min(nums)
+                    if price_val is not None:
                         products_out.append({'brand': marca, 'medida': medida_v,
                                              'indice': indice, 'model': modelo,
-                                             'price': min(prices_f)})
+                                             'price': price_val})
                 seen: dict = {}
                 for p in products_out:
                     k = f"{p['brand']}|{p['medida']}|{p['indice']}|{p['model']}"
                     if k not in seen or p['price'] < seen[k]['price']:
                         seen[k] = p
-                return list(seen.values())
+                result_list = list(seen.values())
+                print(f"  [TugaPneus] _parse_tuga_html: {len(result_list)} produtos")
+                return result_list
 
-            products = _parse_tuga_html(content, medida_slashed)
+            products = _parse_tuga_html(content)
 
             if products:
                 result["products"] = products
