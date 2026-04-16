@@ -609,106 +609,73 @@ async def scrape_tugapneus(username: str, password: str, medida: str,
                         wait_until="domcontentloaded", timeout=30000
                     )
 
-                # Espera activa até produtos aparecerem no DOM
-                try:
-                    await page.wait_for_function(
-                        r"[...document.querySelectorAll('tr')].some(tr => /PNEU\s+\w/i.test(tr.textContent))",
-                        timeout=12000
-                    )
-                    print(f"  [TugaPneus] Resultados encontrados com '{_term}'")
+                # Aguarda que a página carregue e verifica no HTML bruto
+                await asyncio.sleep(5)
+                _html = await page.content()
+                if re.search(r'PNEU\s+\w', _html, re.IGNORECASE):
+                    print(f"  [TugaPneus] Dados encontrados no HTML com '{_term}'")
                     _found = True
                     break
-                except Exception:
-                    print(f"  [TugaPneus] Sem resultados para '{_term}', próximo nível...")
+                print(f"  [TugaPneus] Sem 'PNEU...' no HTML para '{_term}', próximo nível...")
 
             content = await page.content()
 
-            # Check "sem resultados" — só termina se nenhuma tentativa funcionou
-            no_results_texts = [
-                "sem resultado", "nenhum registo", "não foram encontrados",
-                "nenhum produto", "sem produtos", "0 resultado", "0 produtos"
-            ]
-            if not _found and any(t in content.lower() for t in no_results_texts):
-                result["error"] = f"No products found for {medida_slashed}"
+            # ── Extracção via Python regex sobre HTML bruto ───────────────
+            # Os dados estão no HTML mas o DOM pode não ter <tr> em headless.
+            import re as _re
+            def _parse_tuga_html(html: str, medida_filter: str) -> list:
+                products_out = []
+                desc_re = _re.compile(
+                    r'PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}/\d{2}R\d{2})\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s+([^<\n]{0,60})',
+                    _re.IGNORECASE
+                )
+                price_re = _re.compile(r'(\d+[,.]\d{2})\s*(?:&euro;|€|&#8364;)', _re.IGNORECASE)
+                chunks = _re.split(r'(?=PNEU\s+\w)', html, flags=_re.IGNORECASE)
+                for chunk in chunks:
+                    m = desc_re.match(chunk.strip())
+                    if not m:
+                        continue
+                    if medida_filter and medida_filter.upper() not in chunk.upper():
+                        continue
+                    marca  = m.group(1).strip().upper()
+                    medida_v = m.group(2).strip().upper()
+                    indice = m.group(3).strip().upper()
+                    modelo = m.group(4).strip().upper()
+                    snippet = chunk[:300]
+                    prices_f = [float(p.replace(',', '.')) for p in price_re.findall(snippet)
+                                if 15 < float(p.replace(',', '.')) < 800]
+                    if not prices_f:
+                        prices_f = [float(p.replace(',', '.'))
+                                    for p in _re.findall(r'\b(\d{2,3}[,.]\d{2})\b', snippet)
+                                    if 15 < float(p.replace(',', '.')) < 800]
+                    if prices_f:
+                        products_out.append({'brand': marca, 'medida': medida_v,
+                                             'indice': indice, 'model': modelo,
+                                             'price': min(prices_f)})
+                seen: dict = {}
+                for p in products_out:
+                    k = f"{p['brand']}|{p['medida']}|{p['indice']}|{p['model']}"
+                    if k not in seen or p['price'] < seen[k]['price']:
+                        seen[k] = p
+                return list(seen.values())
+
+            products = _parse_tuga_html(content, medida_slashed)
+
+            if products:
+                result["products"] = products
+                result["price"] = min(p['price'] for p in products)
+                result["all_prices"] = sorted(p['price'] for p in products)[:10]
+                print(f"  [TugaPneus] {len(products)} produtos extraídos do HTML, melhor €{result['price']}")
+                for p in products[:5]:
+                    print(f"    {p['brand']} {p['medida']} {p['indice']} {p['model']} → €{p['price']}")
             else:
-                # Parser estruturado: "PNEU MARCA MEDIDA ÍNDICE MODELO"
-                # Ex: "PNEU MICHELIN 205/60R16 96H PRIMACY 5 XL"
-                # Extracção de preço SEM depender de € no textContent
-                # (TugaPneus pode renderizar € via CSS ::after)
-                products = await page.evaluate(r'''() => {
-                    const products = [];
-
-                    function parseTugaDesc(raw) {
-                        const text = raw.toUpperCase();
-                        // PNEU [MARCA 1-2 palavras] [XXX/XXRXX] [ÍNDICE] [MODELO...]
-                        const m = text.match(
-                            /PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}\/\d{2}R\d{2})\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s*(.*)/
-                        );
-                        if (!m) return null;
-                        return {
-                            marca:  m[1].trim(),
-                            medida: m[2].trim(),
-                            indice: m[3].trim(),
-                            modelo: m[4].trim()
-                        };
-                    }
-
-                    function extractPrice(text) {
-                        // Extrai todos os números decimais do texto (sem exigir €)
-                        // e devolve o mais pequeno no intervalo [15, 800]
-                        const nums = (text.match(/\d+[,.]\d{2}/g) || [])
-                            .map(n => parseFloat(n.replace(',', '.')))
-                            .filter(p => p > 15 && p < 800);
-                        return nums.length ? Math.min(...nums) : null;
-                    }
-
-                    // Prioridade: linhas de tabela com "PNEU ..." (estrutura TugaPneus)
-                    const productRows = [...document.querySelectorAll('tr')]
-                        .filter(tr => /PNEU\s+\w/i.test(tr.textContent));
-
-                    const source = productRows.length > 0
-                        ? productRows
-                        : [...document.querySelectorAll(
-                            '.product, .product-item, .produto, [class*="product"], .item, .card'
-                          )].filter(el => /PNEU\s+\w/i.test(el.textContent));
-
-                    for (const el of source) {
-                        const text = el.textContent || '';
-                        const price = extractPrice(text);
-                        if (price === null) continue;
-                        const parsed = parseTugaDesc(text);
-                        products.push({
-                            brand:  parsed ? parsed.marca  : '',
-                            model:  parsed ? parsed.modelo : '',
-                            medida: parsed ? parsed.medida : '',
-                            indice: parsed ? parsed.indice : '',
-                            price
-                        });
-                    }
-
-                    // Dedup: mesma marca+medida+índice+modelo → fica o mais barato
-                    const seen = new Map();
-                    for (const p of products) {
-                        const k = `${p.brand}|${p.medida}|${p.indice}|${p.model}`;
-                        if (!seen.has(k) || p.price < seen.get(k).price) seen.set(k, p);
-                    }
-                    return [...seen.values()];
-                }''')
-
-                if products:
-                    result["products"] = products
-                    result["price"] = min(p['price'] for p in products)
-                    result["all_prices"] = sorted(p['price'] for p in products)[:10]
-                    print(f"  [TugaPneus] {len(products)} produtos, melhor €{result['price']}")
+                prices = extract_prices(content)
+                if prices:
+                    result["price"] = min(prices)
+                    result["all_prices"] = sorted(prices)[:10]
+                    print(f"  [TugaPneus] Fallback preços: {len(prices)}, melhor €{result['price']}")
                 else:
-                    # Fallback regex
-                    prices = extract_prices(content)
-                    if prices:
-                        result["price"] = min(prices)
-                        result["all_prices"] = sorted(prices)[:10]
-                        print(f"  [TugaPneus] Fallback regex: {len(prices)} preços, melhor €{result['price']}")
-                    else:
-                        result["error"] = "No products found"
+                    result["error"] = "No products found"
 
         except Exception as e:
             result["error"] = str(e)
