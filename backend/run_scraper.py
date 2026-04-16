@@ -1590,7 +1590,8 @@ async def scrape_abt_tyres(page, username: str, password: str, medida: str) -> d
     
     return result
 
-async def scrape_tugapneus(page, username: str, password: str, medida: str) -> dict:
+async def scrape_tugapneus(page, username: str, password: str, medida: str,
+                           marca: str = '', modelo: str = '') -> dict:
     """Scrape TugaPneus (tugapneus.pt)"""
     result = {
         "supplier": "TugaPneus",
@@ -1723,72 +1724,88 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str) -> d
             result["error"] = "Redireccionado para login ao navegar para produtos — sessão inválida"
             return result
 
-        # Search
-        print(f"  [TugaPneus] Searching: {medida_slashed}")
-        search_selectors = [
+        # Pesquisa progressiva TugaPneus
+        # Nível 1: "pneu [marca] [medida] [modelo]"  (se marca e modelo disponíveis)
+        # Nível 2: "pneu [marca] [medida]"            (se marca disponível)
+        # Nível 3: "[medida]"                          (formato com / e R, ex: 205/60R16)
+        _terms: list[str] = []
+        if marca and modelo:
+            _terms.append(f"pneu {marca} {medida_slashed} {modelo}".lower())
+        if marca:
+            _terms.append(f"pneu {marca} {medida_slashed}".lower())
+        _terms.append(medida_slashed)
+
+        # Localiza o campo de pesquisa
+        _search_input = None
+        for _sel in [
             'input[type="search"]',
             'input[name*="search" i]',
             'input[name*="pesq" i]',
             'input[placeholder*="pesq" i]',
-            'input[placeholder*="search" i]',
             'input[placeholder*="medida" i]',
             '#search',
             '.search-input input',
             'input[type="text"]',
-        ]
-
-        searched = False
-        for sel in search_selectors:
-            el = page.locator(sel).first
-            if await el.count() > 0:
-                for term in [medida_slashed, medida_norm]:
-                    await el.clear()
-                    await el.fill(term)
-                    await asyncio.sleep(0.5)
-                    # Try clicking search button, then fallback to Enter
-                    btn = page.locator(
-                        'button:has-text("Pesquisar"), button:has-text("Buscar"), '
-                        'button[type="submit"], .search-btn, .btn-search'
-                    ).first
-                    if await btn.count() > 0:
-                        await btn.click()
-                    else:
-                        await el.press("Enter")
-                    await asyncio.sleep(5)
-                    try:
-                        await page.wait_for_load_state("networkidle", timeout=15000)
-                    except Exception:
-                        pass
-                    html_after = await page.content()
-                    if medida_slashed.lower() in html_after.lower() or medida_norm in html_after:
-                        print(f"  [TugaPneus] Search returned results for '{term}'")
-                        searched = True
-                        break
-                    print(f"  [TugaPneus] No results for '{term}', trying next")
-                if not searched:
-                    searched = True  # Accept whatever was returned
+        ]:
+            _el = page.locator(_sel).first
+            if await _el.count() > 0:
+                _search_input = _el
                 break
 
-        if not searched:
-            # Fallback: URL search
-            await page.goto(
-                f"https://www.tugapneus.pt/produtos?search={medida_slashed}",
-                wait_until="domcontentloaded", timeout=30000
-            )
+        async def _tuga_has_results() -> bool:
+            return await page.evaluate(r'''() => {
+                const re = /\d+[,.]\d{2}\s*€|€\s*\d+[,.]\d{2}/;
+                const sels = ['tr', '.product', '.product-item', '[class*="product"]', '.item', '.card'];
+                for (const s of sels) {
+                    if ([...document.querySelectorAll(s)].some(el => re.test(el.textContent))) return true;
+                }
+                return false;
+            }''')
+
+        print(f"  [TugaPneus] Pesquisa progressiva: {_terms}")
+        _found = False
+        for _term in _terms:
+            print(f"  [TugaPneus] Tentativa: '{_term}'")
+            if _search_input:
+                await _search_input.clear()
+                await _search_input.fill(_term)
+                await asyncio.sleep(0.4)
+                _btn = page.locator(
+                    'button:has-text("PESQUISAR"), button:has-text("Pesquisar"), '
+                    'button:has-text("Buscar"), button[type="submit"], .search-btn'
+                ).first
+                if await _btn.count() > 0:
+                    await _btn.click()
+                else:
+                    await _search_input.press("Enter")
+            else:
+                # Fallback: URL com query
+                await page.goto(
+                    f"https://www.tugapneus.pt/produtos?search={_term.replace(' ', '+')}",
+                    wait_until="domcontentloaded", timeout=30000
+                )
+            await asyncio.sleep(4)
             try:
-                await page.wait_for_load_state("networkidle", timeout=15000)
+                await page.wait_for_load_state("networkidle", timeout=12000)
             except Exception:
                 pass
-            await asyncio.sleep(3)
+            if await _tuga_has_results():
+                print(f"  [TugaPneus] Resultados encontrados com '{_term}'")
+                _found = True
+                break
+            print(f"  [TugaPneus] Sem resultados para '{_term}', próximo nível...")
+
+        if not _found:
+            print(f"  [TugaPneus] Nenhuma tentativa retornou resultados, extraindo o que houver...")
 
         content = await page.content()
 
-        # Check for "no results" messages
+        # Check for "no results" messages (só termina se todas as tentativas falharam)
         no_results_texts = [
             "sem resultado", "nenhum registo", "não foram encontrados",
             "nenhum produto", "sem produtos", "0 resultado", "0 produtos"
         ]
-        if any(t in content.lower() for t in no_results_texts):
+        if not _found and any(t in content.lower() for t in no_results_texts):
             result["error"] = f"No products found for {medida_slashed}"
             return result
 

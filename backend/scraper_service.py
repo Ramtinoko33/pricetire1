@@ -1032,42 +1032,78 @@ class TugaPneusAdapter(ScraperBase):
             if 'login' in self.page.url.lower():
                 return None
 
-            search_selectors = [
+            # Pesquisa progressiva TugaPneus
+            # Nível 1: "pneu [marca] [medida] [modelo]"
+            # Nível 2: "pneu [marca] [medida]"
+            # Nível 3: "[medida]" (formato 205/60R16)
+            _terms: list = []
+            if marca and modelo:
+                _terms.append(f"pneu {marca} {medida_slashed} {modelo}".lower())
+            if marca:
+                _terms.append(f"pneu {marca} {medida_slashed}".lower())
+            _terms.append(medida_slashed)
+
+            _search_input = None
+            for _sel in [
                 'input[type="search"]',
                 'input[name*="search" i]',
                 'input[name*="pesq" i]',
                 'input[placeholder*="pesq" i]',
-                'input[placeholder*="search" i]',
                 '#search',
                 '.search-input input',
                 'input[type="text"]',
-            ]
-
-            for sel in search_selectors:
-                el = self.page.locator(sel).first
-                if await el.count() > 0:
-                    await el.clear()
-                    await el.fill(medida_slashed)
-                    await asyncio.sleep(0.5)
-                    btn = self.page.locator(
-                        'button:has-text("Pesquisar"), button:has-text("Buscar"), '
-                        'button[type="submit"], .search-btn'
-                    ).first
-                    if await btn.count() > 0:
-                        await btn.click()
-                    else:
-                        await el.press("Enter")
-                    await asyncio.sleep(5)
-                    try:
-                        await self.page.wait_for_load_state("networkidle", timeout=15000)
-                    except Exception:
-                        pass
+            ]:
+                _el = self.page.locator(_sel).first
+                if await _el.count() > 0:
+                    _search_input = _el
                     break
+
+            async def _has_results() -> bool:
+                return await self.page.evaluate(r'''() => {
+                    const re = /\d+[,.]\d{2}\s*€|€\s*\d+[,.]\d{2}/;
+                    const sels = ['tr', '.product', '.product-item', '[class*="product"]', '.item', '.card'];
+                    for (const s of sels) {
+                        if ([...document.querySelectorAll(s)].some(el => re.test(el.textContent))) return true;
+                    }
+                    return false;
+                }''')
+
+            logger.info(f"TugaPneus pesquisa progressiva: {_terms}")
+            _found = False
+            for _term in _terms:
+                logger.info(f"TugaPneus tentativa: '{_term}'")
+                if _search_input:
+                    await _search_input.clear()
+                    await _search_input.fill(_term)
+                    await asyncio.sleep(0.4)
+                    _btn = self.page.locator(
+                        'button:has-text("PESQUISAR"), button:has-text("Pesquisar"), '
+                        'button:has-text("Buscar"), button[type="submit"], .search-btn'
+                    ).first
+                    if await _btn.count() > 0:
+                        await _btn.click()
+                    else:
+                        await _search_input.press("Enter")
+                else:
+                    await self.page.goto(
+                        f"https://www.tugapneus.pt/produtos?search={_term.replace(' ', '+')}",
+                        wait_until="domcontentloaded", timeout=30000
+                    )
+                await asyncio.sleep(4)
+                try:
+                    await self.page.wait_for_load_state("networkidle", timeout=12000)
+                except Exception:
+                    pass
+                if await _has_results():
+                    logger.info(f"TugaPneus resultados com '{_term}'")
+                    _found = True
+                    break
+                logger.info(f"TugaPneus sem resultados para '{_term}', próximo nível...")
 
             content = await self.page.content()
 
-            # Check no results
-            if any(t in content.lower() for t in [
+            # Check no results — só desiste se nenhuma tentativa funcionou
+            if not _found and any(t in content.lower() for t in [
                 "sem resultado", "nenhum registo", "não foram encontrados",
                 "nenhum produto", "sem produtos", "0 resultado"
             ]):
