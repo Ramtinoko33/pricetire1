@@ -575,12 +575,84 @@ async def scrape_tugapneus(username: str, password: str, medida: str) -> dict:
                     break
 
             content = await page.content()
-            prices = extract_prices(content)
-            if prices:
-                result["price"] = min(prices)
-                result["all_prices"] = sorted(prices)[:10]
+
+            # Check "sem resultados"
+            no_results_texts = [
+                "sem resultado", "nenhum registo", "não foram encontrados",
+                "nenhum produto", "sem produtos", "0 resultado", "0 produtos"
+            ]
+            if any(t in content.lower() for t in no_results_texts):
+                result["error"] = f"No products found for {medida_slashed}"
             else:
-                result["error"] = "No products found"
+                # Parser estruturado: "PNEU MARCA MEDIDA ÍNDICE MODELO"
+                # Ex: "PNEU MASSIMO 205/55R16 91V OTTIMA PLUS"
+                products = await page.evaluate(r'''() => {
+                    const products = [];
+
+                    function parseTugaDesc(text) {
+                        const m = text.match(/PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}\/\d{2}[Rr]\d{2})\s+(\d{2,3}[A-Za-z]{1,2})\s*(.*)/i);
+                        if (m) {
+                            return {
+                                marca:  m[1].trim().toUpperCase(),
+                                medida: m[2].toUpperCase(),
+                                indice: m[3].toUpperCase(),
+                                modelo: m[4].trim().toUpperCase()
+                            };
+                        }
+                        return null;
+                    }
+
+                    const selectors = [
+                        '.product', '.product-item', '.produto', '[class*="product"]',
+                        '.item', '.card', '.list-item', 'tr', '[class*="pneu"]',
+                        '[class*="tire"]', '[class*="item"]'
+                    ];
+                    for (const sel of selectors) {
+                        const items = document.querySelectorAll(sel);
+                        if (items.length > 1) {
+                            items.forEach(item => {
+                                const text = item.textContent || '';
+                                const pm = text.match(/(\d+[,.]\d{2})\s*€|€\s*(\d+[,.]\d{2})/);
+                                if (pm) {
+                                    const price = parseFloat((pm[1]||pm[2]).replace(',','.'));
+                                    if (price > 15 && price < 600) {
+                                        const parsed = parseTugaDesc(text.toUpperCase());
+                                        products.push({
+                                            brand:  parsed ? parsed.marca  : '',
+                                            model:  parsed ? parsed.modelo : text.trim().substring(0, 100),
+                                            medida: parsed ? parsed.medida : '',
+                                            indice: parsed ? parsed.indice : '',
+                                            price
+                                        });
+                                    }
+                                }
+                            });
+                            if (products.length > 0) break;
+                        }
+                    }
+                    // Dedup por brand+price
+                    const seen = {};
+                    for (const p of products) {
+                        const k = (p.brand||'') + '|' + String(p.price);
+                        if (!seen[k]) seen[k] = p;
+                    }
+                    return Object.values(seen);
+                }''')
+
+                if products:
+                    result["products"] = products
+                    result["price"] = min(p['price'] for p in products)
+                    result["all_prices"] = sorted(p['price'] for p in products)[:10]
+                    print(f"  [TugaPneus] {len(products)} produtos, melhor €{result['price']}")
+                else:
+                    # Fallback regex
+                    prices = extract_prices(content)
+                    if prices:
+                        result["price"] = min(prices)
+                        result["all_prices"] = sorted(prices)[:10]
+                        print(f"  [TugaPneus] Fallback regex: {len(prices)} preços, melhor €{result['price']}")
+                    else:
+                        result["error"] = "No products found"
 
         except Exception as e:
             result["error"] = str(e)

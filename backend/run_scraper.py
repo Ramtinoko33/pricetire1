@@ -1793,9 +1793,26 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str) -> d
             return result
 
         # Extract products via JS
+        # Descrição TugaPneus: "PNEU MARCA MEDIDA ÍNDICE MODELO"
+        # Ex: "PNEU MASSIMO 205/55R16 91V OTTIMA PLUS"
         products = await page.evaluate(r'''() => {
             const products = [];
-            const BRANDS = /(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|BF\s*GOODRICH|KUMHO|TOYO|NEXEN|FALKEN|COOPER|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL|SEMPERIT|BARUM|LASSA|SAVA|KLEBER|FULDA|GISLAVED|MATADOR|DEBICA|NANKANG|FEDERAL|LINGLONG|TRIANGLE|WESTLAKE|GOODRIDE|SAILUN|HIFLY|POWERTRAC|JINYU|INSA\s*TURBO|ROADSTONE)/i;
+
+            function parseTugaDesc(text) {
+                // Extrai marca, medida, índice e modelo da descrição TugaPneus
+                // Formato: PNEU [MARCA] [MEDIDA] [ÍNDICE] [MODELO]
+                const m = text.match(/PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}\/\d{2}[Rr]\d{2})\s+(\d{2,3}[A-Za-z]{1,2})\s*(.*)/i);
+                if (m) {
+                    return {
+                        marca:  m[1].trim().toUpperCase(),
+                        medida: m[2].toUpperCase(),
+                        indice: m[3].toUpperCase(),
+                        modelo: m[4].trim().toUpperCase()
+                    };
+                }
+                return null;
+            }
+
             const selectors = [
                 '.product', '.product-item', '.produto', '[class*="product"]',
                 '.item', '.card', '.list-item', 'tr', '[class*="pneu"]',
@@ -1810,10 +1827,12 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str) -> d
                         if (pm) {
                             const price = parseFloat((pm[1]||pm[2]).replace(',','.'));
                             if (price > 15 && price < 600) {
-                                const bm = text.match(BRANDS);
+                                const parsed = parseTugaDesc(text.toUpperCase());
                                 products.push({
-                                    brand: bm ? bm[1].toUpperCase() : '',
-                                    model: text.trim().substring(0, 100),
+                                    brand:  parsed ? parsed.marca  : '',
+                                    model:  parsed ? parsed.modelo : text.trim().substring(0, 100),
+                                    medida: parsed ? parsed.medida : '',
+                                    indice: parsed ? parsed.indice : '',
                                     price
                                 });
                             }
@@ -1822,7 +1841,7 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str) -> d
                     if (products.length > 0) break;
                 }
             }
-            // Deduplicate by price keeping lowest
+            // Deduplicate por brand+price, fica com o mais barato
             const seen = {};
             for (const p of products) {
                 const k = (p.brand||'') + '|' + String(p.price);
