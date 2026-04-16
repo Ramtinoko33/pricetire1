@@ -547,49 +547,70 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
         visible_inputs = [x for x in input_ids if x.get('type') not in ('hidden',)]
         print(f"  [S. José] ALL visible inputs on page: {visible_inputs}")
 
-        # Login form present if we're still on login.aspx (not yet authenticated)
-        # NOTE: after SUCCESSFUL login, S. José redirects to default.aspx (home page)
-        # so 'default' in URL does NOT mean login failed — only 'login' means we haven't logged in yet
-        login_form_present = 'login' in current_url.lower()
-        if login_form_present:
-            # Use type() instead of fill() to simulate real keystrokes (avoids bot detection)
-            user_field = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_UserName').first
-            if await user_field.count() == 0:
-                user_field = page.locator('input[id$="_UserName"], input[name$="UserName"]').first
-            if await user_field.count() == 0:
-                user_field = page.locator('input[type="text"]').first
-            await user_field.click()
-            await user_field.type(username, delay=80)
-            print(f"  [S. José] Typed username")
+        # Login form present if we're still on a login/default page (not yet authenticated)
+        if 'login' in current_url.lower() or 'default' in current_url.lower():
 
-            await asyncio.sleep(0.5)
+            # ASP.NET Login control — try several known ID patterns
+            user_selectors = [
+                '#ContentPlaceHolder1_ctrlLogin_Login_UserName',
+                '#ContentPlaceHolder1_Login1_UserName',
+                '#ctl00_ContentPlaceHolder1_Login1_UserName',
+                'input[id$="_UserName"]',
+                'input[name$="UserName"]',
+                'input[autocomplete="username"]',
+            ]
+            filled_user = False
+            for sel in user_selectors:
+                loc = page.locator(sel).first
+                if await loc.count() > 0:
+                    await loc.fill(username)
+                    print(f"  [S. José] Filled username via: {sel}")
+                    filled_user = True
+                    break
+            if not filled_user:
+                await page.locator('input[type="text"]').first.fill(username)
+                print("  [S. José] Used generic username selector")
 
-            pass_field = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_Password').first
-            if await pass_field.count() == 0:
-                pass_field = page.locator('input[id$="_Password"], input[name$="Password"]').first
-            if await pass_field.count() == 0:
-                pass_field = page.locator('input[type="password"]').first
-            await pass_field.click()
-            await pass_field.type(password, delay=80)
-            print(f"  [S. José] Typed password")
+            pass_selectors = [
+                '#ContentPlaceHolder1_ctrlLogin_Login_Password',
+                '#ContentPlaceHolder1_Login1_Password',
+                '#ctl00_ContentPlaceHolder1_Login1_Password',
+                'input[id$="_Password"]',
+                'input[name$="Password"]',
+                'input[autocomplete="current-password"]',
+            ]
+            filled_pass = False
+            for sel in pass_selectors:
+                loc = page.locator(sel).first
+                if await loc.count() > 0:
+                    await loc.fill(password)
+                    print(f"  [S. José] Filled password via: {sel}")
+                    filled_pass = True
+                    break
+            if not filled_pass:
+                await page.locator('input[type="password"]').first.fill(password)
+                print("  [S. José] Used generic password selector")
 
-            await asyncio.sleep(0.5)
+            # Login button — try specific ID first, then any submit
+            btn_selectors = [
+                '#ContentPlaceHolder1_ctrlLogin_Login_btnLogin',   # S. José real ID
+                '#ContentPlaceHolder1_ctrlLogin_Login_LoginButton', # fallback variant
+                '#ContentPlaceHolder1_Login1_LoginButton',
+                '#ctl00_ContentPlaceHolder1_Login1_LoginButton',
+                'input[id$="_btnLogin"]',
+                'input[id$="_LoginButton"]',
+                'input[type="submit"]',
+                'button[type="submit"]',
+            ]
+            for btn_sel in btn_selectors:
+                btn_loc = page.locator(btn_sel).first
+                if await btn_loc.count() > 0:
+                    print(f"  [S. José] Clicking login button via: {btn_sel}")
+                    await btn_loc.click()
+                    break
 
-            # Click the login button (confirmed ID from debug-forms)
-            btn_loc = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_btnLogin').first
-            if await btn_loc.count() == 0:
-                btn_loc = page.locator('input[id$="_btnLogin"], input[id$="_LoginButton"]').first
-            if await btn_loc.count() == 0:
-                btn_loc = page.locator('input[type="submit"]').first
-            print(f"  [S. José] Clicking login button")
-            await btn_loc.click()
-
-            # Wait for navigation to complete
-            try:
-                await page.wait_for_url(lambda url: 'login' not in url.lower(), timeout=15000)
-            except Exception:
-                pass  # may already be redirected or slow
-            await page.wait_for_load_state("networkidle", timeout=30000)
+            await asyncio.sleep(5)
+            await page.wait_for_load_state("networkidle")
 
         url_after_login = page.url
         print(f"  [S. José] URL after login: {url_after_login}")
