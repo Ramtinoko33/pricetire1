@@ -1814,7 +1814,8 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
             print(f"  [TugaPneus] Sem 'PNEU...' no HTML para '{_term}', próximo nível...")
 
         content = await page.content()
-        print(f"  [TugaPneus] HTML size: {len(content)} chars, PNEU encontrado: {bool(re.search(r'PNEU\s+\w', content, re.IGNORECASE))}")
+        _has_pneu = bool(re.search(r'PNEU\s+\w', content, re.IGNORECASE))
+        print(f"  [TugaPneus] HTML size: {len(content)} chars, PNEU encontrado: {_has_pneu}")
 
         if not _found:
             print(f"  [TugaPneus] Nenhuma tentativa retornou resultados, extraindo o que houver...")
