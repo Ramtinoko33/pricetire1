@@ -1816,6 +1816,12 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
         content = await page.content()
         _has_pneu = bool(re.search(r'PNEU\s+\w', content, re.IGNORECASE))
         print(f"  [TugaPneus] HTML size: {len(content)} chars, PNEU encontrado: {_has_pneu}")
+        # Debug: mostrar contexto à volta do primeiro "PNEU" para perceber estrutura real
+        _pneu_m = re.search(r'PNEU\s+\w', content, re.IGNORECASE)
+        if _pneu_m:
+            _start = max(0, _pneu_m.start() - 50)
+            _snippet = content[_start:_pneu_m.start()+300].replace('\n', ' ')
+            print(f"  [TugaPneus] CONTEXTO: ...{_snippet}...")
 
         if not _found:
             print(f"  [TugaPneus] Nenhuma tentativa retornou resultados, extraindo o que houver...")
