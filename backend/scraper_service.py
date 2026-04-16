@@ -872,6 +872,362 @@ class PrismanilAdapter(ScraperBase):
             logger.error(f"Prismanil search error: {str(e)}")
             return None
 
+class TugaPneusAdapter(ScraperBase):
+    """Adapter for TugaPneus B2B website (tugapneus.pt)"""
+
+    def normalize_medida(self, medida: str) -> str:
+        return medida.replace('/', '').replace('R', '').replace('r', '')
+
+    def normalize_indice(self, indice: str) -> str:
+        return indice.replace(' XL', '').replace('XL', '').strip()
+
+    async def login(self) -> tuple[bool, str]:
+        """Login to TugaPneus portal"""
+        try:
+            logger.info(f"TugaPneus: Navigating to {self.url_login}")
+            await self.page.goto(self.url_login, wait_until="domcontentloaded", timeout=60000)
+            try:
+                await self.page.wait_for_load_state("networkidle", timeout=20000)
+            except Exception:
+                pass
+            await asyncio.sleep(3)
+
+            current_url = self.page.url
+            if '/produtos' in current_url or 'login' not in current_url.lower():
+                return True, "Already logged in"
+
+            await self.take_screenshot("before_login")
+
+            # Fill email — use type() to simulate human input (avoids bot detection)
+            email_input = self.page.locator(
+                'input[type="email"], input[name="email"], input[name*="mail"], '
+                'input[name="username"], input[type="text"]'
+            ).first
+            if await email_input.count() > 0:
+                await email_input.click()
+                await email_input.type(self.username, delay=80)
+                await asyncio.sleep(0.5)
+            else:
+                return False, "Email input not found"
+
+            # Fill password
+            password_input = self.page.locator('input[type="password"]').first
+            if await password_input.count() > 0:
+                await password_input.click()
+                await password_input.type(self.password, delay=80)
+                await asyncio.sleep(0.5)
+            else:
+                return False, "Password input not found"
+
+            # Submit — o botão chama-se "EFETUAR LOGIN"
+            submit_btn = self.page.locator(
+                'button:has-text("EFETUAR LOGIN"), '
+                'button:has-text("Efetuar Login"), '
+                'button[type="submit"], input[type="submit"], '
+                'button:has-text("Login"), button:has-text("Entrar"), '
+                'a:has-text("EFETUAR LOGIN")'
+            ).first
+            if await submit_btn.count() > 0:
+                await submit_btn.click()
+                logger.info("TugaPneus: Botão de login clicado")
+            else:
+                await password_input.press("Enter")
+                logger.info("TugaPneus: Submit via Enter")
+
+            # Aguardar até o campo password desaparecer (login AJAX)
+            for _i in range(40):  # até 20 segundos
+                await asyncio.sleep(0.5)
+                if await self.page.locator('input[type="password"]').count() == 0:
+                    logger.info(f"TugaPneus: Campo password desapareceu ao fim de ~{_i*0.5:.0f}s")
+                    break
+            else:
+                logger.warning("TugaPneus: Campo password ainda visível após 20s")
+
+            try:
+                await self.page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+
+            # Tratar popup obrigatório "TOMEI CONHECIMENTO"
+            try:
+                popup_btn = self.page.locator(
+                    'button:has-text("TOMEI CONHECIMENTO"), '
+                    'button:has-text("Tomei Conhecimento"), '
+                    'a:has-text("TOMEI CONHECIMENTO"), '
+                    '[class*="modal"] button, [class*="popup"] button, '
+                    '[role="dialog"] button'
+                ).first
+                if await popup_btn.count() > 0:
+                    await popup_btn.click()
+                    logger.info("TugaPneus: Popup 'TOMEI CONHECIMENTO' dispensado")
+                    await asyncio.sleep(2)
+                    try:
+                        await self.page.wait_for_load_state("networkidle", timeout=10000)
+                    except Exception:
+                        pass
+                else:
+                    await asyncio.sleep(3)
+                    if await popup_btn.count() > 0:
+                        await popup_btn.click()
+                        logger.info("TugaPneus: Popup dispensado (2ª tentativa)")
+                        await asyncio.sleep(2)
+            except Exception as pe:
+                logger.warning(f"TugaPneus: Aviso popup: {pe}")
+
+            await self.take_screenshot("after_login")
+
+            current_url = self.page.url
+            content = await self.page.content()
+            logger.info(f"TugaPneus: URL após submit = {current_url}")
+
+            # Verificar sucesso
+            pw_still_visible = await self.page.locator('input[type="password"]').count() > 0
+            url_ok = 'produtos' in current_url.lower() or 'conhecimento' in current_url.lower()
+            content_ok = any(t in content.lower() for t in [
+                'sair', 'logout', 'minha conta', 'bem-vindo', 'olá,', 'carrinho'
+            ])
+
+            if pw_still_visible and not url_ok and not content_ok:
+                error_msg = ""
+                for err_sel in ['.alert-danger', '.error', '[class*="error"]', '.invalid-feedback']:
+                    err_el = self.page.locator(err_sel).first
+                    if await err_el.count() > 0:
+                        error_msg = (await err_el.text_content() or "").strip()[:100]
+                        break
+                return False, f"Login falhou — credenciais rejeitadas{': ' + error_msg if error_msg else ''}"
+
+            # Se ficou em /produtos após popup = sucesso total
+            if url_ok:
+                return True, f"Login efectuado com sucesso (URL: {current_url})"
+
+            # Navegar para produtos como verificação final
+            await self.page.goto("https://www.tugapneus.pt/produtos",
+                                 wait_until="domcontentloaded", timeout=25000)
+            await asyncio.sleep(3)
+            if 'login' not in self.page.url.lower():
+                return True, "Login efectuado com sucesso"
+            return False, f"Login falhou — página de produtos redireccionou para login ({self.page.url})"
+
+        except Exception as e:
+            logger.error(f"TugaPneus login error: {str(e)}")
+            await self.take_screenshot("login_error")
+            return False, f"Login error: {str(e)}"
+
+    async def search_product(self, medida: str, marca: str, modelo: str, indice: str) -> Optional[float]:
+        """Pesquisa pneu no TugaPneus com pesquisa progressiva e devolve melhor preço.
+
+        Níveis de pesquisa (mais específico → mais geral):
+          1. "pneu [marca] [medida] [modelo]"   ex: pneu michelin 205/60R16 primacy 5
+          2. "pneu [marca] [medida]"             ex: pneu michelin 205/60R16
+          3. "[medida]"                           ex: 205/60R16
+
+        Medida sempre no formato com / e R (205/60R16), nunca normalizado.
+        Entre tentativas clica LIMPAR ou limpa o campo manualmente.
+
+        Parse da descrição "PNEU MICHELIN 205/60R16 96H PRIMACY 5 XL":
+          marca  = MICHELIN
+          medida = 205/60R16
+          indice = 96H
+          modelo = PRIMACY 5 XL
+        """
+        try:
+            import re as _re
+            medida_norm = self.normalize_medida(medida)
+            _m = _re.match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
+            # Medida com / e R: 205/60R16 (nunca normalizado)
+            medida_slashed = f"{_m.group(1)}/{_m.group(2)}R{_m.group(3)}" if _m else medida_norm
+
+            await asyncio.sleep(1)
+
+            if '/produtos' not in self.page.url.lower():
+                await self.page.goto("https://www.tugapneus.pt/produtos",
+                                     wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(3)
+
+            if 'login' in self.page.url.lower():
+                return None
+
+            # ── Termos de pesquisa progressivos ──────────────────────────────
+            terms: list[str] = []
+            if marca and modelo:
+                terms.append(f"pneu {marca} {medida_slashed} {modelo}".lower())
+            if marca:
+                terms.append(f"pneu {marca} {medida_slashed}".lower())
+            terms.append(medida_slashed)
+
+            # ── Localizar campo de pesquisa ───────────────────────────────────
+            search_input = None
+            for _sel in [
+                'input[type="search"]',
+                'input[name*="search" i]',
+                'input[name*="pesq" i]',
+                'input[placeholder*="pesq" i]',
+                '#search',
+                '.search-input input',
+                'input[type="text"]',
+            ]:
+                _el = self.page.locator(_sel).first
+                if await _el.count() > 0:
+                    search_input = _el
+                    break
+
+            # ── Helper LIMPAR ─────────────────────────────────────────────────
+            async def _limpar():
+                limpar_btn = self.page.locator(
+                    'button:has-text("LIMPAR"), button:has-text("Limpar"), '
+                    'button:has-text("Clear"), a:has-text("LIMPAR")'
+                ).first
+                if await limpar_btn.count() > 0:
+                    await limpar_btn.click()
+                    await asyncio.sleep(0.4)
+                elif search_input:
+                    await search_input.clear()
+
+            # ── Pesquisa progressiva ──────────────────────────────────────────
+            logger.info(f"TugaPneus pesquisa progressiva: {terms}")
+            found = False
+            for i, term in enumerate(terms):
+                logger.info(f"TugaPneus nível {i+1}: '{term}'")
+
+                if i > 0:
+                    await _limpar()
+
+                if search_input:
+                    await search_input.clear()
+                    await search_input.fill(term)
+                    await asyncio.sleep(0.4)
+                    pesquisar_btn = self.page.locator(
+                        'button:has-text("PESQUISAR"), button:has-text("Pesquisar"), '
+                        'button:has-text("Buscar"), button[type="submit"], .search-btn'
+                    ).first
+                    if await pesquisar_btn.count() > 0:
+                        await pesquisar_btn.click()
+                    else:
+                        await search_input.press("Enter")
+                else:
+                    await self.page.goto(
+                        f"https://www.tugapneus.pt/produtos?search={term.replace(' ', '+')}",
+                        wait_until="domcontentloaded", timeout=30000
+                    )
+
+                # Espera activa até produtos aparecerem no DOM (evita race condition AJAX)
+                try:
+                    await self.page.wait_for_function(
+                        r"[...document.querySelectorAll('tr')].some(tr => /PNEU\s+\w/i.test(tr.textContent))",
+                        timeout=12000
+                    )
+                    logger.info(f"TugaPneus nível {i+1}: resultados encontrados com '{term}'")
+                    found = True
+                    break
+                except Exception:
+                    logger.info(f"TugaPneus nível {i+1}: sem resultados para '{term}' → próximo nível")
+
+            if not found:
+                logger.info(f"TugaPneus: nenhum resultado para {medida_slashed}")
+                return None
+
+            # ── Extracção e parse dos produtos ───────────────────────────────
+            # Descrição: "PNEU MICHELIN 205/60R16 96H PRIMACY 5 XL"
+            #   marca  = MICHELIN
+            #   medida = 205/60R16
+            #   indice = 96H
+            #   modelo = PRIMACY 5 XL
+            products = await self.page.evaluate(r'''() => {
+                const products = [];
+
+                function parseTugaDesc(raw) {
+                    const text = raw.toUpperCase();
+                    // PNEU [MARCA (1-2 palavras)] [XXX/XXRXX] [ÍNDICE] [MODELO...]
+                    // Ex: PNEU MICHELIN 205/60R16 96H PRIMACY 5 XL
+                    // Ex: PNEU THREE-A 205/55R16 91W P606
+                    // Ex: PNEU BF GOODRICH 205/55R16 91V G-FORCE SPORT
+                    const m = text.match(
+                        /PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}\/\d{2}[R]\d{2})\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s*(.*)/
+                    );
+                    if (!m) return null;
+                    return {
+                        marca:  m[1].trim(),
+                        medida: m[2].trim(),
+                        indice: m[3].trim(),   // inclui XL se estiver junto ao índice
+                        modelo: m[4].trim()
+                    };
+                }
+
+                const priceRe = /(\d+[,.]\d{2})\s*€|€\s*(\d+[,.]\d{2})/;
+
+                // Tenta primeiro por linhas de tabela (estrutura TugaPneus)
+                const rows = [...document.querySelectorAll('tr')].filter(r => {
+                    const t = r.textContent || '';
+                    return /PNEU\s+\w/i.test(t) && priceRe.test(t);
+                });
+
+                const source = rows.length > 0
+                    ? rows
+                    : [...document.querySelectorAll(
+                        '.product, .product-item, .produto, [class*="product"], .item, .card'
+                      )].filter(el => {
+                          const t = el.textContent || '';
+                          return /PNEU\s+\w/i.test(t) && priceRe.test(t);
+                      });
+
+                for (const el of source) {
+                    const text = el.textContent || '';
+                    const pm = text.match(priceRe);
+                    if (!pm) continue;
+                    const price = parseFloat((pm[1] || pm[2]).replace(',', '.'));
+                    if (price < 15 || price > 800) continue;
+
+                    const parsed = parseTugaDesc(text);
+                    products.push({
+                        brand:  parsed ? parsed.marca  : '',
+                        medida: parsed ? parsed.medida : '',
+                        indice: parsed ? parsed.indice : '',
+                        model:  parsed ? parsed.modelo : text.trim().substring(0, 120),
+                        price
+                    });
+                }
+
+                // Dedup: mesma marca+medida+indice+modelo → fica com o mais barato
+                const seen = new Map();
+                for (const p of products) {
+                    const k = `${p.brand}|${p.medida}|${p.indice}|${p.model}`;
+                    if (!seen.has(k) || p.price < seen.get(k).price) seen.set(k, p);
+                }
+                return [...seen.values()];
+            }''')
+
+            if products:
+                best = min(p['price'] for p in products)
+                logger.info(f"TugaPneus: {len(products)} produto(s), melhor €{best}")
+                for p in products:
+                    logger.info(
+                        f"  marca={p.get('brand')} medida={p.get('medida')} "
+                        f"indice={p.get('indice')} modelo={p.get('model')} preço=€{p.get('price')}"
+                    )
+                return best
+
+            # Fallback: preços em bruto no HTML
+            content = await self.page.content()
+            raw_prices: list[float] = []
+            for pat in [r'(\d+[,\.]\d{2})\s*€', r'€\s*(\d+[,\.]\d{2})']:
+                for m in re.findall(pat, content, re.IGNORECASE):
+                    try:
+                        p = float(m.replace(',', '.'))
+                        if 15 < p < 800:
+                            raw_prices.append(p)
+                    except ValueError:
+                        pass
+            if raw_prices:
+                logger.info(f"TugaPneus fallback regex: melhor €{min(raw_prices)}")
+                return min(raw_prices)
+            return None
+
+        except Exception as e:
+            logger.error(f"TugaPneus search_product error ({medida}): {e}")
+            return None
+
+
 class ScraperService:
     """Main scraper service that orchestrates scraping jobs"""
     
@@ -932,6 +1288,17 @@ class ScraperService:
                 password=password,
                 selectors=supplier.get('selectors')
             )
+        elif 'tugapneus' in supplier_name_lower or 'tuga' in supplier_name_lower or 'tugapneus' in supplier_url_lower:
+            logger.info(f"Creating TugaPneusAdapter for {supplier['name']}")
+            return TugaPneusAdapter(
+                supplier_id=supplier_id,
+                supplier_name=supplier['name'],
+                url_login=supplier.get('url_login') or 'https://www.tugapneus.pt/login',
+                url_search=supplier.get('url_search') or 'https://www.tugapneus.pt/produtos',
+                username=supplier['username'],
+                password=password,
+                selectors=supplier.get('selectors')
+            )
         else:
             # Default: Use SJoseAdapter as generic fallback
             logger.info(f"Creating generic SJoseAdapter for {supplier['name']}")
@@ -962,7 +1329,8 @@ class ScraperService:
         adapter = self.create_adapter(supplier)
         return await adapter.test_login()
     
-    async def scrape_product_isolated(self, supplier: Dict[str, Any], medida: str) -> Optional[float]:
+    async def scrape_product_isolated(self, supplier: Dict[str, Any], medida: str,
+                                       marca: str = '', modelo: str = '') -> Optional[float]:
         """Scrape product using background process with file-based communication"""
         import subprocess
         import json
@@ -978,7 +1346,9 @@ class ScraperService:
             "supplier": supplier['name'],
             "username": supplier['username'],
             "password": supplier.get('password_raw') or supplier.get('password', ''),
-            "medida": medida
+            "medida": medida,
+            "marca": marca,
+            "modelo": modelo
         }
         
         try:
@@ -1063,11 +1433,10 @@ class ScraperService:
                 os.remove(result_file)
             return None
     
-    async def scrape_product(self, supplier: Dict[str, Any], medida: str, marca: str, 
+    async def scrape_product(self, supplier: Dict[str, Any], medida: str, marca: str,
                             modelo: str, indice: str) -> Optional[float]:
         """Scrape single product from supplier - uses isolated subprocess for reliability"""
-        # Use isolated subprocess scraping for better anti-bot bypass
-        return await self.scrape_product_isolated(supplier, medida)
+        return await self.scrape_product_isolated(supplier, medida, marca=marca, modelo=modelo)
     
     async def cleanup_supplier(self, supplier_id: str):
         """Close browser for supplier"""

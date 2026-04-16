@@ -435,6 +435,264 @@ async def scrape_euromais(username: str, password: str, medida: str) -> dict:
     
     return result
 
+async def scrape_tugapneus(username: str, password: str, medida: str,
+                           marca: str = '', modelo: str = '') -> dict:
+    """Scrape TugaPneus — isolated process version"""
+    result = {
+        "supplier": "TugaPneus",
+        "price": None,
+        "error": None,
+        "products": [],
+        "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+    }
+
+    medida_norm = normalize_medida(medida)
+    _m = __import__('re').match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
+    medida_slashed = f"{_m.group(1)}/{_m.group(2)}R{_m.group(3)}" if _m else medida_norm
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=True,
+            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+                  '--disable-blink-features=AutomationControlled']
+        )
+        context = await browser.new_context(
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            viewport={'width': 1920, 'height': 1080},
+            locale='pt-PT',
+        )
+        page = await context.new_page()
+        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
+
+        try:
+            # Login
+            await page.goto("https://www.tugapneus.pt/login", wait_until="domcontentloaded", timeout=60000)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=20000)
+            except Exception:
+                pass
+            await asyncio.sleep(3)
+
+            if 'login' in page.url.lower():
+                email_input = page.locator(
+                    'input[type="email"], input[name="email"], input[name*="mail"], '
+                    'input[name="username"], input[type="text"]'
+                ).first
+                if await email_input.count() > 0:
+                    await email_input.click()
+                    await email_input.type(username, delay=80)
+                password_input = page.locator('input[type="password"]').first
+                if await password_input.count() > 0:
+                    await password_input.click()
+                    await password_input.type(password, delay=80)
+                await asyncio.sleep(0.5)
+                # O botão chama-se "EFETUAR LOGIN"
+                submit_btn = page.locator(
+                    'button:has-text("EFETUAR LOGIN"), '
+                    'button:has-text("Efetuar Login"), '
+                    'button[type="submit"], input[type="submit"], '
+                    'button:has-text("Login"), button:has-text("Entrar"), '
+                    'a:has-text("EFETUAR LOGIN")'
+                ).first
+                if await submit_btn.count() > 0:
+                    await submit_btn.click()
+                else:
+                    await page.keyboard.press("Enter")
+
+                # Aguardar até o campo password desaparecer (login AJAX)
+                for _i in range(40):  # até 20 segundos
+                    await asyncio.sleep(0.5)
+                    if await page.locator('input[type="password"]').count() == 0:
+                        break
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    pass
+                await asyncio.sleep(2)
+
+                # Tratar popup obrigatório "TOMEI CONHECIMENTO"
+                try:
+                    popup_btn = page.locator(
+                        'button:has-text("TOMEI CONHECIMENTO"), '
+                        'button:has-text("Tomei Conhecimento"), '
+                        'a:has-text("TOMEI CONHECIMENTO"), '
+                        '[class*="modal"] button, [role="dialog"] button'
+                    ).first
+                    if await popup_btn.count() > 0:
+                        await popup_btn.click()
+                        await asyncio.sleep(2)
+                        try:
+                            await page.wait_for_load_state("networkidle", timeout=10000)
+                        except Exception:
+                            pass
+                    else:
+                        await asyncio.sleep(3)
+                        if await popup_btn.count() > 0:
+                            await popup_btn.click()
+                            await asyncio.sleep(2)
+                except Exception:
+                    pass
+
+                url_after = page.url
+                pw_visible = await page.locator('input[type="password"]').count() > 0
+                url_ok = 'produtos' in url_after.lower() or 'conhecimento' in url_after.lower()
+                if pw_visible and not url_ok:
+                    result["error"] = f"Login falhou (URL: {url_after})"
+                    return result
+
+            # Se já redireccionou para /produtos após o popup, não navegar de novo
+            if 'produtos' not in page.url.lower():
+                await page.goto("https://www.tugapneus.pt/produtos", wait_until="domcontentloaded", timeout=60000)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=20000)
+                except Exception:
+                    pass
+                await asyncio.sleep(3)
+
+            if 'login' in page.url.lower():
+                result["error"] = "Redireccionado para login na página de produtos"
+                return result
+
+            # Pesquisa progressiva TugaPneus
+            # Nível 1: "pneu [marca] [medida] [modelo]"  (se disponíveis)
+            # Nível 2: "pneu [marca] [medida]"
+            # Nível 3: "[medida]"  (formato 205/60R16)
+            _terms: list = []
+            if marca and modelo:
+                _terms.append(f"pneu {marca} {medida_slashed} {modelo}".lower())
+            if marca:
+                _terms.append(f"pneu {marca} {medida_slashed}".lower())
+            _terms.append(medida_slashed)
+
+            _search_input = None
+            for _sel in [
+                'input[type="search"]', 'input[name*="search" i]',
+                'input[name*="pesq" i]', 'input[placeholder*="pesq" i]',
+                '#search', 'input[type="text"]',
+            ]:
+                _el = page.locator(_sel).first
+                if await _el.count() > 0:
+                    _search_input = _el
+                    break
+
+            async def _limpar_pesquisa():
+                btn = page.locator('button:has-text("LIMPAR"), button:has-text("Limpar")').first
+                if await btn.count() > 0:
+                    await btn.click()
+                    await asyncio.sleep(0.4)
+                elif _search_input:
+                    await _search_input.clear()
+
+            print(f"  [TugaPneus] Pesquisa progressiva: {_terms}")
+            _found = False
+            for i, _term in enumerate(_terms):
+                print(f"  [TugaPneus] Tentativa {i+1}/{len(_terms)}: '{_term}'")
+
+                if i > 0:
+                    await _limpar_pesquisa()
+
+                if _search_input:
+                    await _search_input.clear()
+                    await _search_input.fill(_term)
+                    await asyncio.sleep(0.4)
+                    _btn = page.locator(
+                        'button:has-text("PESQUISAR"), button:has-text("Pesquisar"), '
+                        'button[type="submit"], .search-btn'
+                    ).first
+                    if await _btn.count() > 0:
+                        await _btn.click()
+                    else:
+                        await _search_input.press("Enter")
+                else:
+                    await page.goto(
+                        f"https://www.tugapneus.pt/produtos?search={_term.replace(' ', '+')}",
+                        wait_until="domcontentloaded", timeout=30000
+                    )
+
+                # Aguarda que a página carregue e verifica no HTML bruto
+                await asyncio.sleep(5)
+                _html = await page.content()
+                if re.search(r'PNEU\s+\w', _html, re.IGNORECASE):
+                    print(f"  [TugaPneus] Dados encontrados no HTML com '{_term}'")
+                    _found = True
+                    break
+                print(f"  [TugaPneus] Sem 'PNEU...' no HTML para '{_term}', próximo nível...")
+
+            content = await page.content()
+
+            # ── Extracção via Python regex sobre HTML bruto ───────────────
+            # Os dados estão no HTML mas o DOM pode ter trs=0 em headless.
+            # Nota: em JSON o / é escapado como \/, por isso usamos [/\\] na medida.
+            import re as _re
+            def _parse_tuga_html(html: str) -> list:
+                products_out = []
+                desc_re = _re.compile(
+                    r'PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}[/\\]\d{2}R\d{2})\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s*([^<\n"\']{0,80})',
+                    _re.IGNORECASE
+                )
+                price_patterns = [
+                    _re.compile(r'(\d+[,.]\d{2})\s*(?:&euro;|€|&#8364;)', _re.IGNORECASE),
+                    _re.compile(r'"(?:price|preco|pvp|valor)"\s*:\s*"?(\d+[,.]\d{2})"?', _re.IGNORECASE),
+                ]
+                for m in desc_re.finditer(html):
+                    marca   = m.group(1).strip().upper().replace('\\', '')
+                    medida_v = m.group(2).strip().upper().replace('\\', '')
+                    indice  = m.group(3).strip().upper()
+                    modelo  = m.group(4).strip().upper()
+                    pos = m.end()
+                    snippet = html[pos:pos+600]
+                    price_val = None
+                    for pat in price_patterns:
+                        found = [float(p.replace(',', '.')) for p in pat.findall(snippet)
+                                 if 15 < float(p.replace(',', '.')) < 800]
+                        if found:
+                            price_val = min(found)
+                            break
+                    if price_val is None:
+                        nums = [float(n.replace(',', '.'))
+                                for n in _re.findall(r'\b(\d{2,3}[,.]\d{2})\b', html[pos:pos+400])
+                                if 15 < float(n.replace(',', '.')) < 800]
+                        if nums:
+                            price_val = min(nums)
+                    if price_val is not None:
+                        products_out.append({'brand': marca, 'medida': medida_v,
+                                             'indice': indice, 'model': modelo,
+                                             'price': price_val})
+                seen: dict = {}
+                for p in products_out:
+                    k = f"{p['brand']}|{p['medida']}|{p['indice']}|{p['model']}"
+                    if k not in seen or p['price'] < seen[k]['price']:
+                        seen[k] = p
+                result_list = list(seen.values())
+                print(f"  [TugaPneus] _parse_tuga_html: {len(result_list)} produtos")
+                return result_list
+
+            products = _parse_tuga_html(content)
+
+            if products:
+                result["products"] = products
+                result["price"] = min(p['price'] for p in products)
+                result["all_prices"] = sorted(p['price'] for p in products)[:10]
+                print(f"  [TugaPneus] {len(products)} produtos extraídos do HTML, melhor €{result['price']}")
+                for p in products[:5]:
+                    print(f"    {p['brand']} {p['medida']} {p['indice']} {p['model']} → €{p['price']}")
+            else:
+                prices = extract_prices(content)
+                if prices:
+                    result["price"] = min(prices)
+                    result["all_prices"] = sorted(prices)[:10]
+                    print(f"  [TugaPneus] Fallback preços: {len(prices)}, melhor €{result['price']}")
+                else:
+                    result["error"] = "No products found"
+
+        except Exception as e:
+            result["error"] = str(e)
+        finally:
+            await browser.close()
+
+    return result
+
+
 async def main():
     """Main entry point - expects JSON config from stdin"""
     # Read config from stdin
@@ -444,7 +702,9 @@ async def main():
     username = config.get('username', '')
     password = config.get('password', '')
     medida = config.get('medida', '')
-    
+    marca  = config.get('marca', '')
+    modelo = config.get('modelo', '')
+
     if 'mp24' in supplier:
         result = await scrape_mp24(username, password, medida)
     elif 'prismanil' in supplier:
@@ -455,6 +715,8 @@ async def main():
         result = await scrape_sjose(username, password, medida)
     elif 'euromais' in supplier or 'eurotyre' in supplier:
         result = await scrape_euromais(username, password, medida)
+    elif 'tugapneus' in supplier or 'tuga' in supplier:
+        result = await scrape_tugapneus(username, password, medida, marca, modelo)
     else:
         result = {"supplier": supplier, "price": None, "error": f"Unknown supplier: {supplier}"}
     

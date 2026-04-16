@@ -18,8 +18,9 @@ COPY requirements.api.txt .
 RUN pip install --no-cache-dir -r requirements.api.txt
 
 # Instalar Chromium (necessário para scraper_service test-login)
+# A imagem base já tem todas as dependências de sistema — sem --with-deps
 ENV PLAYWRIGHT_BROWSERS_PATH=/pw-browsers
-RUN playwright install chromium --with-deps
+RUN playwright install chromium
 
 # Copiar TODOS os ficheiros do backend
 COPY backend/ ./backend/
