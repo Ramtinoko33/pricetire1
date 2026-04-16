@@ -6,7 +6,8 @@ COPY requirements.worker.txt .
 RUN pip install --no-cache-dir -r requirements.worker.txt
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/pw-browsers
-RUN playwright install chromium --with-deps
+# A imagem base já tem todas as dependências de sistema — sem --with-deps
+RUN playwright install chromium
 
 COPY backend/worker.py ./backend/worker.py
 COPY backend/run_scraper.py ./backend/run_scraper.py
