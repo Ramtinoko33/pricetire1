@@ -1833,58 +1833,53 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
             print(f"  [TugaPneus] Nenhuma tentativa retornou resultados, extraindo o que houver...")
 
         # ── Extracção via Python regex sobre HTML bruto ───────────────────
-        # Os dados estão no HTML mas o DOM pode ter trs=0 em headless.
-        # Nota: em JSON o / é escapado como \/, por isso usamos [/\\] na medida.
+        # Estrutura TugaPneus confirmada pelo debug:
+        #   id="linha_tit_XXXX"   → <strong>PNEU MASSIMO 235/45R18 98W OTTIMA PLUS XL</strong>
+        #   id="linha_precv_XXXX" → 47.00€
+        # Fazemos pair por ID numérico — muito mais robusto do que posição.
         def _parse_tuga_html(html: str) -> list:
-            """Extrai produtos TugaPneus do HTML bruto (HTML ou JSON embutido)."""
-            products = []
-            # Aceita / ou \/ na medida (HTML normal vs JSON escapado)
-            desc_re = re.compile(
-                r'PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}[/\\]\d{2}R\d{2})\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s*([^<\n"\']{0,80})',
+            # 1. Extrair descrições: id="linha_tit_NNN" → texto do <strong>
+            tit_re = re.compile(
+                r'id=["\']linha_tit_(\d+)["\'][^>]*>.*?<strong[^>]*>\s*(.*?)\s*</strong>',
+                re.IGNORECASE | re.DOTALL
+            )
+            # 2. Extrair preços: id="linha_precv_NNN" → número€
+            prec_re = re.compile(
+                r'id=["\']linha_precv_(\d+)["\'][^>]*>[\s\S]{0,300}?(\d+[,.]\d{2})\s*\u20ac',
                 re.IGNORECASE
             )
-            # Preço: com € / &euro; / &#8364; OU em JSON "price":"25.80" / "preco":"25.80"
-            price_patterns = [
-                re.compile(r'(\d+[,.]\d{2})\s*(?:&euro;|€|&#8364;)', re.IGNORECASE),
-                re.compile(r'"(?:price|preco|pvp|valor)"\s*:\s*"?(\d+[,.]\d{2})"?', re.IGNORECASE),
-                re.compile(r"'(?:price|preco|pvp|valor)'\s*:\s*'?(\d+[,.]\d{2})'?", re.IGNORECASE),
-            ]
+            # 3. Parse da descrição "PNEU MARCA MEDIDA ÍNDICE MODELO"
+            desc_re = re.compile(
+                r'PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}/\d{2}R\d{2})\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s*(.*)',
+                re.IGNORECASE
+            )
 
-            # Iterar sobre todas as descrições encontradas
-            for m in desc_re.finditer(html):
-                marca  = m.group(1).strip().upper().replace('\\', '')
-                medida = m.group(2).strip().upper().replace('\\', '')
-                indice = m.group(3).strip().upper()
-                modelo = m.group(4).strip().upper()
+            titles = {m.group(1): m.group(2).strip() for m in tit_re.finditer(html)}
+            prices: dict = {}
+            for m in prec_re.finditer(html):
+                try:
+                    v = float(m.group(2).replace(',', '.'))
+                    if 15 < v < 800:
+                        prices[m.group(1)] = v
+                except ValueError:
+                    pass
 
-                # Procurar preço nas 600 chars à frente da descrição
-                pos = m.end()
-                snippet = html[pos:pos+600]
+            print(f"  [TugaPneus] _parse_tuga_html: {len(titles)} títulos, {len(prices)} preços")
 
-                price_val = None
-                for pat in price_patterns:
-                    found = [float(p.replace(',', '.')) for p in pat.findall(snippet)
-                             if 15 < float(p.replace(',', '.')) < 800]
-                    if found:
-                        price_val = min(found)
-                        break
-
-                if price_val is None:
-                    # Fallback: qualquer número decimal [15-800] nas próximas 400 chars
-                    nums = [float(n.replace(',', '.'))
-                            for n in re.findall(r'\b(\d{2,3}[,.]\d{2})\b', html[pos:pos+400])
-                            if 15 < float(n.replace(',', '.')) < 800]
-                    if nums:
-                        price_val = min(nums)
-
-                if price_val is not None:
-                    products.append({
-                        'brand':  marca,
-                        'medida': medida,
-                        'indice': indice,
-                        'model':  modelo,
-                        'price':  price_val
-                    })
+            products = []
+            for pid, desc in titles.items():
+                if pid not in prices:
+                    continue
+                dm = desc_re.match(desc)
+                if not dm:
+                    continue
+                products.append({
+                    'brand':  dm.group(1).strip().upper(),
+                    'medida': dm.group(2).strip().upper(),
+                    'indice': dm.group(3).strip().upper(),
+                    'model':  dm.group(4).strip().upper(),
+                    'price':  prices[pid]
+                })
 
             # Dedup: mesma chave → fica o mais barato
             seen: dict = {}
@@ -1893,7 +1888,7 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
                 if k not in seen or p['price'] < seen[k]['price']:
                     seen[k] = p
             result_list = list(seen.values())
-            print(f"  [TugaPneus] _parse_tuga_html: {len(result_list)} produtos encontrados")
+            print(f"  [TugaPneus] _parse_tuga_html: {len(result_list)} produtos extraídos")
             return result_list
 
         products = _parse_tuga_html(content)
