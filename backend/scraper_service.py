@@ -1015,11 +1015,27 @@ class TugaPneusAdapter(ScraperBase):
             return False, f"Login error: {str(e)}"
 
     async def search_product(self, medida: str, marca: str, modelo: str, indice: str) -> Optional[float]:
-        """Search for tire on TugaPneus and return best price"""
+        """Pesquisa pneu no TugaPneus com pesquisa progressiva e devolve melhor preço.
+
+        Níveis de pesquisa (mais específico → mais geral):
+          1. "pneu [marca] [medida] [modelo]"   ex: pneu michelin 205/60R16 primacy 5
+          2. "pneu [marca] [medida]"             ex: pneu michelin 205/60R16
+          3. "[medida]"                           ex: 205/60R16
+
+        Medida sempre no formato com / e R (205/60R16), nunca normalizado.
+        Entre tentativas clica LIMPAR ou limpa o campo manualmente.
+
+        Parse da descrição "PNEU MICHELIN 205/60R16 96H PRIMACY 5 XL":
+          marca  = MICHELIN
+          medida = 205/60R16
+          indice = 96H
+          modelo = PRIMACY 5 XL
+        """
         try:
+            import re as _re
             medida_norm = self.normalize_medida(medida)
-            import re as _re_tp
-            _m = _re_tp.match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
+            _m = _re.match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
+            # Medida com / e R: 205/60R16 (nunca normalizado)
             medida_slashed = f"{_m.group(1)}/{_m.group(2)}R{_m.group(3)}" if _m else medida_norm
 
             await asyncio.sleep(1)
@@ -1032,18 +1048,16 @@ class TugaPneusAdapter(ScraperBase):
             if 'login' in self.page.url.lower():
                 return None
 
-            # Pesquisa progressiva TugaPneus
-            # Nível 1: "pneu [marca] [medida] [modelo]"
-            # Nível 2: "pneu [marca] [medida]"
-            # Nível 3: "[medida]" (formato 205/60R16)
-            _terms: list = []
+            # ── Termos de pesquisa progressivos ──────────────────────────────
+            terms: list[str] = []
             if marca and modelo:
-                _terms.append(f"pneu {marca} {medida_slashed} {modelo}".lower())
+                terms.append(f"pneu {marca} {medida_slashed} {modelo}".lower())
             if marca:
-                _terms.append(f"pneu {marca} {medida_slashed}".lower())
-            _terms.append(medida_slashed)
+                terms.append(f"pneu {marca} {medida_slashed}".lower())
+            terms.append(medida_slashed)
 
-            _search_input = None
+            # ── Localizar campo de pesquisa ───────────────────────────────────
+            search_input = None
             for _sel in [
                 'input[type="search"]',
                 'input[name*="search" i]',
@@ -1055,141 +1069,180 @@ class TugaPneusAdapter(ScraperBase):
             ]:
                 _el = self.page.locator(_sel).first
                 if await _el.count() > 0:
-                    _search_input = _el
+                    search_input = _el
                     break
 
-            async def _has_results() -> bool:
+            # ── Helpers ───────────────────────────────────────────────────────
+            async def _count_results() -> int:
+                """Conta linhas de produto com preço e descrição 'PNEU ...'"""
                 return await self.page.evaluate(r'''() => {
-                    const re = /\d+[,.]\d{2}\s*€|€\s*\d+[,.]\d{2}/;
-                    const sels = ['tr', '.product', '.product-item', '[class*="product"]', '.item', '.card'];
-                    for (const s of sels) {
-                        if ([...document.querySelectorAll(s)].some(el => re.test(el.textContent))) return true;
+                    const priceRe = /\d+[,.]\d{2}\s*€|€\s*\d+[,.]\d{2}/;
+                    let count = 0;
+                    // Procura em <tr> (tabela TugaPneus) e em elementos produto genéricos
+                    const rows = [...document.querySelectorAll('tr, .product, .product-item, [class*="product"]')];
+                    for (const row of rows) {
+                        const txt = row.textContent || '';
+                        if (/PNEU\s+\w/i.test(txt) && priceRe.test(txt)) count++;
                     }
-                    return false;
+                    return count;
                 }''')
 
-            logger.info(f"TugaPneus pesquisa progressiva: {_terms}")
-            _found = False
-            for _term in _terms:
-                logger.info(f"TugaPneus tentativa: '{_term}'")
-                if _search_input:
-                    await _search_input.clear()
-                    await _search_input.fill(_term)
+            async def _limpar():
+                """Clica LIMPAR se existir, senão limpa o campo manualmente."""
+                limpar_btn = self.page.locator(
+                    'button:has-text("LIMPAR"), button:has-text("Limpar"), '
+                    'button:has-text("Clear"), a:has-text("LIMPAR")'
+                ).first
+                if await limpar_btn.count() > 0:
+                    await limpar_btn.click()
+                    await asyncio.sleep(0.5)
+                elif search_input:
+                    await search_input.clear()
+
+            # ── Pesquisa progressiva ──────────────────────────────────────────
+            logger.info(f"TugaPneus pesquisa progressiva: {terms}")
+            found = False
+            for i, term in enumerate(terms):
+                logger.info(f"TugaPneus nível {i+1}: '{term}'")
+
+                # Limpar antes de cada tentativa (excepto a primeira se o campo já está vazio)
+                if i > 0:
+                    await _limpar()
+                    await asyncio.sleep(0.3)
+
+                if search_input:
+                    await search_input.clear()
+                    await search_input.fill(term)
                     await asyncio.sleep(0.4)
-                    _btn = self.page.locator(
+                    pesquisar_btn = self.page.locator(
                         'button:has-text("PESQUISAR"), button:has-text("Pesquisar"), '
                         'button:has-text("Buscar"), button[type="submit"], .search-btn'
                     ).first
-                    if await _btn.count() > 0:
-                        await _btn.click()
+                    if await pesquisar_btn.count() > 0:
+                        await pesquisar_btn.click()
                     else:
-                        await _search_input.press("Enter")
+                        await search_input.press("Enter")
                 else:
                     await self.page.goto(
-                        f"https://www.tugapneus.pt/produtos?search={_term.replace(' ', '+')}",
+                        f"https://www.tugapneus.pt/produtos?search={term.replace(' ', '+')}",
                         wait_until="domcontentloaded", timeout=30000
                     )
+
                 await asyncio.sleep(4)
                 try:
                     await self.page.wait_for_load_state("networkidle", timeout=12000)
                 except Exception:
                     pass
-                if await _has_results():
-                    logger.info(f"TugaPneus resultados com '{_term}'")
-                    _found = True
+
+                n = await _count_results()
+                logger.info(f"TugaPneus nível {i+1}: {n} resultado(s)")
+                if n > 0:
+                    found = True
                     break
-                logger.info(f"TugaPneus sem resultados para '{_term}', próximo nível...")
+                logger.info(f"TugaPneus nível {i+1} sem resultados → próximo nível")
 
-            content = await self.page.content()
-
-            # Check no results — só desiste se nenhuma tentativa funcionou
-            if not _found and any(t in content.lower() for t in [
-                "sem resultado", "nenhum registo", "não foram encontrados",
-                "nenhum produto", "sem produtos", "0 resultado"
-            ]):
+            if not found:
+                logger.info(f"TugaPneus: nenhum resultado encontrado para {medida_slashed}")
                 return None
 
-            # Extract products com parser estruturado da descrição TugaPneus
-            # Formato: "PNEU MARCA MEDIDA ÍNDICE MODELO"
-            # Ex: "PNEU MASSIMO 205/55R16 91V OTTIMA PLUS"
+            # ── Extracção e parse dos produtos ───────────────────────────────
+            # Descrição: "PNEU MICHELIN 205/60R16 96H PRIMACY 5 XL"
+            #   marca  = MICHELIN
+            #   medida = 205/60R16
+            #   indice = 96H
+            #   modelo = PRIMACY 5 XL
             products = await self.page.evaluate(r'''() => {
                 const products = [];
 
-                function parseTugaDesc(text) {
-                    const m = text.match(/PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}\/\d{2}[Rr]\d{2})\s+(\d{2,3}[A-Za-z]{1,2})\s*(.*)/i);
-                    if (m) {
-                        return {
-                            marca:  m[1].trim().toUpperCase(),
-                            medida: m[2].toUpperCase(),
-                            indice: m[3].toUpperCase(),
-                            modelo: m[4].trim().toUpperCase()
-                        };
-                    }
-                    return null;
+                function parseTugaDesc(raw) {
+                    const text = raw.toUpperCase();
+                    // PNEU [MARCA (1-2 palavras)] [XXX/XXRXX] [ÍNDICE] [MODELO...]
+                    // Ex: PNEU MICHELIN 205/60R16 96H PRIMACY 5 XL
+                    // Ex: PNEU THREE-A 205/55R16 91W P606
+                    // Ex: PNEU BF GOODRICH 205/55R16 91V G-FORCE SPORT
+                    const m = text.match(
+                        /PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}\/\d{2}[R]\d{2})\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s*(.*)/
+                    );
+                    if (!m) return null;
+                    return {
+                        marca:  m[1].trim(),
+                        medida: m[2].trim(),
+                        indice: m[3].trim(),   // inclui XL se estiver junto ao índice
+                        modelo: m[4].trim()
+                    };
                 }
 
-                const selectors = [
-                    '.product', '.product-item', '.produto', '[class*="product"]',
-                    '.item', '.card', '.list-item', 'tr', '[class*="pneu"]',
-                    '[class*="tire"]', '[class*="item"]'
-                ];
-                for (const sel of selectors) {
-                    const items = document.querySelectorAll(sel);
-                    if (items.length > 1) {
-                        items.forEach(item => {
-                            const text = item.textContent || '';
-                            const pm = text.match(/(\d+[,.]\d{2})\s*€|€\s*(\d+[,.]\d{2})/);
-                            if (pm) {
-                                const price = parseFloat((pm[1]||pm[2]).replace(',','.'));
-                                if (price > 15 && price < 600) {
-                                    const parsed = parseTugaDesc(text.toUpperCase());
-                                    products.push({
-                                        brand:  parsed ? parsed.marca  : '',
-                                        model:  parsed ? parsed.modelo : '',
-                                        medida: parsed ? parsed.medida : '',
-                                        indice: parsed ? parsed.indice : '',
-                                        price
-                                    });
-                                }
-                            }
-                        });
-                        if (products.length > 0) break;
-                    }
+                const priceRe = /(\d+[,.]\d{2})\s*€|€\s*(\d+[,.]\d{2})/;
+
+                // Tenta primeiro por linhas de tabela (estrutura TugaPneus)
+                const rows = [...document.querySelectorAll('tr')].filter(r => {
+                    const t = r.textContent || '';
+                    return /PNEU\s+\w/i.test(t) && priceRe.test(t);
+                });
+
+                const source = rows.length > 0
+                    ? rows
+                    : [...document.querySelectorAll(
+                        '.product, .product-item, .produto, [class*="product"], .item, .card'
+                      )].filter(el => {
+                          const t = el.textContent || '';
+                          return /PNEU\s+\w/i.test(t) && priceRe.test(t);
+                      });
+
+                for (const el of source) {
+                    const text = el.textContent || '';
+                    const pm = text.match(priceRe);
+                    if (!pm) continue;
+                    const price = parseFloat((pm[1] || pm[2]).replace(',', '.'));
+                    if (price < 15 || price > 800) continue;
+
+                    const parsed = parseTugaDesc(text);
+                    products.push({
+                        brand:  parsed ? parsed.marca  : '',
+                        medida: parsed ? parsed.medida : '',
+                        indice: parsed ? parsed.indice : '',
+                        model:  parsed ? parsed.modelo : text.trim().substring(0, 120),
+                        price
+                    });
                 }
-                // Dedup por brand+price
-                const seen = {};
+
+                // Dedup: mesma marca+medida+indice+modelo → fica com o mais barato
+                const seen = new Map();
                 for (const p of products) {
-                    const k = (p.brand||'') + '|' + String(p.price);
-                    if (!seen[k]) seen[k] = p;
+                    const k = `${p.brand}|${p.medida}|${p.indice}|${p.model}`;
+                    if (!seen.has(k) || p.price < seen.get(k).price) seen.set(k, p);
                 }
-                return Object.values(seen);
+                return [...seen.values()];
             }''')
 
             if products:
-                prices = [p['price'] for p in products]
-                best = min(prices)
-                logger.info(f"TugaPneus: {len(products)} produtos encontrados, melhor €{best}")
+                best = min(p['price'] for p in products)
+                logger.info(f"TugaPneus: {len(products)} produto(s), melhor €{best}")
                 for p in products:
-                    logger.info(f"  marca={p.get('brand')} medida={p.get('medida')} "
-                                f"indice={p.get('indice')} modelo={p.get('model')} preço=€{p.get('price')}")
+                    logger.info(
+                        f"  marca={p.get('brand')} medida={p.get('medida')} "
+                        f"indice={p.get('indice')} modelo={p.get('model')} preço=€{p.get('price')}"
+                    )
                 return best
 
-            # Fallback regex sobre HTML
-            found_prices = []
-            for pattern in [r'(\d+[,\.]\d{2})\s*€', r'€\s*(\d+[,\.]\d{2})']:
-                for match in re.findall(pattern, content, re.IGNORECASE):
+            # Fallback: preços em bruto no HTML
+            content = await self.page.content()
+            raw_prices: list[float] = []
+            for pat in [r'(\d+[,\.]\d{2})\s*€', r'€\s*(\d+[,\.]\d{2})']:
+                for m in re.findall(pat, content, re.IGNORECASE):
                     try:
-                        price = float(match.replace(',', '.'))
-                        if 15 < price < 600:
-                            found_prices.append(price)
+                        p = float(m.replace(',', '.'))
+                        if 15 < p < 800:
+                            raw_prices.append(p)
                     except ValueError:
-                        continue
-            if found_prices:
-                return min(set(found_prices))
+                        pass
+            if raw_prices:
+                logger.info(f"TugaPneus fallback regex: melhor €{min(raw_prices)}")
+                return min(raw_prices)
             return None
 
         except Exception as e:
-            logger.error(f"TugaPneus search error for {medida}: {str(e)}")
+            logger.error(f"TugaPneus search_product error ({medida}): {e}")
             return None
 
 
