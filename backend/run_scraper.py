@@ -1710,19 +1710,33 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
                 return result
             print(f"  [TugaPneus] Login efectuado com sucesso (URL: {url_after})")
 
-        # Se o login redireccionou para /produtos, já estamos no sítio certo
-        if 'produtos' not in page.url.lower():
-            print(f"  [TugaPneus] A navegar para produtos...")
-            await page.goto("https://www.tugapneus.pt/produtos", wait_until="domcontentloaded", timeout=60000)
-            try:
-                await page.wait_for_load_state("networkidle", timeout=20000)
-            except Exception:
-                pass
-            await asyncio.sleep(3)
+        # Navegar sempre para /produtos com estado limpo (mesmo que já estejamos em /produtos?conhecimento=1)
+        print(f"  [TugaPneus] A navegar para /produtos (URL actual: {page.url})...")
+        await page.goto("https://www.tugapneus.pt/produtos", wait_until="domcontentloaded", timeout=60000)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
+        await asyncio.sleep(2)
+
+        # Se o popup aparecer de novo, dispensar
+        try:
+            popup2 = page.locator(
+                'button:has-text("TOMEI CONHECIMENTO"), button:has-text("Tomei Conhecimento"), '
+                '[role="dialog"] button, [class*="modal"] button'
+            ).first
+            if await popup2.count() > 0:
+                await popup2.click()
+                print(f"  [TugaPneus] Popup dispensado ao navegar para /produtos")
+                await asyncio.sleep(2)
+        except Exception:
+            pass
 
         if 'login' in page.url.lower():
             result["error"] = "Redireccionado para login ao navegar para produtos — sessão inválida"
             return result
+
+        print(f"  [TugaPneus] Pronto para pesquisar. URL: {page.url}")
 
         # Pesquisa progressiva TugaPneus
         # Nível 1: "pneu [marca] [medida] [modelo]"  (se marca e modelo disponíveis)
@@ -1796,6 +1810,16 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
                 _found = True
                 break
             except Exception:
+                # Debug: mostrar estado real da página para diagnóstico
+                try:
+                    dbg = await page.evaluate(r'''() => {
+                        const trs = [...document.querySelectorAll('tr')];
+                        const sample = trs.slice(0,3).map(tr => tr.textContent.trim().substring(0,80));
+                        return {url: location.href, trs: trs.length, sample};
+                    }''')
+                    print(f"  [TugaPneus] DEBUG url={dbg['url']} trs={dbg['trs']} sample={dbg['sample']}")
+                except Exception:
+                    pass
                 print(f"  [TugaPneus] Sem resultados para '{_term}', próximo nível...")
 
         if not _found:
