@@ -1072,23 +1072,15 @@ class TugaPneusAdapter(ScraperBase):
                     search_input = _el
                     break
 
-            # ── Helpers ───────────────────────────────────────────────────────
-            async def _count_results() -> int:
-                """Conta tr com descrição 'PNEU ...' — não depende de € no textContent."""
-                return await self.page.evaluate(r'''() => {
-                    return [...document.querySelectorAll('tr')]
-                        .filter(tr => /PNEU\s+\w/i.test(tr.textContent)).length;
-                }''')
-
+            # ── Helper LIMPAR ─────────────────────────────────────────────────
             async def _limpar():
-                """Clica LIMPAR se existir, senão limpa o campo manualmente."""
                 limpar_btn = self.page.locator(
                     'button:has-text("LIMPAR"), button:has-text("Limpar"), '
                     'button:has-text("Clear"), a:has-text("LIMPAR")'
                 ).first
                 if await limpar_btn.count() > 0:
                     await limpar_btn.click()
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.4)
                 elif search_input:
                     await search_input.clear()
 
@@ -1098,10 +1090,8 @@ class TugaPneusAdapter(ScraperBase):
             for i, term in enumerate(terms):
                 logger.info(f"TugaPneus nível {i+1}: '{term}'")
 
-                # Limpar antes de cada tentativa (excepto a primeira se o campo já está vazio)
                 if i > 0:
                     await _limpar()
-                    await asyncio.sleep(0.3)
 
                 if search_input:
                     await search_input.clear()
@@ -1121,21 +1111,20 @@ class TugaPneusAdapter(ScraperBase):
                         wait_until="domcontentloaded", timeout=30000
                     )
 
-                await asyncio.sleep(4)
+                # Espera activa até produtos aparecerem no DOM (evita race condition AJAX)
                 try:
-                    await self.page.wait_for_load_state("networkidle", timeout=12000)
-                except Exception:
-                    pass
-
-                n = await _count_results()
-                logger.info(f"TugaPneus nível {i+1}: {n} resultado(s)")
-                if n > 0:
+                    await self.page.wait_for_function(
+                        r"[...document.querySelectorAll('tr')].some(tr => /PNEU\s+\w/i.test(tr.textContent))",
+                        timeout=12000
+                    )
+                    logger.info(f"TugaPneus nível {i+1}: resultados encontrados com '{term}'")
                     found = True
                     break
-                logger.info(f"TugaPneus nível {i+1} sem resultados → próximo nível")
+                except Exception:
+                    logger.info(f"TugaPneus nível {i+1}: sem resultados para '{term}' → próximo nível")
 
             if not found:
-                logger.info(f"TugaPneus: nenhum resultado encontrado para {medida_slashed}")
+                logger.info(f"TugaPneus: nenhum resultado para {medida_slashed}")
                 return None
 
             # ── Extracção e parse dos produtos ───────────────────────────────

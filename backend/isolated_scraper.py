@@ -575,18 +575,22 @@ async def scrape_tugapneus(username: str, password: str, medida: str,
                     _search_input = _el
                     break
 
-            async def _has_results() -> bool:
-                # Detecção por "PNEU X..." em tr — não depende do símbolo € no textContent
-                # (TugaPneus pode renderizar € via CSS ::after, invisible no textContent)
-                return await page.evaluate(r'''() => {
-                    const rows = [...document.querySelectorAll('tr')];
-                    return rows.some(tr => /PNEU\s+\w/i.test(tr.textContent));
-                }''')
+            async def _limpar_pesquisa():
+                btn = page.locator('button:has-text("LIMPAR"), button:has-text("Limpar")').first
+                if await btn.count() > 0:
+                    await btn.click()
+                    await asyncio.sleep(0.4)
+                elif _search_input:
+                    await _search_input.clear()
 
             print(f"  [TugaPneus] Pesquisa progressiva: {_terms}")
             _found = False
-            for _term in _terms:
-                print(f"  [TugaPneus] Tentativa: '{_term}'")
+            for i, _term in enumerate(_terms):
+                print(f"  [TugaPneus] Tentativa {i+1}/{len(_terms)}: '{_term}'")
+
+                if i > 0:
+                    await _limpar_pesquisa()
+
                 if _search_input:
                     await _search_input.clear()
                     await _search_input.fill(_term)
@@ -604,16 +608,18 @@ async def scrape_tugapneus(username: str, password: str, medida: str,
                         f"https://www.tugapneus.pt/produtos?search={_term.replace(' ', '+')}",
                         wait_until="domcontentloaded", timeout=30000
                     )
-                await asyncio.sleep(4)
+
+                # Espera activa até produtos aparecerem no DOM
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=12000)
-                except Exception:
-                    pass
-                if await _has_results():
+                    await page.wait_for_function(
+                        r"[...document.querySelectorAll('tr')].some(tr => /PNEU\s+\w/i.test(tr.textContent))",
+                        timeout=12000
+                    )
                     print(f"  [TugaPneus] Resultados encontrados com '{_term}'")
                     _found = True
                     break
-                print(f"  [TugaPneus] Sem resultados para '{_term}', próximo nível...")
+                except Exception:
+                    print(f"  [TugaPneus] Sem resultados para '{_term}', próximo nível...")
 
             content = await page.content()
 
