@@ -1074,17 +1074,10 @@ class TugaPneusAdapter(ScraperBase):
 
             # ── Helpers ───────────────────────────────────────────────────────
             async def _count_results() -> int:
-                """Conta linhas de produto com preço e descrição 'PNEU ...'"""
+                """Conta tr com descrição 'PNEU ...' — não depende de € no textContent."""
                 return await self.page.evaluate(r'''() => {
-                    const priceRe = /\d+[,.]\d{2}\s*€|€\s*\d+[,.]\d{2}/;
-                    let count = 0;
-                    // Procura em <tr> (tabela TugaPneus) e em elementos produto genéricos
-                    const rows = [...document.querySelectorAll('tr, .product, .product-item, [class*="product"]')];
-                    for (const row of rows) {
-                        const txt = row.textContent || '';
-                        if (/PNEU\s+\w/i.test(txt) && priceRe.test(txt)) count++;
-                    }
-                    return count;
+                    return [...document.querySelectorAll('tr')]
+                        .filter(tr => /PNEU\s+\w/i.test(tr.textContent)).length;
                 }''')
 
             async def _limpar():
@@ -1347,7 +1340,8 @@ class ScraperService:
         adapter = self.create_adapter(supplier)
         return await adapter.test_login()
     
-    async def scrape_product_isolated(self, supplier: Dict[str, Any], medida: str) -> Optional[float]:
+    async def scrape_product_isolated(self, supplier: Dict[str, Any], medida: str,
+                                       marca: str = '', modelo: str = '') -> Optional[float]:
         """Scrape product using background process with file-based communication"""
         import subprocess
         import json
@@ -1363,7 +1357,9 @@ class ScraperService:
             "supplier": supplier['name'],
             "username": supplier['username'],
             "password": supplier.get('password_raw') or supplier.get('password', ''),
-            "medida": medida
+            "medida": medida,
+            "marca": marca,
+            "modelo": modelo
         }
         
         try:
@@ -1448,11 +1444,10 @@ class ScraperService:
                 os.remove(result_file)
             return None
     
-    async def scrape_product(self, supplier: Dict[str, Any], medida: str, marca: str, 
+    async def scrape_product(self, supplier: Dict[str, Any], medida: str, marca: str,
                             modelo: str, indice: str) -> Optional[float]:
         """Scrape single product from supplier - uses isolated subprocess for reliability"""
-        # Use isolated subprocess scraping for better anti-bot bypass
-        return await self.scrape_product_isolated(supplier, medida)
+        return await self.scrape_product_isolated(supplier, medida, marca=marca, modelo=modelo)
     
     async def cleanup_supplier(self, supplier_id: str):
         """Close browser for supplier"""

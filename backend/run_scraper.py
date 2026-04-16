@@ -1753,13 +1753,10 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
                 break
 
         async def _tuga_has_results() -> bool:
+            # Usa "PNEU X..." em tr — não depende de € no textContent
             return await page.evaluate(r'''() => {
-                const re = /\d+[,.]\d{2}\s*€|€\s*\d+[,.]\d{2}/;
-                const sels = ['tr', '.product', '.product-item', '[class*="product"]', '.item', '.card'];
-                for (const s of sels) {
-                    if ([...document.querySelectorAll(s)].some(el => re.test(el.textContent))) return true;
-                }
-                return false;
+                return [...document.querySelectorAll('tr')]
+                    .some(tr => /PNEU\s+\w/i.test(tr.textContent));
             }''')
 
         print(f"  [TugaPneus] Pesquisa progressiva: {_terms}")
@@ -1811,60 +1808,57 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
 
         # Extract products via JS
         # Descrição TugaPneus: "PNEU MARCA MEDIDA ÍNDICE MODELO"
-        # Ex: "PNEU MASSIMO 205/55R16 91V OTTIMA PLUS"
+        # Ex: "PNEU MICHELIN 205/60R16 96H PRIMACY 5 XL"
+        # Preço extraído sem depender de € no textContent (pode ser CSS ::after)
         products = await page.evaluate(r'''() => {
             const products = [];
 
-            function parseTugaDesc(text) {
-                // Extrai marca, medida, índice e modelo da descrição TugaPneus
-                // Formato: PNEU [MARCA] [MEDIDA] [ÍNDICE] [MODELO]
-                const m = text.match(/PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}\/\d{2}[Rr]\d{2})\s+(\d{2,3}[A-Za-z]{1,2})\s*(.*)/i);
-                if (m) {
-                    return {
-                        marca:  m[1].trim().toUpperCase(),
-                        medida: m[2].toUpperCase(),
-                        indice: m[3].toUpperCase(),
-                        modelo: m[4].trim().toUpperCase()
-                    };
-                }
-                return null;
+            function parseTugaDesc(raw) {
+                const text = raw.toUpperCase();
+                const m = text.match(
+                    /PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}\/\d{2}R\d{2})\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s*(.*)/
+                );
+                if (!m) return null;
+                return { marca: m[1].trim(), medida: m[2].trim(), indice: m[3].trim(), modelo: m[4].trim() };
             }
 
-            const selectors = [
-                '.product', '.product-item', '.produto', '[class*="product"]',
-                '.item', '.card', '.list-item', 'tr', '[class*="pneu"]',
-                '[class*="tire"]', '[class*="item"]'
-            ];
-            for (const sel of selectors) {
-                const items = document.querySelectorAll(sel);
-                if (items.length > 1) {
-                    items.forEach(item => {
-                        const text = item.textContent || '';
-                        const pm = text.match(/(\d+[,.]\d{2})\s*€|€\s*(\d+[,.]\d{2})/);
-                        if (pm) {
-                            const price = parseFloat((pm[1]||pm[2]).replace(',','.'));
-                            if (price > 15 && price < 600) {
-                                const parsed = parseTugaDesc(text.toUpperCase());
-                                products.push({
-                                    brand:  parsed ? parsed.marca  : '',
-                                    model:  parsed ? parsed.modelo : text.trim().substring(0, 100),
-                                    medida: parsed ? parsed.medida : '',
-                                    indice: parsed ? parsed.indice : '',
-                                    price
-                                });
-                            }
-                        }
-                    });
-                    if (products.length > 0) break;
-                }
+            function extractPrice(text) {
+                const nums = (text.match(/\d+[,.]\d{2}/g) || [])
+                    .map(n => parseFloat(n.replace(',', '.')))
+                    .filter(p => p > 15 && p < 800);
+                return nums.length ? Math.min(...nums) : null;
             }
-            // Deduplicate por brand+price, fica com o mais barato
-            const seen = {};
+
+            const productRows = [...document.querySelectorAll('tr')]
+                .filter(tr => /PNEU\s+\w/i.test(tr.textContent));
+
+            const source = productRows.length > 0
+                ? productRows
+                : [...document.querySelectorAll(
+                    '.product, .product-item, .produto, [class*="product"], .item, .card'
+                  )].filter(el => /PNEU\s+\w/i.test(el.textContent));
+
+            for (const el of source) {
+                const text = el.textContent || '';
+                const price = extractPrice(text);
+                if (price === null) continue;
+                const parsed = parseTugaDesc(text);
+                products.push({
+                    brand:  parsed ? parsed.marca  : '',
+                    model:  parsed ? parsed.modelo : '',
+                    medida: parsed ? parsed.medida : '',
+                    indice: parsed ? parsed.indice : '',
+                    price
+                });
+            }
+
+            // Dedup: mesma marca+medida+índice+modelo → fica o mais barato
+            const seen = new Map();
             for (const p of products) {
-                const k = (p.brand||'') + '|' + String(p.price);
-                if (!seen[k]) seen[k] = p;
+                const k = `${p.brand}|${p.medida}|${p.indice}|${p.model}`;
+                if (!seen.has(k) || p.price < seen.get(k).price) seen.set(k, p);
             }
-            return Object.values(seen);
+            return [...seen.values()];
         }''')
 
         if products:
