@@ -2178,26 +2178,60 @@ async def save_price_to_db(supplier_name: str, medida: str, price: float, error:
     finally:
         await conn.close()
 
-async def run_scraper(medidas: list, supplier_filter: str = None):
+async def run_scraper(medidas: list, supplier_filter: str = None, items_list: list = None):
     """Main scraper function"""
     print(f"Starting scraper at {datetime.now()}")
     print(f"Medidas to scrape: {medidas}")
-    
+
+    # Build per-medida brand list so brand-aware suppliers (TugaPneus) can do specific searches
+    # items_list = [{"medida": "20555R16", "marca": "MICHELIN", "modelo": "primacy 5"}, ...]
+    medida_items: dict = {}  # {medida: [{marca, modelo}, ...]}
+    for item in (items_list or []):
+        m = item.get('medida', '')
+        if m:
+            medida_items.setdefault(m, []).append({
+                'marca': (item.get('marca') or '').strip().upper(),
+                'modelo': (item.get('modelo') or '').strip(),
+            })
+
     suppliers = await get_suppliers_from_db()
     print(f"Found {len(suppliers)} suppliers")
-    
+
     if supplier_filter:
         suppliers = [s for s in suppliers if supplier_filter.lower() in s['name'].lower()]
         print(f"Filtered to {len(suppliers)} suppliers matching '{supplier_filter}'")
-    
+
     results = []
-    
+
     # Process each supplier with its own browser instance (like test script)
     for supplier in suppliers:
         supplier_name = supplier['name'].lower()
         print(f"\n--- Scraping {supplier['name']} ---")
-        
-        for medida in medidas:
+        is_tuga = 'tugapneus' in supplier_name or 'tuga' in supplier_name
+
+        # For TugaPneus: build (medida, marca, modelo) targets for brand-specific searches
+        # For all others: use generic (medida, '', '') targets
+        if is_tuga and medida_items:
+            targets: list = []
+            seen_targets: set = set()
+            for medida in medidas:
+                brand_items = medida_items.get(medida, [])
+                if brand_items:
+                    for bi in brand_items:
+                        key = (medida, bi['marca'], bi['modelo'])
+                        if key not in seen_targets:
+                            seen_targets.add(key)
+                            targets.append(key)
+                else:
+                    key = (medida, '', '')
+                    if key not in seen_targets:
+                        seen_targets.add(key)
+                        targets.append(key)
+            print(f"  TugaPneus: {len(targets)} pesquisas marca+medida: {targets[:5]}")
+        else:
+            targets = [(m, '', '') for m in medidas]
+
+        for medida, marca, modelo in targets:
             # Create completely fresh browser for each supplier (like test script does)
             async with async_playwright() as p:
                 browser = await p.chromium.launch(
@@ -2233,8 +2267,8 @@ async def run_scraper(medidas: list, supplier_filter: str = None):
                         result = await scrape_aguesport(page, supplier['username'], supplier['password'], medida)
                     elif 'abt' in supplier_name:
                         result = await scrape_abt_tyres(page, supplier['username'], supplier['password'], medida)
-                    elif 'tugapneus' in supplier_name or 'tuga' in supplier_name:
-                        result = await scrape_tugapneus(page, supplier['username'], supplier['password'], medida)
+                    elif is_tuga:
+                        result = await scrape_tugapneus(page, supplier['username'], supplier['password'], medida, marca, modelo)
                     elif 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:
                         result = await scrape_inter_sprint(page, supplier['username'], supplier['password'], medida)
                     elif 'cruzeiro' in supplier_name:
@@ -2474,9 +2508,11 @@ async def main():
     parser.add_argument('--supplier', type=str, help='Filter by supplier name')
     parser.add_argument('--medida', type=str, help='Specific tire size (e.g., 2055516)')
     parser.add_argument('--medidas', type=str, help='Comma-separated list of tire sizes')
-    
+    parser.add_argument('--items-json', type=str, default='[]',
+                        help='JSON list of {medida, marca, modelo} for brand-specific searches')
+
     args = parser.parse_args()
-    
+
     # Default medida for testing
     if args.medida:
         medidas = [args.medida]
@@ -2484,8 +2520,9 @@ async def main():
         medidas = [m.strip() for m in args.medidas.split(',')]
     else:
         medidas = ['2055516']  # Default test size
-    
-    await run_scraper(medidas, args.supplier)
+
+    items_list = json.loads(args.items_json or '[]')
+    await run_scraper(medidas, args.supplier, items_list=items_list)
 
 if __name__ == "__main__":
     asyncio.run(main())
