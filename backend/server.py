@@ -551,15 +551,35 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
             )
             pairs_sem_dados = unique_pairs
         else:
-            # Descobre quais (medida, marca) JÁ têm dados raspados
+            # Cache check por FORNECEDOR:
+            #   (supplier, medida, marca) — se algum fornecedor não tem dados para um par,
+            #   esse par é incluído no scrape.
+            # Isto garante que fornecedores novos (ex: InterSprint) são sempre raspados
+            # mesmo que outros já tenham dados para a mesma (medida, marca).
+            all_supplier_names = {
+                r['name'] for r in
+                await conn.fetch("SELECT name FROM suppliers")
+            }
             rows_with_data = await conn.fetch(
-                """SELECT DISTINCT medida, UPPER(COALESCE(marca,'')) AS marca_up
+                """SELECT DISTINCT supplier_name, medida, UPPER(COALESCE(marca,'')) AS marca_up
                    FROM scraped_prices
                    WHERE medida = ANY($1) AND price IS NOT NULL AND marca IS NOT NULL AND marca != ''""",
                 unique_medidas,
             )
-            pairs_com_dados = {(r['medida'], r['marca_up']) for r in rows_with_data}
-            pairs_sem_dados = [(m, b) for m, b in unique_pairs if (m, b) not in pairs_com_dados]
+            # (supplier, medida, marca_up) que já têm dados
+            data_exists = {
+                (r['supplier_name'], r['medida'], r['marca_up'])
+                for r in rows_with_data
+            }
+            # Um par precisa de scrape se algum fornecedor não tem dados para ele
+            pairs_sem_dados = []
+            for m, b in unique_pairs:
+                missing = any(
+                    (s, m, b) not in data_exists
+                    for s in all_supplier_names
+                )
+                if missing:
+                    pairs_sem_dados.append((m, b))
 
     # Scrape pares (medida, marca) em falta (ou todos se force=true)
     if pairs_sem_dados:
