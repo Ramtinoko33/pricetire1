@@ -2228,7 +2228,8 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
         content = await _work_page.content()
 
         try:
-            with open('/tmp/intersprint_results.html', 'w', encoding='utf-8') as _f:
+            # Compatível com /api/scraper/debug-html?supplier=intersprint&file=search_page
+            with open('/tmp/intersprint_search_page.html', 'w', encoding='utf-8') as _f:
                 _f.write(content)
         except Exception:
             pass
@@ -2430,10 +2431,10 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str)
 # ============================================================
 
 async def get_suppliers_from_db():
-    """Get active suppliers from PostgreSQL"""
+    """Get all suppliers from PostgreSQL (activos e inactivos são ambos raspados)"""
     conn = await _pg_connect()
     try:
-        rows = await conn.fetch("SELECT * FROM suppliers WHERE is_active = TRUE")
+        rows = await conn.fetch("SELECT * FROM suppliers")
         suppliers = []
         for row in rows:
             d = dict(row)
