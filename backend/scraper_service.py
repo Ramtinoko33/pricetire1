@@ -1260,14 +1260,14 @@ class InterSprintAdapter(ScraperBase):
             # Se não abrir nova aba / não aparecer login → vai directamente para URL de pesquisa.
             _search_url = self.url_search or "https://customers.inter-sprint.nl/#ecommerce"
 
+            # NÃO usar a[href*="customers.inter-sprint"] — link directo que dá 401.
             ecomm_btn = self.page.locator(
-                'a[href*="customers.inter-sprint"], '
                 'a:has-text("e-commerce"), button:has-text("e-commerce"), '
                 'a:has-text("E-Commerce"), a:has-text("Ecommerce")'
             ).first
             if await ecomm_btn.count() == 0:
                 ecomm_btn = self.page.locator('a, button').filter(
-                    has_text=_re.compile(r'e.?commerce', _re.IGNORECASE)
+                    has_text=_re.compile(r'^e.?commerce$', _re.IGNORECASE)
                 ).first
 
             _work_page = None  # página onde faremos login
