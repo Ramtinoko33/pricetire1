@@ -747,14 +747,14 @@ async def scrape_intersprint(username: str, password: str, medida: str,
             # Se não abrir nova aba nem modal → navegar directamente para URL de pesquisa.
             _search_url = "https://customers.inter-sprint.nl/#ecommerce"
 
+            # NÃO usar a[href*="customers.inter-sprint"] — link directo que dá 401.
             ecomm_btn = page.locator(
-                'a[href*="customers.inter-sprint"], '
                 'a:has-text("e-commerce"), button:has-text("e-commerce"), '
                 'a:has-text("E-Commerce"), a:has-text("Ecommerce")'
             ).first
             if await ecomm_btn.count() == 0:
                 ecomm_btn = page.locator('a, button').filter(
-                    has_text=re.compile(r'e.?commerce', re.IGNORECASE)
+                    has_text=re.compile(r'^e.?commerce$', re.IGNORECASE)
                 ).first
 
             _work_page = None
