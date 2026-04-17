@@ -705,6 +705,322 @@ async def scrape_tugapneus(username: str, password: str, medida: str,
     return result
 
 
+async def scrape_intersprint(username: str, password: str, medida: str,
+                              marca: str = '', modelo: str = '', indice: str = '') -> dict:
+    """Scrape Inter-Sprint B2B portal — versão isolated process."""
+    result = {
+        "supplier": "InterSprint",
+        "price": None,
+        "error": None,
+        "products": [],
+        "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+    }
+
+    medida_norm = normalize_medida(medida)
+    marca_upper = (marca or '').strip().upper()
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=True,
+            args=['--no-sandbox', '--disable-setuid-sandbox',
+                  '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+        )
+        context = await browser.new_context(
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            viewport={'width': 1920, 'height': 1080},
+            locale='pt-PT',
+        )
+        page = await context.new_page()
+        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
+
+        try:
+            print(f"  [InterSprint] Login: https://www.inter-sprint.com/")
+            await page.goto("https://www.inter-sprint.com/", wait_until="domcontentloaded", timeout=60000)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+
+            # Clicar botão e-commerce
+            ecomm_btn = page.locator(
+                'a:has-text("e-commerce"), button:has-text("e-commerce"), '
+                'a:has-text("E-Commerce"), a:has-text("Ecommerce"), '
+                'a[href*="ecommerce"], a[href*="customers.inter-sprint"]'
+            ).first
+            if await ecomm_btn.count() == 0:
+                ecomm_btn = page.locator('a, button').filter(
+                    has_text=re.compile(r'e.?commerce', re.IGNORECASE)
+                ).first
+
+            _login_page = page
+
+            if await ecomm_btn.count() > 0:
+                try:
+                    async with context.expect_page() as new_pg_info:
+                        await ecomm_btn.click()
+                    _login_page = await new_pg_info.value
+                    await _login_page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    await asyncio.sleep(2)
+                except Exception:
+                    await asyncio.sleep(1)
+                    _login_page = page
+            else:
+                await page.goto("https://customers.inter-sprint.nl/", wait_until="domcontentloaded", timeout=60000)
+                await asyncio.sleep(2)
+
+            # Credenciais
+            user_input = _login_page.locator(
+                'input[name="username"], input[name="user"], input[name="login"], '
+                'input[id*="user" i], input[type="text"]'
+            ).first
+            pass_input = _login_page.locator('input[type="password"]').first
+
+            if _login_page == page and await user_input.count() == 0:
+                modal = _login_page.locator(
+                    '[class*="modal"], [role="dialog"], .popup, [class*="popup"], [class*="login"]'
+                ).first
+                if await modal.count() > 0:
+                    user_input = modal.locator('input[name="username"], input[name="user"], input[type="text"]').first
+                    pass_input = modal.locator('input[type="password"]').first
+
+            if await user_input.count() > 0:
+                await user_input.clear()
+                await user_input.type(username, delay=60)
+            else:
+                result["error"] = "Campo username não encontrado"
+                return result
+
+            if await pass_input.count() > 0:
+                await pass_input.clear()
+                await pass_input.type(password, delay=60)
+            else:
+                result["error"] = "Campo password não encontrado"
+                return result
+
+            await asyncio.sleep(0.5)
+            submit_btn = _login_page.locator(
+                'button[type="submit"], input[type="submit"], '
+                'button:has-text("Login"), button:has-text("Sign in"), '
+                'button:has-text("Entrar"), button:has-text("OK"), button:has-text("Inloggen")'
+            ).first
+            if await submit_btn.count() > 0:
+                await submit_btn.click()
+            else:
+                await pass_input.press("Enter")
+
+            await asyncio.sleep(5)
+            try:
+                await _login_page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+
+            _work_page = _login_page
+            if 'customers.inter-sprint.nl' not in _work_page.url:
+                await _work_page.goto(
+                    "https://customers.inter-sprint.nl/#ecommerce",
+                    wait_until="domcontentloaded", timeout=60000
+                )
+                try:
+                    await _work_page.wait_for_load_state("networkidle", timeout=20000)
+                except Exception:
+                    pass
+                await asyncio.sleep(3)
+
+            if 'login' in _work_page.url.lower() and 'customers.inter-sprint' not in _work_page.url:
+                result["error"] = f"Login falhou: {_work_page.url}"
+                return result
+
+            procura_link = _work_page.locator(
+                'a:has-text("Procura por pneus"), button:has-text("Procura por pneus"), '
+                'a:has-text("procura por pneus"), span:has-text("Procura por pneus"), '
+                'a:has-text("Tyre search"), a:has-text("Zoek band")'
+            ).first
+            if await procura_link.count() > 0:
+                await procura_link.click()
+                await asyncio.sleep(3)
+                try:
+                    await _work_page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    pass
+
+            # Helpers
+            async def _limpar():
+                for sel in [
+                    'input[placeholder*="Artigo" i], input[id*="artigo" i], input[name*="artigo" i]',
+                    'input[placeholder*="LI" i], input[id*="lisi" i], input[placeholder*="SI" i]',
+                ]:
+                    el = _work_page.locator(sel).first
+                    if await el.count() > 0:
+                        await el.clear()
+                msel = _work_page.locator(
+                    'select[id*="marca" i], select[name*="marca" i], select[id*="brand" i], select'
+                ).first
+                if await msel.count() > 0:
+                    try:
+                        await msel.select_option(index=0)
+                    except Exception:
+                        pass
+
+            async def _tem_resultados() -> bool:
+                content = await _work_page.content()
+                rows_n = await _work_page.evaluate('''() => {
+                    let max = 0;
+                    for (const t of document.querySelectorAll("table")) {
+                        const r = t.querySelectorAll("tbody tr").length;
+                        if (r > max) max = r;
+                    }
+                    return max;
+                }''')
+                return rows_n > 0 or bool(re.search(r'\d+[,.]\d{2}\s*€|€\s*\d+', content))
+
+            async def _pesquisar(use_marca: bool, use_indice: bool) -> bool:
+                artigo = _work_page.locator(
+                    'input[placeholder*="Artigo" i], input[id*="artigo" i], '
+                    'input[name*="artigo" i], input[placeholder*="article" i]'
+                ).first
+                if await artigo.count() > 0:
+                    await artigo.clear()
+                    await artigo.fill(medida_norm)
+                else:
+                    return False
+
+                if use_marca and marca_upper:
+                    msel = _work_page.locator(
+                        'select[id*="marca" i], select[name*="marca" i], '
+                        'select[id*="brand" i], select[name*="brand" i], select'
+                    ).first
+                    if await msel.count() > 0:
+                        try:
+                            opts = await msel.evaluate(
+                                'el => Array.from(el.options).map(o => ({value: o.value, text: o.text}))'
+                            )
+                            matched = next(
+                                (o['value'] for o in opts if marca_upper in o['text'].upper()), None
+                            )
+                            if matched is not None:
+                                await msel.select_option(value=str(matched))
+                        except Exception:
+                            pass
+
+                if use_indice and indice:
+                    lisi = _work_page.locator(
+                        'input[placeholder*="LI" i], input[id*="lisi" i], '
+                        'input[name*="lisi" i], input[placeholder*="SI" i]'
+                    ).first
+                    if await lisi.count() > 0:
+                        await lisi.clear()
+                        await lisi.fill(indice)
+
+                btn = _work_page.locator(
+                    'button:has-text("Procura"), input[value*="Procura" i], '
+                    'button:has-text("Search"), button[type="submit"], input[type="submit"]'
+                ).first
+                if await btn.count() > 0:
+                    await btn.click()
+                else:
+                    await artigo.press("Enter")
+
+                await asyncio.sleep(5)
+                try:
+                    await _work_page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    pass
+                await asyncio.sleep(1)
+                return await _tem_resultados()
+
+            found = False
+            if marca_upper and indice:
+                if await _pesquisar(True, True):
+                    found = True
+            if not found and marca_upper:
+                await _limpar()
+                if await _pesquisar(True, False):
+                    found = True
+            if not found:
+                await _limpar()
+                if await _pesquisar(False, False):
+                    found = True
+
+            if not found:
+                result["error"] = "Sem resultados"
+                return result
+
+            content = await _work_page.content()
+            products = _parse_intersprint_isolated(content)
+
+            if products:
+                result["products"] = products
+                result["price"] = min(p['price'] for p in products)
+                result["all_prices"] = sorted(p['price'] for p in products)[:10]
+                print(f"  [InterSprint] {len(products)} produtos, melhor €{result['price']}")
+            else:
+                prices = extract_prices(content)
+                if prices:
+                    result["price"] = min(prices)
+                    result["all_prices"] = sorted(prices)[:10]
+                else:
+                    result["error"] = "Produtos não encontrados"
+
+        except Exception as e:
+            result["error"] = str(e)
+            print(f"  [InterSprint] Error: {e}")
+        finally:
+            await browser.close()
+
+    return result
+
+
+def _parse_intersprint_isolated(html: str) -> list:
+    """Parse HTML resultados InterSprint (versão isolated)."""
+    products: list = []
+    seen: set = set()
+    price_re = re.compile(r'€\s*(\d+[,.]\d{2})|(\d+[,.]\d{2})\s*€', re.IGNORECASE)
+    brand_re = re.compile(
+        r'\b(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|'
+        r'YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|'
+        r'GENERAL|UNIROYAL|GISLAVED|FULDA|SEMPERIT|SAVA|KLEBER|BF.?GOODRICH|'
+        r'COOPER|MINERVA|WESTLAKE|THREE-A|MASSIMO|LASSA|LANDSAIL|NANKANG|'
+        r'SAILUN|WINDFORCE|WANLI|DAVANTI|ATLAS|DOUBLESTAR|LINGLONG|ACCELERA|'
+        r'APLUS|GT.?RADIAL|CACHLAND|HIFLY|MILESTONE)\b',
+        re.IGNORECASE
+    )
+    medida_re = re.compile(r'\b(\d{3}/\d{2}R\d{2})\b', re.IGNORECASE)
+    indice_re = re.compile(r'\b(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\b')
+    tag_re    = re.compile(r'<[^>]+>')
+    row_re    = re.compile(r'<tr[^>]*>(.*?)</tr>', re.IGNORECASE | re.DOTALL)
+    for row_m in row_re.finditer(html):
+        row_text = re.sub(r'\s+', ' ', tag_re.sub(' ', row_m.group(1))).strip()
+        if len(row_text) < 10:
+            continue
+        price_m = price_re.search(row_text)
+        if not price_m:
+            continue
+        try:
+            price = float((price_m.group(1) or price_m.group(2)).replace(',', '.'))
+        except ValueError:
+            continue
+        if not (15 < price < 800):
+            continue
+        brand_m  = brand_re.search(row_text)
+        medida_m = medida_re.search(row_text)
+        indice_m = indice_re.search(row_text)
+        brand      = brand_m.group(1).upper()  if brand_m  else 'UNKNOWN'
+        medida_val = medida_m.group(1).upper() if medida_m else ''
+        indice_val = indice_m.group(1).upper() if indice_m else ''
+        remaining  = re.sub(r'[€\s,]+', ' ',
+                     price_re.sub('', brand_re.sub('', medida_re.sub('', row_text)))).strip()
+        model = remaining[:60].strip().upper()
+        key = f"{brand}|{medida_val}|{indice_val}|{price}"
+        if key not in seen:
+            seen.add(key)
+            products.append({'brand': brand, 'medida': medida_val,
+                             'indice': indice_val, 'model': model, 'price': price})
+    print(f"  [InterSprint] _parse: {len(products)} produtos")
+    return products
+
+
 async def main():
     """Main entry point - expects JSON config from stdin"""
     # Read config from stdin

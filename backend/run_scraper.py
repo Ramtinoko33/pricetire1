@@ -1917,100 +1917,391 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
 
     return result
 
-async def scrape_inter_sprint(page, username: str, password: str, medida: str) -> dict:
-    """Scrape Inter-Sprint (Netherlands)"""
+async def scrape_inter_sprint(page, username: str, password: str, medida: str,
+                               marca: str = '', modelo: str = '', indice: str = '') -> dict:
+    """Scrape Inter-Sprint B2B portal (inter-sprint.com / customers.inter-sprint.nl).
+
+    Login:
+      1. https://www.inter-sprint.com/ → clicar 'e-commerce'
+      2. Popup/modal com username+password → submeter
+      3. Navegar para https://customers.inter-sprint.nl/#ecommerce
+      4. Clicar 'Procura por pneus'
+
+    Pesquisa progressiva:
+      Nível 1: Codigo do Artigo (medida) + Marca (dropdown) + LI/SI (indice)
+      Nível 2: Codigo do Artigo + Marca (sem indice)
+      Nível 3: Código do Artigo only
+    """
     result = {
-        "supplier": "Inter-Sprint",
+        "supplier": "InterSprint",
         "price": None,
         "error": None,
         "products": [],
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
-    
+
+    medida_norm = normalize_medida(medida)   # ex: 2055516
+    marca_upper = (marca or '').strip().upper()
+
     try:
-        print("  [Inter-Sprint] Logging in...")
-        await page.goto("https://customers.inter-sprint.nl/", wait_until="networkidle", timeout=60000)
+        print(f"  [InterSprint] Login: https://www.inter-sprint.com/")
+        await page.goto("https://www.inter-sprint.com/", wait_until="domcontentloaded", timeout=60000)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
         await asyncio.sleep(2)
-        
-        # Fill login form
-        username_input = page.locator('input[name="username"], input[name="user"], input[type="text"]').first
-        if await username_input.count() > 0:
-            await username_input.fill(username)
-        
-        password_input = page.locator('input[type="password"]').first
-        if await password_input.count() > 0:
-            await password_input.fill(password)
-        
-        # Submit login
-        submit_btn = page.locator('button[type="submit"], input[type="submit"], button:has-text("Login"), button:has-text("Sign in")').first
+
+        # ── Clicar botão e-commerce ──────────────────────────────────────
+        ecomm_btn = page.locator(
+            'a:has-text("e-commerce"), button:has-text("e-commerce"), '
+            'a:has-text("E-Commerce"), a:has-text("Ecommerce"), '
+            'a[href*="ecommerce"], a[href*="customers.inter-sprint"]'
+        ).first
+        if await ecomm_btn.count() == 0:
+            ecomm_btn = page.locator('a, button').filter(
+                has_text=re.compile(r'e.?commerce', re.IGNORECASE)
+            ).first
+
+        _login_page = page  # default: mesma página (modal inline)
+
+        if await ecomm_btn.count() > 0:
+            print(f"  [InterSprint] Botão e-commerce encontrado — a clicar")
+            try:
+                async with page.context.expect_page() as new_pg_info:
+                    await ecomm_btn.click()
+                _login_page = await new_pg_info.value
+                await _login_page.wait_for_load_state("domcontentloaded", timeout=15000)
+                await asyncio.sleep(2)
+                print(f"  [InterSprint] Nova janela: {_login_page.url}")
+            except Exception:
+                # Não abriu nova janela — provavelmente modal inline
+                await asyncio.sleep(1)
+                _login_page = page
+        else:
+            print(f"  [InterSprint] Botão e-commerce não encontrado — a tentar login directo")
+            # Tentar navegar directamente para a URL de pesquisa
+            await page.goto("https://customers.inter-sprint.nl/", wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(2)
+            _login_page = page
+
+        # ── Preencher credenciais ─────────────────────────────────────────
+        # Procura nos selectores standard primeiro; depois dentro de modal
+        user_input = _login_page.locator(
+            'input[name="username"], input[name="user"], input[name="login"], '
+            'input[id*="user" i], input[id*="name" i], input[type="text"]'
+        ).first
+        pass_input = _login_page.locator('input[type="password"]').first
+
+        # Se modal na mesma página (popup inline)
+        if _login_page == page and await user_input.count() == 0:
+            modal = _login_page.locator(
+                '[class*="modal"], [role="dialog"], .popup, '
+                '[class*="popup"], [class*="login"], #loginModal'
+            ).first
+            if await modal.count() > 0:
+                user_input = modal.locator(
+                    'input[name="username"], input[name="user"], input[type="text"]'
+                ).first
+                pass_input = modal.locator('input[type="password"]').first
+
+        if await user_input.count() > 0:
+            await user_input.clear()
+            await user_input.type(username, delay=60)
+        else:
+            result["error"] = "Campo username não encontrado"
+            return result
+
+        if await pass_input.count() > 0:
+            await pass_input.clear()
+            await pass_input.type(password, delay=60)
+        else:
+            result["error"] = "Campo password não encontrado"
+            return result
+
+        await asyncio.sleep(0.5)
+
+        submit_btn = _login_page.locator(
+            'button[type="submit"], input[type="submit"], '
+            'button:has-text("Login"), button:has-text("Sign in"), '
+            'button:has-text("Entrar"), button:has-text("OK"), '
+            'button:has-text("Inloggen"), a:has-text("Login")'
+        ).first
         if await submit_btn.count() > 0:
             await submit_btn.click()
-        await asyncio.sleep(5)
-        
-        # Search for tires
-        medida_norm = normalize_medida(medida)
-        print(f"  [Inter-Sprint] Searching for: {medida_norm}")
-        
-        # Try to navigate to tyres section
-        tyres_link = page.locator('a:has-text("Tyres"), a:has-text("Banden"), a:has-text("Tires")').first
-        if await tyres_link.count() > 0:
-            await tyres_link.click()
-            await asyncio.sleep(3)
-        
-        search_input = page.locator('input[type="search"], input[placeholder*="search"], input[name*="search"], #search').first
-        if await search_input.count() > 0:
-            await search_input.fill(medida_norm)
-            await search_input.press('Enter')
-            await asyncio.sleep(5)
-        
-        # Extract products
-        products = await page.evaluate('''() => {
-            const products = [];
-            const items = document.querySelectorAll('.product, .item, .tire, [class*="product"], table tbody tr');
-            
-            items.forEach(item => {
-                const text = item.textContent || '';
-                const priceMatch = text.match(/€\s*(\d+[,\.]\d{2})|(\d+[,\.]\d{2})\s*€/);
-                
-                if (priceMatch) {
-                    const priceStr = priceMatch[1] || priceMatch[2];
-                    const price = parseFloat(priceStr.replace(',', '.'));
-                    
-                    const brandMatch = text.match(/(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL)/i);
-                    
-                    if (price > 15 && price < 500) {
-                        products.push({
-                            brand: brandMatch ? brandMatch[1].toUpperCase() : 'UNKNOWN',
-                            model: '',
-                            price: price
-                        });
-                    }
-                }
-            });
-            
-            return products;
-        }''')
-        
-        if products and len(products) > 0:
-            result["products"] = products
-            prices = [p['price'] for p in products]
-            result["price"] = min(prices)
-            result["all_prices"] = sorted(prices)[:10]
-            print(f"  [Inter-Sprint] Found {len(products)} products")
         else:
-            content = await page.content()
+            await pass_input.press("Enter")
+
+        await asyncio.sleep(5)
+        try:
+            await _login_page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
+        await asyncio.sleep(2)
+        print(f"  [InterSprint] Após login: {_login_page.url}")
+
+        # ── Navegar para página de pesquisa ───────────────────────────────
+        _work_page = _login_page
+        if 'customers.inter-sprint.nl' not in _work_page.url:
+            await _work_page.goto(
+                "https://customers.inter-sprint.nl/#ecommerce",
+                wait_until="domcontentloaded", timeout=60000
+            )
+            try:
+                await _work_page.wait_for_load_state("networkidle", timeout=20000)
+            except Exception:
+                pass
+            await asyncio.sleep(3)
+
+        if 'login' in _work_page.url.lower() and 'customers.inter-sprint' not in _work_page.url:
+            result["error"] = f"Login falhou — redireccão para: {_work_page.url}"
+            return result
+
+        # Clicar 'Procura por pneus' se necessário
+        procura_link = _work_page.locator(
+            'a:has-text("Procura por pneus"), button:has-text("Procura por pneus"), '
+            'a:has-text("procura por pneus"), span:has-text("Procura por pneus"), '
+            'a:has-text("Tyre search"), a:has-text("Zoek band"), '
+            'a[href*="pneus"], a[href*="tyres"]'
+        ).first
+        if await procura_link.count() > 0:
+            await procura_link.click()
+            await asyncio.sleep(3)
+            try:
+                await _work_page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
+            print(f"  [InterSprint] Clicado 'Procura por pneus'")
+
+        # ── Helpers de pesquisa ────────────────────────────────────────────
+        async def _limpar_campos():
+            """Limpar campos de pesquisa (entre tentativas)."""
+            for sel in [
+                'input[placeholder*="Artigo" i], input[id*="artigo" i], input[name*="artigo" i]',
+                'input[placeholder*="LI" i], input[id*="lisi" i], input[name*="lisi" i], '
+                'input[placeholder*="SI" i]',
+            ]:
+                el = _work_page.locator(sel).first
+                if await el.count() > 0:
+                    await el.clear()
+            # Reset Marca dropdown para primeira opção
+            marca_select = _work_page.locator(
+                'select[id*="marca" i], select[name*="marca" i], '
+                'select[id*="brand" i], select[name*="brand" i], select'
+            ).first
+            if await marca_select.count() > 0:
+                try:
+                    await marca_select.select_option(index=0)
+                except Exception:
+                    pass
+
+        async def _has_results() -> bool:
+            """Verificar se a pesquisa devolveu resultados."""
+            content = await _work_page.content()
+            rows_n = await _work_page.evaluate('''() => {
+                const tables = document.querySelectorAll("table");
+                let maxRows = 0;
+                for (const t of tables) {
+                    const rows = t.querySelectorAll("tbody tr");
+                    if (rows.length > maxRows) maxRows = rows.length;
+                }
+                return maxRows;
+            }''')
+            has_price = bool(re.search(r'\d+[,.]\d{2}\s*€|€\s*\d+', content))
+            return rows_n > 0 or has_price
+
+        async def _do_search(use_marca: bool, use_indice: bool) -> bool:
+            """Executar pesquisa. Retorna True se há resultados."""
+            artigo_input = _work_page.locator(
+                'input[placeholder*="Artigo" i], input[id*="artigo" i], '
+                'input[name*="artigo" i], input[placeholder*="article" i], '
+                'input[placeholder*="code" i]'
+            ).first
+            if await artigo_input.count() > 0:
+                await artigo_input.clear()
+                await artigo_input.fill(medida_norm)
+            else:
+                print(f"  [InterSprint] Campo 'Codigo do Artigo' não encontrado")
+                return False
+
+            # Marca dropdown
+            if use_marca and marca_upper:
+                marca_select = _work_page.locator(
+                    'select[id*="marca" i], select[name*="marca" i], '
+                    'select[id*="brand" i], select[name*="brand" i], select'
+                ).first
+                if await marca_select.count() > 0:
+                    try:
+                        options = await marca_select.evaluate(
+                            'el => Array.from(el.options).map(o => ({value: o.value, text: o.text}))'
+                        )
+                        matched = next(
+                            (o['value'] for o in options if marca_upper in o['text'].upper()),
+                            None
+                        )
+                        if matched is not None:
+                            await marca_select.select_option(value=str(matched))
+                            print(f"  [InterSprint] Marca '{marca_upper}' seleccionada")
+                        else:
+                            print(f"  [InterSprint] Marca '{marca_upper}' não encontrada no dropdown")
+                    except Exception as _e:
+                        print(f"  [InterSprint] Erro dropdown: {_e}")
+
+            # LI/SI
+            if use_indice and indice:
+                lisi_input = _work_page.locator(
+                    'input[placeholder*="LI" i], input[id*="lisi" i], '
+                    'input[name*="lisi" i], input[placeholder*="SI" i]'
+                ).first
+                if await lisi_input.count() > 0:
+                    await lisi_input.clear()
+                    await lisi_input.fill(indice)
+
+            # Clicar "Procura"
+            procura_btn = _work_page.locator(
+                'button:has-text("Procura"), input[value*="Procura" i], '
+                'button:has-text("Search"), button:has-text("Zoeken"), '
+                'button[type="submit"], input[type="submit"]'
+            ).first
+            if await procura_btn.count() > 0:
+                await procura_btn.click()
+            else:
+                await artigo_input.press("Enter")
+
+            await asyncio.sleep(5)
+            try:
+                await _work_page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
+            await asyncio.sleep(1)
+            return await _has_results()
+
+        print(f"  [InterSprint] Pesquisa: medida={medida_norm} marca={marca_upper} indice={indice}")
+
+        found = False
+        # Nível 1: medida + marca + indice
+        if marca_upper and indice:
+            if await _do_search(use_marca=True, use_indice=True):
+                print(f"  [InterSprint] Nível 1 (medida+marca+indice) com resultados")
+                found = True
+
+        # Nível 2: medida + marca
+        if not found and marca_upper:
+            await _limpar_campos()
+            if await _do_search(use_marca=True, use_indice=False):
+                print(f"  [InterSprint] Nível 2 (medida+marca) com resultados")
+                found = True
+
+        # Nível 3: só medida
+        if not found:
+            await _limpar_campos()
+            if await _do_search(use_marca=False, use_indice=False):
+                print(f"  [InterSprint] Nível 3 (só medida) com resultados")
+                found = True
+
+        if not found:
+            result["error"] = "Sem resultados para esta medida"
+            return result
+
+        # ── Extrair produtos do HTML ──────────────────────────────────────
+        content = await _work_page.content()
+
+        try:
+            with open('/tmp/intersprint_results.html', 'w', encoding='utf-8') as _f:
+                _f.write(content)
+        except Exception:
+            pass
+
+        products = _parse_intersprint_html(content)
+
+        if products:
+            result["products"] = products
+            result["price"] = min(p['price'] for p in products)
+            result["all_prices"] = sorted(p['price'] for p in products)[:10]
+            print(f"  [InterSprint] {len(products)} produtos, melhor €{result['price']}")
+            for p in products[:5]:
+                print(f"    {p['brand']} {p['medida']} {p.get('indice','')} {p.get('model','')} → €{p['price']}")
+        else:
             prices = extract_prices(content)
             if prices:
                 result["price"] = min(prices)
                 result["all_prices"] = sorted(prices)[:10]
+                print(f"  [InterSprint] Fallback: {len(prices)} preços, melhor €{result['price']}")
             else:
-                result["error"] = "No products found"
-                
+                result["error"] = "Produtos não encontrados"
+
     except Exception as e:
         result["error"] = str(e)
-        print(f"  [Inter-Sprint] Error: {e}")
-    
+        print(f"  [InterSprint] Error: {e}")
+
     return result
+
+
+def _parse_intersprint_html(html: str) -> list:
+    """Parse HTML da página de resultados InterSprint."""
+    import re as _re
+
+    products: list = []
+    seen: set = set()
+
+    price_re = _re.compile(r'€\s*(\d+[,.]\d{2})|(\d+[,.]\d{2})\s*€', _re.IGNORECASE)
+    brand_re = _re.compile(
+        r'\b(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|'
+        r'YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|'
+        r'GENERAL|UNIROYAL|GISLAVED|FULDA|SEMPERIT|SAVA|KLEBER|BF.?GOODRICH|'
+        r'COOPER|MINERVA|WESTLAKE|THREE-A|MASSIMO|LASSA|LANDSAIL|NANKANG|'
+        r'SAILUN|WINDFORCE|WANLI|DAVANTI|ATLAS|TORQUE|DOUBLESTAR|LINGLONG|'
+        r'ACCELERA|APLUS|GT.?RADIAL|CACHLAND|HIFLY|MILESTONE)\b',
+        _re.IGNORECASE
+    )
+    medida_re = _re.compile(r'\b(\d{3}/\d{2}R\d{2})\b', _re.IGNORECASE)
+    indice_re = _re.compile(r'\b(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\b')
+    tag_re    = _re.compile(r'<[^>]+>')
+    row_re    = _re.compile(r'<tr[^>]*>(.*?)</tr>', _re.IGNORECASE | _re.DOTALL)
+
+    for row_m in row_re.finditer(html):
+        row_text = tag_re.sub(' ', row_m.group(1))
+        row_text = _re.sub(r'\s+', ' ', row_text).strip()
+        if len(row_text) < 10:
+            continue
+
+        price_m = price_re.search(row_text)
+        if not price_m:
+            continue
+        try:
+            price = float((price_m.group(1) or price_m.group(2)).replace(',', '.'))
+        except ValueError:
+            continue
+        if not (15 < price < 800):
+            continue
+
+        brand_m  = brand_re.search(row_text)
+        medida_m = medida_re.search(row_text)
+        indice_m = indice_re.search(row_text)
+
+        brand      = brand_m.group(1).upper()  if brand_m  else 'UNKNOWN'
+        medida_val = medida_m.group(1).upper() if medida_m else ''
+        indice_val = indice_m.group(1).upper() if indice_m else ''
+
+        # Modelo = texto restante após remover campos conhecidos
+        remaining = price_re.sub('', brand_re.sub('', medida_re.sub('', row_text)))
+        remaining = _re.sub(r'[€\s,]+', ' ', remaining).strip()
+        model = remaining[:60].strip().upper()
+
+        key = f"{brand}|{medida_val}|{indice_val}|{price}"
+        if key not in seen:
+            seen.add(key)
+            products.append({
+                'brand':  brand,
+                'medida': medida_val,
+                'indice': indice_val,
+                'model':  model,
+                'price':  price,
+            })
+
+    print(f"  [InterSprint] _parse_intersprint_html: {len(products)} produtos")
+    return products
+
 
 async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str) -> dict:
     """Scrape Pneus Cruzeiro"""
@@ -2187,10 +2478,11 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
         supplier_name = supplier['name'].lower()
         print(f"\n--- Scraping {supplier['name']} ---")
         is_tuga = 'tugapneus' in supplier_name or 'tuga' in supplier_name
+        is_brand_aware = is_tuga or 'inter-sprint' in supplier_name or 'intersprint' in supplier_name
 
         # For TugaPneus: build (medida, marca, modelo) targets for brand-specific searches
         # For all others: use generic (medida, '', '') targets
-        if is_tuga and medida_items:
+        if is_brand_aware and medida_items:
             targets: list = []
             seen_targets: set = set()
             for medida in medidas:
@@ -2249,7 +2541,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     elif is_tuga:
                         result = await scrape_tugapneus(page, supplier['username'], supplier['password'], medida, marca, modelo)
                     elif 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:
-                        result = await scrape_inter_sprint(page, supplier['username'], supplier['password'], medida)
+                        result = await scrape_inter_sprint(page, supplier['username'], supplier['password'], medida, marca, modelo)
                     elif 'cruzeiro' in supplier_name:
                         result = await scrape_pneus_cruzeiro(page, supplier['username'], supplier['password'], medida)
                     else:
