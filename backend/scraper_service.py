@@ -1228,6 +1228,267 @@ class TugaPneusAdapter(ScraperBase):
             return None
 
 
+class InterSprintAdapter(ScraperBase):
+    """Adapter for Inter-Sprint B2B portal (inter-sprint.com / customers.inter-sprint.nl)."""
+
+    def normalize_medida(self, medida: str) -> str:
+        return medida.replace('/', '').replace('R', '').replace('r', '')
+
+    async def login(self) -> tuple[bool, str]:
+        """Login via inter-sprint.com → e-commerce popup."""
+        try:
+            logger.info(f"InterSprint: Navegando para {self.url_login}")
+            await self.page.goto(self.url_login, wait_until="domcontentloaded", timeout=60000)
+            try:
+                await self.page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+
+            # Clicar botão e-commerce
+            import re as _re
+            ecomm_btn = self.page.locator(
+                'a:has-text("e-commerce"), button:has-text("e-commerce"), '
+                'a:has-text("E-Commerce"), a:has-text("Ecommerce"), '
+                'a[href*="ecommerce"], a[href*="customers.inter-sprint"]'
+            ).first
+            if await ecomm_btn.count() == 0:
+                ecomm_btn = self.page.locator('a, button').filter(
+                    has_text=_re.compile(r'e.?commerce', _re.IGNORECASE)
+                ).first
+
+            _login_page = self.page
+
+            if await ecomm_btn.count() > 0:
+                try:
+                    async with self.page.context.expect_page() as new_pg:
+                        await ecomm_btn.click()
+                    _login_page = await new_pg.value
+                    await _login_page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    await asyncio.sleep(2)
+                except Exception:
+                    await asyncio.sleep(1)
+                    _login_page = self.page
+            else:
+                await self.page.goto(
+                    "https://customers.inter-sprint.nl/",
+                    wait_until="domcontentloaded", timeout=60000
+                )
+                await asyncio.sleep(2)
+
+            # Preencher credenciais
+            user_input = _login_page.locator(
+                'input[name="username"], input[name="user"], input[name="login"], '
+                'input[id*="user" i], input[type="text"]'
+            ).first
+            pass_input = _login_page.locator('input[type="password"]').first
+
+            if _login_page == self.page and await user_input.count() == 0:
+                modal = _login_page.locator(
+                    '[class*="modal"], [role="dialog"], .popup, [class*="popup"]'
+                ).first
+                if await modal.count() > 0:
+                    user_input = modal.locator(
+                        'input[name="username"], input[name="user"], input[type="text"]'
+                    ).first
+                    pass_input = modal.locator('input[type="password"]').first
+
+            if await user_input.count() == 0:
+                return False, "Campo username não encontrado"
+            if await pass_input.count() == 0:
+                return False, "Campo password não encontrado"
+
+            await user_input.clear()
+            await user_input.type(self.username, delay=60)
+            await pass_input.clear()
+            await pass_input.type(self.password, delay=60)
+            await asyncio.sleep(0.5)
+
+            submit_btn = _login_page.locator(
+                'button[type="submit"], input[type="submit"], '
+                'button:has-text("Login"), button:has-text("Sign in"), '
+                'button:has-text("Entrar"), button:has-text("OK"), button:has-text("Inloggen")'
+            ).first
+            if await submit_btn.count() > 0:
+                await submit_btn.click()
+            else:
+                await pass_input.press("Enter")
+
+            await asyncio.sleep(5)
+            try:
+                await _login_page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+
+            # Navegar para área de pesquisa
+            _work = _login_page
+            if 'customers.inter-sprint.nl' not in _work.url:
+                await _work.goto(
+                    self.url_search or "https://customers.inter-sprint.nl/#ecommerce",
+                    wait_until="domcontentloaded", timeout=60000
+                )
+                try:
+                    await _work.wait_for_load_state("networkidle", timeout=20000)
+                except Exception:
+                    pass
+                await asyncio.sleep(3)
+
+            if 'login' in _work.url.lower() and 'customers.inter-sprint' not in _work.url:
+                return False, f"Login falhou — redireccão para {_work.url}"
+
+            logger.info(f"InterSprint: Login com sucesso ({_work.url})")
+            return True, f"Login efectuado ({_work.url})"
+
+        except Exception as e:
+            logger.error(f"InterSprint login error: {e}")
+            return False, f"Login error: {e}"
+
+    async def search_product(self, medida: str, marca: str, modelo: str, indice: str) -> Optional[float]:
+        """Pesquisa progressiva InterSprint. Devolve melhor preço ou None."""
+        import re as _re
+        try:
+            medida_norm = self.normalize_medida(medida)
+            marca_upper = (marca or '').strip().upper()
+
+            # Garantir que estamos na página certa
+            if 'customers.inter-sprint.nl' not in self.page.url:
+                await self.page.goto(
+                    self.url_search or "https://customers.inter-sprint.nl/#ecommerce",
+                    wait_until="domcontentloaded", timeout=30000
+                )
+                await asyncio.sleep(3)
+
+            # Clicar "Procura por pneus" se necessário
+            procura_link = self.page.locator(
+                'a:has-text("Procura por pneus"), button:has-text("Procura por pneus"), '
+                'a:has-text("procura por pneus"), span:has-text("Procura por pneus"), '
+                'a:has-text("Tyre search"), a:has-text("Zoek band")'
+            ).first
+            if await procura_link.count() > 0:
+                await procura_link.click()
+                await asyncio.sleep(2)
+
+            async def _limpar():
+                for sel in [
+                    'input[placeholder*="Artigo" i], input[id*="artigo" i]',
+                    'input[placeholder*="LI" i], input[id*="lisi" i]',
+                ]:
+                    el = self.page.locator(sel).first
+                    if await el.count() > 0:
+                        await el.clear()
+                msel = self.page.locator(
+                    'select[id*="marca" i], select[name*="marca" i], select[id*="brand" i], select'
+                ).first
+                if await msel.count() > 0:
+                    try:
+                        await msel.select_option(index=0)
+                    except Exception:
+                        pass
+
+            async def _tem_resultados() -> bool:
+                content = await self.page.content()
+                rows_n = await self.page.evaluate('''() => {
+                    let max = 0;
+                    for (const t of document.querySelectorAll("table")) {
+                        const r = t.querySelectorAll("tbody tr").length;
+                        if (r > max) max = r;
+                    }
+                    return max;
+                }''')
+                return rows_n > 0 or bool(_re.search(r'\d+[,.]\d{2}\s*€|€\s*\d+', content))
+
+            async def _pesquisar(use_marca: bool, use_indice: bool) -> bool:
+                artigo = self.page.locator(
+                    'input[placeholder*="Artigo" i], input[id*="artigo" i], '
+                    'input[name*="artigo" i], input[placeholder*="article" i]'
+                ).first
+                if await artigo.count() == 0:
+                    return False
+                await artigo.clear()
+                await artigo.fill(medida_norm)
+
+                if use_marca and marca_upper:
+                    msel = self.page.locator(
+                        'select[id*="marca" i], select[name*="marca" i], '
+                        'select[id*="brand" i], select[name*="brand" i], select'
+                    ).first
+                    if await msel.count() > 0:
+                        try:
+                            opts = await msel.evaluate(
+                                'el => Array.from(el.options).map(o => ({value: o.value, text: o.text}))'
+                            )
+                            matched = next(
+                                (o['value'] for o in opts if marca_upper in o['text'].upper()), None
+                            )
+                            if matched is not None:
+                                await msel.select_option(value=str(matched))
+                        except Exception:
+                            pass
+
+                if use_indice and indice:
+                    lisi = self.page.locator(
+                        'input[placeholder*="LI" i], input[id*="lisi" i], '
+                        'input[name*="lisi" i], input[placeholder*="SI" i]'
+                    ).first
+                    if await lisi.count() > 0:
+                        await lisi.clear()
+                        await lisi.fill(indice)
+
+                btn = self.page.locator(
+                    'button:has-text("Procura"), input[value*="Procura" i], '
+                    'button:has-text("Search"), button[type="submit"], input[type="submit"]'
+                ).first
+                if await btn.count() > 0:
+                    await btn.click()
+                else:
+                    await artigo.press("Enter")
+
+                await asyncio.sleep(5)
+                try:
+                    await self.page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    pass
+                await asyncio.sleep(1)
+                return await _tem_resultados()
+
+            found = False
+            if marca_upper and indice:
+                if await _pesquisar(True, True):
+                    found = True
+            if not found and marca_upper:
+                await _limpar()
+                if await _pesquisar(True, False):
+                    found = True
+            if not found:
+                await _limpar()
+                if await _pesquisar(False, False):
+                    found = True
+
+            if not found:
+                logger.info("InterSprint: sem resultados")
+                return None
+
+            content = await self.page.content()
+            prices = []
+            for m in _re.finditer(r'€\s*(\d+[,.]\d{2})|(\d+[,.]\d{2})\s*€', content):
+                try:
+                    v = float((m.group(1) or m.group(2)).replace(',', '.'))
+                    if 15 < v < 800:
+                        prices.append(v)
+                except ValueError:
+                    pass
+            if prices:
+                best = min(prices)
+                logger.info(f"InterSprint: melhor preço €{best}")
+                return best
+            return None
+
+        except Exception as e:
+            logger.error(f"InterSprint search error: {e}")
+            return None
+
+
 class ScraperService:
     """Main scraper service that orchestrates scraping jobs"""
     
@@ -1295,6 +1556,17 @@ class ScraperService:
                 supplier_name=supplier['name'],
                 url_login=supplier.get('url_login') or 'https://www.tugapneus.pt/login',
                 url_search=supplier.get('url_search') or 'https://www.tugapneus.pt/produtos',
+                username=supplier['username'],
+                password=password,
+                selectors=supplier.get('selectors')
+            )
+        elif 'intersprint' in supplier_name_lower or 'inter-sprint' in supplier_name_lower or 'inter-sprint' in supplier_url_lower:
+            logger.info(f"Creating InterSprintAdapter for {supplier['name']}")
+            return InterSprintAdapter(
+                supplier_id=supplier_id,
+                supplier_name=supplier['name'],
+                url_login=supplier.get('url_login') or 'https://www.inter-sprint.com/',
+                url_search=supplier.get('url_search') or 'https://customers.inter-sprint.nl/#ecommerce',
                 username=supplier['username'],
                 password=password,
                 selectors=supplier.get('selectors')
