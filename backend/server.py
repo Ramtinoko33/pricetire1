@@ -556,14 +556,19 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
             #   esse par é incluído no scrape.
             # Isto garante que fornecedores novos (ex: InterSprint) são sempre raspados
             # mesmo que outros já tenham dados para a mesma (medida, marca).
-            all_supplier_names = {
+            # Apenas fornecedores ACTIVOS contam para o cache check
+            active_supplier_names = {
                 r['name'] for r in
-                await conn.fetch("SELECT name FROM suppliers")
+                await conn.fetch("SELECT name FROM suppliers WHERE is_active = TRUE")
             }
             rows_with_data = await conn.fetch(
-                """SELECT DISTINCT supplier_name, medida, UPPER(COALESCE(marca,'')) AS marca_up
-                   FROM scraped_prices
-                   WHERE medida = ANY($1) AND price IS NOT NULL AND marca IS NOT NULL AND marca != ''""",
+                """SELECT DISTINCT sp.supplier_name, sp.medida, UPPER(COALESCE(sp.marca,'')) AS marca_up
+                   FROM scraped_prices sp
+                   JOIN suppliers s ON s.name = sp.supplier_name
+                   WHERE sp.medida = ANY($1)
+                     AND sp.price IS NOT NULL
+                     AND sp.marca IS NOT NULL AND sp.marca != ''
+                     AND s.is_active = TRUE""",
                 unique_medidas,
             )
             # (supplier, medida, marca_up) que já têm dados
@@ -571,12 +576,12 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                 (r['supplier_name'], r['medida'], r['marca_up'])
                 for r in rows_with_data
             }
-            # Um par precisa de scrape se algum fornecedor não tem dados para ele
+            # Um par precisa de scrape se algum fornecedor ACTIVO não tem dados para ele
             pairs_sem_dados = []
             for m, b in unique_pairs:
                 missing = any(
                     (s, m, b) not in data_exists
-                    for s in all_supplier_names
+                    for s in active_supplier_names
                 )
                 if missing:
                     pairs_sem_dados.append((m, b))
@@ -616,8 +621,11 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
     async with pool.acquire() as conn:
         all_scraped = rows(await conn.fetch(
             """
-            SELECT * FROM scraped_prices
-            WHERE medida = ANY($1) AND price IS NOT NULL
+            SELECT sp.* FROM scraped_prices sp
+            JOIN suppliers s ON s.name = sp.supplier_name
+            WHERE sp.medida = ANY($1)
+              AND sp.price IS NOT NULL
+              AND s.is_active = TRUE
             """,
             unique_medidas,
         ))
