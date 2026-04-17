@@ -753,68 +753,60 @@ async def scrape_intersprint(username: str, password: str, medida: str,
                     has_text=re.compile(r'e.?commerce', re.IGNORECASE)
                 ).first
 
-            _login_page = page
-
+            # NÃO usar expect_page — modal abre inline na mesma página.
+            # Fallback directo para customers.inter-sprint.nl dá 401.
             if await ecomm_btn.count() > 0:
+                print(f"  [InterSprint] A clicar e-commerce (modal inline esperado)")
+                await ecomm_btn.click()
+            else:
                 try:
-                    async with context.expect_page(timeout=5000) as new_pg_info:
-                        await ecomm_btn.click()
-                    _login_page = await new_pg_info.value
-                    await _login_page.wait_for_load_state("domcontentloaded", timeout=15000)
-                    await asyncio.sleep(2)
+                    _dbg = await page.content()
+                    with open('/tmp/intersprint_pre_login.html', 'w', encoding='utf-8') as _f:
+                        _f.write(_dbg)
                 except Exception:
-                    await asyncio.sleep(2)
-                    _login_page = page
+                    pass
+                result["error"] = f"Botão e-commerce não encontrado (URL: {page.url})"
+                return result
 
-            # Aguardar campo password (modal pode demorar a aparecer)
+            # Aguardar modal aparecer (até 10 segundos)
             _pass_appeared = False
-            for _ in range(16):  # até 8 segundos
-                if await _login_page.locator('input[type="password"]').count() > 0:
+            for _ in range(20):
+                if await page.locator('input[type="password"]').count() > 0:
                     _pass_appeared = True
                     break
                 await asyncio.sleep(0.5)
 
-            # Fallback: login directo em customers.inter-sprint.nl
             if not _pass_appeared:
-                print(f"  [InterSprint] Password field não apareceu — fallback")
-                await _login_page.goto(
-                    "https://customers.inter-sprint.nl/",
-                    wait_until="domcontentloaded", timeout=60000
-                )
                 try:
-                    await _login_page.wait_for_load_state("networkidle", timeout=15000)
+                    _dbg = await page.content()
+                    with open('/tmp/intersprint_pre_login.html', 'w', encoding='utf-8') as _f:
+                        _f.write(_dbg)
                 except Exception:
                     pass
-                await asyncio.sleep(3)
-                for _ in range(10):
-                    if await _login_page.locator('input[type="password"]').count() > 0:
-                        _pass_appeared = True
-                        break
-                    await asyncio.sleep(0.5)
-
-            if not _pass_appeared:
-                result["error"] = f"Campo password não encontrado (URL: {_login_page.url})"
+                result["error"] = f"Modal de login não apareceu (URL: {page.url})"
                 return result
 
-            # Credenciais
-            user_input = _login_page.locator(
+            print(f"  [InterSprint] Modal de login visível")
+
+            # Credenciais no modal
+            user_input = page.locator(
                 'input[name="username"], input[name="user"], input[name="login"], '
                 'input[id*="user" i], input[id*="name" i], input[type="text"]'
             ).first
-            pass_input = _login_page.locator('input[type="password"]').first
+            pass_input = page.locator('input[type="password"]').first
 
             if await user_input.count() > 0:
                 await user_input.clear()
                 await user_input.type(username, delay=60)
             else:
-                result["error"] = "Campo username não encontrado"
+                result["error"] = "Campo username não encontrado no modal"
                 return result
 
             await pass_input.clear()
             await pass_input.type(password, delay=60)
 
             await asyncio.sleep(0.5)
-            submit_btn = _login_page.locator(
+            submit_btn = page.locator(
                 'button[type="submit"], input[type="submit"], '
                 'button:has-text("Login"), button:has-text("Sign in"), '
                 'button:has-text("Entrar"), button:has-text("OK"), button:has-text("Inloggen")'
@@ -826,12 +818,12 @@ async def scrape_intersprint(username: str, password: str, medida: str,
 
             await asyncio.sleep(5)
             try:
-                await _login_page.wait_for_load_state("networkidle", timeout=15000)
+                await page.wait_for_load_state("networkidle", timeout=15000)
             except Exception:
                 pass
             await asyncio.sleep(2)
 
-            _work_page = _login_page
+            _work_page = page
             if 'customers.inter-sprint.nl' not in _work_page.url:
                 await _work_page.goto(
                     "https://customers.inter-sprint.nl/#ecommerce",
