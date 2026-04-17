@@ -757,32 +757,51 @@ async def scrape_intersprint(username: str, password: str, medida: str,
 
             if await ecomm_btn.count() > 0:
                 try:
-                    async with context.expect_page() as new_pg_info:
+                    async with context.expect_page(timeout=5000) as new_pg_info:
                         await ecomm_btn.click()
                     _login_page = await new_pg_info.value
                     await _login_page.wait_for_load_state("domcontentloaded", timeout=15000)
                     await asyncio.sleep(2)
                 except Exception:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(2)
                     _login_page = page
-            else:
-                await page.goto("https://customers.inter-sprint.nl/", wait_until="domcontentloaded", timeout=60000)
-                await asyncio.sleep(2)
+
+            # Aguardar campo password (modal pode demorar a aparecer)
+            _pass_appeared = False
+            for _ in range(16):  # até 8 segundos
+                if await _login_page.locator('input[type="password"]').count() > 0:
+                    _pass_appeared = True
+                    break
+                await asyncio.sleep(0.5)
+
+            # Fallback: login directo em customers.inter-sprint.nl
+            if not _pass_appeared:
+                print(f"  [InterSprint] Password field não apareceu — fallback")
+                await _login_page.goto(
+                    "https://customers.inter-sprint.nl/",
+                    wait_until="domcontentloaded", timeout=60000
+                )
+                try:
+                    await _login_page.wait_for_load_state("networkidle", timeout=15000)
+                except Exception:
+                    pass
+                await asyncio.sleep(3)
+                for _ in range(10):
+                    if await _login_page.locator('input[type="password"]').count() > 0:
+                        _pass_appeared = True
+                        break
+                    await asyncio.sleep(0.5)
+
+            if not _pass_appeared:
+                result["error"] = f"Campo password não encontrado (URL: {_login_page.url})"
+                return result
 
             # Credenciais
             user_input = _login_page.locator(
                 'input[name="username"], input[name="user"], input[name="login"], '
-                'input[id*="user" i], input[type="text"]'
+                'input[id*="user" i], input[id*="name" i], input[type="text"]'
             ).first
             pass_input = _login_page.locator('input[type="password"]').first
-
-            if _login_page == page and await user_input.count() == 0:
-                modal = _login_page.locator(
-                    '[class*="modal"], [role="dialog"], .popup, [class*="popup"], [class*="login"]'
-                ).first
-                if await modal.count() > 0:
-                    user_input = modal.locator('input[name="username"], input[name="user"], input[type="text"]').first
-                    pass_input = modal.locator('input[type="password"]').first
 
             if await user_input.count() > 0:
                 await user_input.clear()
@@ -791,12 +810,8 @@ async def scrape_intersprint(username: str, password: str, medida: str,
                 result["error"] = "Campo username não encontrado"
                 return result
 
-            if await pass_input.count() > 0:
-                await pass_input.clear()
-                await pass_input.type(password, delay=60)
-            else:
-                result["error"] = "Campo password não encontrado"
-                return result
+            await pass_input.clear()
+            await pass_input.type(password, delay=60)
 
             await asyncio.sleep(0.5)
             submit_btn = _login_page.locator(
