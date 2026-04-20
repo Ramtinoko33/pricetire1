@@ -2435,6 +2435,7 @@ async def get_suppliers_from_db():
                 "username": d["username"],
                 "password": password,
                 "url_login": d.get("url_login", ""),
+                "url_search": d.get("url_search", ""),
             })
         return suppliers
     finally:
@@ -2510,7 +2511,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     if key not in seen_targets:
                         seen_targets.add(key)
                         targets.append(key)
-            print(f"  TugaPneus: {len(targets)} pesquisas marca+medida: {targets[:5]}")
+            print(f"  [{supplier['name']}] {len(targets)} pesquisas marca+medida: {targets[:5]}")
         else:
             targets = [(m, '', '') for m in medidas]
 

@@ -1503,18 +1503,59 @@ class InterSprintAdapter(ScraperBase):
                 return None
 
             content = await self.page.content()
-            prices = []
-            for m in _re.finditer(r'€\s*(\d+[,.]\d{2})|(\d+[,.]\d{2})\s*€', content):
+
+            # Parser de tabela — mesma lógica de isolated_scraper._parse_intersprint_isolated
+            price_re = _re.compile(r'€\s*(\d+[,.]\d{2})|(\d+[,.]\d{2})\s*€', _re.IGNORECASE)
+            brand_re = _re.compile(
+                r'\b(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|'
+                r'YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|'
+                r'GENERAL|UNIROYAL|GISLAVED|FULDA|SEMPERIT|SAVA|KLEBER|BF.?GOODRICH|'
+                r'COOPER|MINERVA|WESTLAKE|THREE-A|MASSIMO|LASSA|LANDSAIL|NANKANG|'
+                r'SAILUN|WINDFORCE|WANLI|DAVANTI|ATLAS|TORQUE|DOUBLESTAR|LINGLONG|'
+                r'ACCELERA|APLUS|GT.?RADIAL|CACHLAND|HIFLY|MILESTONE)\b',
+                _re.IGNORECASE,
+            )
+            tag_re = _re.compile(r'<[^>]+>')
+            row_re = _re.compile(r'<tr[^>]*>(.*?)</tr>', _re.IGNORECASE | _re.DOTALL)
+
+            product_prices = []
+            for row_m in row_re.finditer(content):
+                row_text = _re.sub(r'\s+', ' ', tag_re.sub(' ', row_m.group(1))).strip()
+                if len(row_text) < 10:
+                    continue
+                pm = price_re.search(row_text)
+                if not pm:
+                    continue
+                try:
+                    v = float((pm.group(1) or pm.group(2)).replace(',', '.'))
+                except ValueError:
+                    continue
+                if not (15 < v < 800):
+                    continue
+                bm = brand_re.search(row_text)
+                brand = bm.group(1).upper() if bm else 'UNKNOWN'
+                product_prices.append(v)
+                logger.debug(f"InterSprint produto: {brand} €{v}")
+
+            if product_prices:
+                best = min(product_prices)
+                logger.info(f"InterSprint: {len(product_prices)} produtos, melhor €{best}")
+                return best
+
+            # Fallback: regex global de preços (menos preciso)
+            fallback_prices = []
+            for m in price_re.finditer(content):
                 try:
                     v = float((m.group(1) or m.group(2)).replace(',', '.'))
                     if 15 < v < 800:
-                        prices.append(v)
+                        fallback_prices.append(v)
                 except ValueError:
                     pass
-            if prices:
-                best = min(prices)
-                logger.info(f"InterSprint: melhor preço €{best}")
+            if fallback_prices:
+                best = min(fallback_prices)
+                logger.info(f"InterSprint: fallback preço €{best}")
                 return best
+
             return None
 
         except Exception as e:
