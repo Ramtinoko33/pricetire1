@@ -1940,13 +1940,12 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
 
 async def scrape_inter_sprint(page, username: str, password: str, medida: str,
                                marca: str = '', modelo: str = '', indice: str = '') -> dict:
-    """Scrape Inter-Sprint B2B portal (inter-sprint.com / customers.inter-sprint.nl).
+    """Scrape Inter-Sprint B2B portal (customers.inter-sprint.nl).
 
-    Login:
-      1. https://www.inter-sprint.com/ → clicar 'e-commerce'
-      2. Popup/modal com username+password → submeter
-      3. Navegar para https://customers.inter-sprint.nl/#ecommerce
-      4. Clicar 'Procura por pneus'
+    O portal usa HTTP Basic Auth — o contexto Playwright DEVE ter http_credentials
+    definidas antes de chamar esta função (ver run_scraper loop).
+
+    Após Basic Auth, se existir form login HTML, preenche-o.
 
     Pesquisa progressiva:
       Nível 1: Codigo do Artigo (medida) + Marca (dropdown) + LI/SI (indice)
@@ -1965,129 +1964,62 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
     marca_upper = (marca or '').strip().upper()
 
     try:
-        print(f"  [InterSprint] Login: https://www.inter-sprint.com/")
-        await page.goto("https://www.inter-sprint.com/", wait_until="domcontentloaded", timeout=60000)
+        _search_url = "https://customers.inter-sprint.nl/#ecommerce"
+        print(f"  [InterSprint] Navegando para {_search_url} (Basic Auth via contexto)")
+        await page.goto(_search_url, wait_until="domcontentloaded", timeout=60000)
         try:
             await page.wait_for_load_state("networkidle", timeout=15000)
         except Exception:
             pass
         await asyncio.sleep(2)
 
-        # ── Clicar botão e-commerce ───────────────────────────────────────
-        # O link tem target="_blank" → pode abrir nova aba.
-        # Se invisível (dentro de menu) → force click via JS.
-        # Se não abrir nova aba nem aparecer modal → ir directamente para URL de pesquisa.
-        _search_url = "https://customers.inter-sprint.nl/#ecommerce"
-
-        # NÃO usar a[href*="customers.inter-sprint"] — esse é o link directo que dá 401.
-        # O botão que abre o popup de login é identificado apenas pelo texto.
-        ecomm_btn = page.locator(
-            'a:has-text("e-commerce"), button:has-text("e-commerce"), '
-            'a:has-text("E-Commerce"), a:has-text("Ecommerce")'
-        ).first
-        if await ecomm_btn.count() == 0:
-            ecomm_btn = page.locator('a, button').filter(
-                has_text=re.compile(r'^e.?commerce$', re.IGNORECASE)
-            ).first
-
-        _work_page = None
-
-        if await ecomm_btn.count() > 0:
-            print(f"  [InterSprint] Botão e-commerce encontrado — force click (pode ser invisível)")
-            try:
-                async with page.context.expect_page(timeout=6000) as new_pg_info:
-                    await ecomm_btn.click(force=True)
-                _work_page = await new_pg_info.value
-                await _work_page.wait_for_load_state("domcontentloaded", timeout=20000)
-                await asyncio.sleep(2)
-                print(f"  [InterSprint] Nova aba: {_work_page.url}")
-            except Exception:
-                await asyncio.sleep(2)
-                if await page.locator('input[type="password"]').count() > 0:
-                    _work_page = page
-                    print(f"  [InterSprint] Modal inline detectado")
-
-        # ── Fallback: navegar directamente para URL de pesquisa ───────────
-        if _work_page is None:
-            print(f"  [InterSprint] Sem popup/modal — a navegar directamente para {_search_url}")
-            await page.goto(_search_url, wait_until="domcontentloaded", timeout=60000)
-            try:
-                await page.wait_for_load_state("networkidle", timeout=20000)
-            except Exception:
-                pass
-            await asyncio.sleep(3)
-            _work_page = page
-
-        # ── Aguardar formulário de login (até 10 segundos) ───────────────
-        _pass_appeared = False
-        for _ in range(20):
-            if await _work_page.locator('input[type="password"]').count() > 0:
-                _pass_appeared = True
-                break
-            await asyncio.sleep(0.5)
-
-        if not _pass_appeared:
-            try:
-                _dbg = await _work_page.content()
-                with open('/tmp/intersprint_pre_login.html', 'w', encoding='utf-8') as _f:
-                    _f.write(_dbg)
-            except Exception:
-                pass
-            result["error"] = f"Formulário de login não encontrado (URL: {_work_page.url})"
-            return result
-
-        print(f"  [InterSprint] Formulário de login visível ({_work_page.url})")
-
-        # ── Preencher credenciais ─────────────────────────────────────────
-        user_input = _work_page.locator(
-            'input[name="username"], input[name="user"], input[name="login"], '
-            'input[id*="user" i], input[id*="name" i], input[type="text"]'
-        ).first
-        pass_input = _work_page.locator('input[type="password"]').first
-
-        if await user_input.count() > 0:
-            await user_input.clear()
-            await user_input.type(username, delay=60)
-        else:
-            result["error"] = "Campo username não encontrado"
-            return result
-
-        await pass_input.clear()
-        await pass_input.type(password, delay=60)
-
-        await asyncio.sleep(0.5)
-
-        submit_btn = _work_page.locator(
-            'button[type="submit"], input[type="submit"], '
-            'button:has-text("Login"), button:has-text("Sign in"), '
-            'button:has-text("Entrar"), button:has-text("OK"), '
-            'button:has-text("Inloggen"), a:has-text("Login")'
-        ).first
-        if await submit_btn.count() > 0:
-            await submit_btn.click()
-        else:
-            await pass_input.press("Enter")
-
-        await asyncio.sleep(5)
+        # Guardar HTML para debug independentemente do resultado
         try:
-            await _work_page.wait_for_load_state("networkidle", timeout=15000)
+            with open('/tmp/intersprint_pre_login.html', 'w', encoding='utf-8') as _f:
+                _f.write(await page.content())
         except Exception:
             pass
-        await asyncio.sleep(2)
-        print(f"  [InterSprint] Após login: {_work_page.url}")
 
-        # ── Garantir que estamos na área de pesquisa ──────────────────────
-        if 'customers.inter-sprint.nl' not in _work_page.url:
-            await _work_page.goto(_search_url, wait_until="domcontentloaded", timeout=60000)
+        # Verificar se Basic Auth falhou (401)
+        _title = await page.title()
+        if '401' in _title or 'unauthorized' in _title.lower():
+            result["error"] = f"HTTP Basic Auth falhou — verificar credenciais (título: {_title})"
+            return result
+
+        print(f"  [InterSprint] Após Basic Auth: {page.url} (título: {_title})")
+
+        # Caso o portal tenha também um formulário HTML de login (além de Basic Auth)
+        if await page.locator('input[type="password"]').count() > 0:
+            print(f"  [InterSprint] Form login HTML detectado — a preencher")
+            user_input = page.locator(
+                'input[name="username"], input[name="user"], input[name="login"], '
+                'input[id*="user" i], input[id*="name" i], input[type="text"]'
+            ).first
+            pass_input = page.locator('input[type="password"]').first
+            if await user_input.count() > 0:
+                await user_input.clear()
+                await user_input.type(username, delay=60)
+            await pass_input.clear()
+            await pass_input.type(password, delay=60)
+            await asyncio.sleep(0.5)
+            submit_btn = page.locator(
+                'button[type="submit"], input[type="submit"], '
+                'button:has-text("Login"), button:has-text("Inloggen"), '
+                'button:has-text("Entrar"), button:has-text("OK")'
+            ).first
+            if await submit_btn.count() > 0:
+                await submit_btn.click()
+            else:
+                await pass_input.press("Enter")
+            await asyncio.sleep(5)
             try:
-                await _work_page.wait_for_load_state("networkidle", timeout=20000)
+                await page.wait_for_load_state("networkidle", timeout=15000)
             except Exception:
                 pass
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
+            print(f"  [InterSprint] Após form login: {page.url}")
 
-        if 'login' in _work_page.url.lower() and 'customers.inter-sprint' not in _work_page.url:
-            result["error"] = f"Login falhou — redireccão para: {_work_page.url}"
-            return result
+        _work_page = page
 
         # Clicar 'Procura por pneus' se necessário
         procura_link = _work_page.locator(
@@ -2543,12 +2475,19 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     headless=True,
                     args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
                 )
-                
-                context = await browser.new_context(
+
+                # InterSprint usa HTTP Basic Auth — definir credenciais no contexto
+                _ctx_kwargs = dict(
                     user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                     viewport={'width': 1920, 'height': 1080},
                     locale='pt-PT',
                 )
+                if 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:
+                    _ctx_kwargs['http_credentials'] = {
+                        'username': supplier['username'],
+                        'password': supplier['password'],
+                    }
+                context = await browser.new_context(**_ctx_kwargs)
                 
                 page = await context.new_page()
                 await page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
