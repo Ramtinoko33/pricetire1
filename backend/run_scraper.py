@@ -2021,8 +2021,24 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
 
         _work_page = page
 
+        # ── Detectar frame principal (portal usa <frameset>) ──────────────
+        # Todo o conteúdo (pesquisa, resultados) está dentro do frame "mainFrame"
+        # com src="/scripts/cgirpc32.dll/...". Usar o frame para locators.
+        await asyncio.sleep(3)
+        _ctx = page  # fallback: usar página se não houver frame
+        _named_frame = page.frame(name="mainFrame")
+        if _named_frame:
+            _ctx = _named_frame
+            print(f"  [InterSprint] Frame 'mainFrame' detectado: {_named_frame.url}")
+        else:
+            for _fr in page.frames:
+                if _fr.url and ('cgirpc32' in _fr.url or _fr is not page.main_frame):
+                    _ctx = _fr
+                    print(f"  [InterSprint] Frame detectado: {_fr.url}")
+                    break
+
         # Clicar 'Procura por pneus' se necessário
-        procura_link = _work_page.locator(
+        procura_link = _ctx.locator(
             'a:has-text("Procura por pneus"), button:has-text("Procura por pneus"), '
             'a:has-text("procura por pneus"), span:has-text("Procura por pneus"), '
             'a:has-text("Tyre search"), a:has-text("Zoek band"), '
@@ -2032,7 +2048,7 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
             await procura_link.click()
             await asyncio.sleep(3)
             try:
-                await _work_page.wait_for_load_state("networkidle", timeout=10000)
+                await page.wait_for_load_state("networkidle", timeout=10000)
             except Exception:
                 pass
             print(f"  [InterSprint] Clicado 'Procura por pneus'")
@@ -2045,11 +2061,11 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
                 'input[placeholder*="LI" i], input[id*="lisi" i], input[name*="lisi" i], '
                 'input[placeholder*="SI" i]',
             ]:
-                el = _work_page.locator(sel).first
+                el = _ctx.locator(sel).first
                 if await el.count() > 0:
                     await el.clear()
             # Reset Marca dropdown para primeira opção
-            marca_select = _work_page.locator(
+            marca_select = _ctx.locator(
                 'select[id*="marca" i], select[name*="marca" i], '
                 'select[id*="brand" i], select[name*="brand" i], select'
             ).first
@@ -2061,8 +2077,8 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
 
         async def _has_results() -> bool:
             """Verificar se a pesquisa devolveu resultados."""
-            content = await _work_page.content()
-            rows_n = await _work_page.evaluate('''() => {
+            content = await _ctx.content()
+            rows_n = await _ctx.evaluate('''() => {
                 const tables = document.querySelectorAll("table");
                 let maxRows = 0;
                 for (const t of tables) {
@@ -2076,7 +2092,7 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
 
         async def _do_search(use_marca: bool, use_indice: bool) -> bool:
             """Executar pesquisa. Retorna True se há resultados."""
-            artigo_input = _work_page.locator(
+            artigo_input = _ctx.locator(
                 'input[placeholder*="Artigo" i], input[id*="artigo" i], '
                 'input[name*="artigo" i], input[placeholder*="article" i], '
                 'input[placeholder*="code" i]'
@@ -2090,7 +2106,7 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
 
             # Marca dropdown
             if use_marca and marca_upper:
-                marca_select = _work_page.locator(
+                marca_select = _ctx.locator(
                     'select[id*="marca" i], select[name*="marca" i], '
                     'select[id*="brand" i], select[name*="brand" i], select'
                 ).first
@@ -2113,7 +2129,7 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
 
             # LI/SI
             if use_indice and indice:
-                lisi_input = _work_page.locator(
+                lisi_input = _ctx.locator(
                     'input[placeholder*="LI" i], input[id*="lisi" i], '
                     'input[name*="lisi" i], input[placeholder*="SI" i]'
                 ).first
@@ -2122,7 +2138,7 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
                     await lisi_input.fill(indice)
 
             # Clicar "Procura"
-            procura_btn = _work_page.locator(
+            procura_btn = _ctx.locator(
                 'button:has-text("Procura"), input[value*="Procura" i], '
                 'button:has-text("Search"), button:has-text("Zoeken"), '
                 'button[type="submit"], input[type="submit"]'
@@ -2134,7 +2150,7 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
 
             await asyncio.sleep(5)
             try:
-                await _work_page.wait_for_load_state("networkidle", timeout=10000)
+                await page.wait_for_load_state("networkidle", timeout=10000)
             except Exception:
                 pass
             await asyncio.sleep(1)
@@ -2168,7 +2184,7 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
             return result
 
         # ── Extrair produtos do HTML ──────────────────────────────────────
-        content = await _work_page.content()
+        content = await _ctx.content()
 
         try:
             # Compatível com /api/scraper/debug-html?supplier=intersprint&file=search_page
