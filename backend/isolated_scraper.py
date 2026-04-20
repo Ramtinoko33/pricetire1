@@ -723,6 +723,8 @@ async def scrape_intersprint(username: str, password: str, medida: str,
     }
 
     medida_norm = normalize_medida(medida)
+    _m = re.match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
+    medida_fmt = f"{_m.group(1)}/{_m.group(2)}R{_m.group(3)}" if _m else medida_norm
     marca_upper = (marca or '').strip().upper()
 
     async with async_playwright() as p:
@@ -824,10 +826,26 @@ async def scrape_intersprint(username: str, password: str, medida: str,
             except Exception:
                 pass
 
+            # Registar todos os inputs do frame para diagnóstico
+            try:
+                _all_inputs = await _ctx.evaluate('''() =>
+                    Array.from(document.querySelectorAll("input,select,textarea")).map(el => ({
+                        tag: el.tagName, type: el.type, name: el.name,
+                        id: el.id, placeholder: el.placeholder,
+                        value: el.value.substring(0, 40)
+                    }))
+                ''')
+                print(f"  [InterSprint] Inputs no frame ({len(_all_inputs)}): {_all_inputs[:15]}")
+            except Exception as _e:
+                print(f"  [InterSprint] Não foi possível listar inputs: {_e}")
+
             procura_link = _ctx.locator(
                 'a:has-text("Procura por pneus"), button:has-text("Procura por pneus"), '
                 'a:has-text("procura por pneus"), span:has-text("Procura por pneus"), '
-                'a:has-text("Tyre search"), a:has-text("Zoek band")'
+                'a:has-text("Tyre search"), a:has-text("Zoek band"), '
+                'a:has-text("Banden zoeken"), a:has-text("Bandenzoeker"), '
+                'a:has-text("Banden"), a:has-text("Tyres"), '
+                'a[href*="pneus"], a[href*="tyres"], a[href*="band"]'
             ).first
             if await procura_link.count() > 0:
                 await procura_link.click()
@@ -867,16 +885,36 @@ async def scrape_intersprint(username: str, password: str, medida: str,
                 }''')
                 return rows_n > 0 or bool(re.search(r'\d+[,.]\d{2}\s*€|€\s*\d+', content))
 
-            async def _pesquisar(use_marca: bool, use_indice: bool) -> bool:
+            async def _pesquisar(use_marca: bool, use_indice: bool, medida_str: str = None) -> bool:
+                _val = medida_str or medida_norm
                 artigo = _ctx.locator(
+                    # Dutch variants
+                    'input[id*="artikel" i], input[name*="artikel" i], input[placeholder*="artikel" i], '
+                    'input[id*="artnr" i], input[name*="artnr" i], '
+                    'input[id*="zoek" i], input[name*="zoek" i], '
+                    'input[id*="maat" i], input[name*="maat" i], '
+                    # Portuguese / generic
                     'input[placeholder*="Artigo" i], input[id*="artigo" i], '
-                    'input[name*="artigo" i], input[placeholder*="article" i]'
+                    'input[name*="artigo" i], input[placeholder*="article" i], '
+                    'input[id*="article" i], input[name*="article" i], '
+                    'input[placeholder*="code" i], input[id*="code" i], input[name*="code" i], '
+                    'input[placeholder*="search" i], input[name*="search" i]'
                 ).first
                 if await artigo.count() > 0:
                     await artigo.clear()
-                    await artigo.fill(medida_norm)
+                    await artigo.fill(_val)
                 else:
-                    return False
+                    # Fallback: first visible text input
+                    _fallback = _ctx.locator(
+                        'input[type="text"]:visible, input:not([type]):visible'
+                    ).first
+                    if await _fallback.count() > 0:
+                        print(f"  [InterSprint] Campo artigo não encontrado; a usar 1º input text como fallback")
+                        await _fallback.clear()
+                        await _fallback.fill(_val)
+                        artigo = _fallback
+                    else:
+                        return False
 
                 if use_marca and marca_upper:
                     msel = _ctx.locator(
@@ -907,7 +945,10 @@ async def scrape_intersprint(username: str, password: str, medida: str,
 
                 btn = _ctx.locator(
                     'button:has-text("Procura"), input[value*="Procura" i], '
-                    'button:has-text("Search"), button[type="submit"], input[type="submit"]'
+                    'button:has-text("Search"), input[value*="Search" i], '
+                    'button:has-text("Zoeken"), input[value*="Zoeken" i], '
+                    'button:has-text("Zoek"), input[value*="Zoek" i], '
+                    'button[type="submit"], input[type="submit"]'
                 ).first
                 if await btn.count() > 0:
                     await btn.click()
@@ -922,6 +963,7 @@ async def scrape_intersprint(username: str, password: str, medida: str,
                 await asyncio.sleep(1)
                 return await _tem_resultados()
 
+            print(f"  [InterSprint] Pesquisa: medida_norm={medida_norm} medida_fmt={medida_fmt} marca={marca_upper} indice={indice}")
             found = False
             if marca_upper and indice:
                 if await _pesquisar(True, True):
@@ -933,6 +975,11 @@ async def scrape_intersprint(username: str, password: str, medida: str,
             if not found:
                 await _limpar()
                 if await _pesquisar(False, False):
+                    found = True
+            # Nível 4: formato 205/55R16 se dígitos não funcionaram
+            if not found and medida_fmt != medida_norm:
+                await _limpar()
+                if await _pesquisar(False, False, medida_str=medida_fmt):
                     found = True
 
             if not found:

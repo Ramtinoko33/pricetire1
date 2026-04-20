@@ -1961,6 +1961,9 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
     }
 
     medida_norm = normalize_medida(medida)   # ex: 2055516
+    # Formato alternativo: 205/55R16 (para portais que não aceitam dígitos só)
+    _m = re.match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
+    medida_fmt = f"{_m.group(1)}/{_m.group(2)}R{_m.group(3)}" if _m else medida_norm
     marca_upper = (marca or '').strip().upper()
 
     try:
@@ -2048,12 +2051,27 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
         except Exception:
             pass
 
+        # Registar todos os inputs do frame para diagnóstico
+        try:
+            _all_inputs = await _ctx.evaluate('''() =>
+                Array.from(document.querySelectorAll("input,select,textarea")).map(el => ({
+                    tag: el.tagName, type: el.type, name: el.name,
+                    id: el.id, placeholder: el.placeholder,
+                    value: el.value.substring(0, 40)
+                }))
+            ''')
+            print(f"  [InterSprint] Inputs no frame ({len(_all_inputs)}): {_all_inputs[:15]}")
+        except Exception as _e:
+            print(f"  [InterSprint] Não foi possível listar inputs: {_e}")
+
         # Clicar 'Procura por pneus' se necessário
         procura_link = _ctx.locator(
             'a:has-text("Procura por pneus"), button:has-text("Procura por pneus"), '
             'a:has-text("procura por pneus"), span:has-text("Procura por pneus"), '
             'a:has-text("Tyre search"), a:has-text("Zoek band"), '
-            'a[href*="pneus"], a[href*="tyres"]'
+            'a:has-text("Banden zoeken"), a:has-text("Bandenzoeker"), '
+            'a:has-text("Banden"), a:has-text("Tyres"), '
+            'a[href*="pneus"], a[href*="tyres"], a[href*="band"]'
         ).first
         if await procura_link.count() > 0:
             await procura_link.click()
@@ -2101,19 +2119,39 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
             has_price = bool(re.search(r'\d+[,.]\d{2}\s*€|€\s*\d+', content))
             return rows_n > 0 or has_price
 
-        async def _do_search(use_marca: bool, use_indice: bool) -> bool:
+        async def _do_search(use_marca: bool, use_indice: bool, medida_str: str = None) -> bool:
             """Executar pesquisa. Retorna True se há resultados."""
+            _val = medida_str or medida_norm
             artigo_input = _ctx.locator(
+                # Dutch variants
+                'input[id*="artikel" i], input[name*="artikel" i], input[placeholder*="artikel" i], '
+                'input[id*="artnr" i], input[name*="artnr" i], '
+                'input[id*="zoek" i], input[name*="zoek" i], '
+                'input[id*="maat" i], input[name*="maat" i], '
+                # Portuguese / generic
                 'input[placeholder*="Artigo" i], input[id*="artigo" i], '
                 'input[name*="artigo" i], input[placeholder*="article" i], '
-                'input[placeholder*="code" i]'
+                'input[id*="article" i], input[name*="article" i], '
+                'input[placeholder*="code" i], input[id*="code" i], input[name*="code" i], '
+                'input[placeholder*="search" i], input[name*="search" i]'
             ).first
             if await artigo_input.count() > 0:
                 await artigo_input.clear()
-                await artigo_input.fill(medida_norm)
+                await artigo_input.fill(_val)
             else:
-                print(f"  [InterSprint] Campo 'Codigo do Artigo' não encontrado")
-                return False
+                # Fallback: first visible text input
+                _fallback = _ctx.locator(
+                    'input[type="text"]:visible, input:not([type]):visible, '
+                    'input[type=""]:visible'
+                ).first
+                if await _fallback.count() > 0:
+                    print(f"  [InterSprint] Campo artigo não encontrado; a usar 1º input text como fallback")
+                    await _fallback.clear()
+                    await _fallback.fill(_val)
+                    artigo_input = _fallback
+                else:
+                    print(f"  [InterSprint] Campo artigo não encontrado (sem fallback)")
+                    return False
 
             # Marca dropdown
             if use_marca and marca_upper:
@@ -2151,7 +2189,9 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
             # Clicar "Procura"
             procura_btn = _ctx.locator(
                 'button:has-text("Procura"), input[value*="Procura" i], '
-                'button:has-text("Search"), button:has-text("Zoeken"), '
+                'button:has-text("Search"), input[value*="Search" i], '
+                'button:has-text("Zoeken"), input[value*="Zoeken" i], '
+                'button:has-text("Zoek"), input[value*="Zoek" i], '
                 'button[type="submit"], input[type="submit"]'
             ).first
             if await procura_btn.count() > 0:
@@ -2167,7 +2207,7 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
             await asyncio.sleep(1)
             return await _has_results()
 
-        print(f"  [InterSprint] Pesquisa: medida={medida_norm} marca={marca_upper} indice={indice}")
+        print(f"  [InterSprint] Pesquisa: medida_norm={medida_norm} medida_fmt={medida_fmt} marca={marca_upper} indice={indice}")
 
         found = False
         # Nível 1: medida + marca + indice
@@ -2183,11 +2223,18 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
                 print(f"  [InterSprint] Nível 2 (medida+marca) com resultados")
                 found = True
 
-        # Nível 3: só medida
+        # Nível 3: só medida (formato dígitos)
         if not found:
             await _limpar_campos()
             if await _do_search(use_marca=False, use_indice=False):
-                print(f"  [InterSprint] Nível 3 (só medida) com resultados")
+                print(f"  [InterSprint] Nível 3 (só medida dígitos) com resultados")
+                found = True
+
+        # Nível 4: só medida (formato 205/55R16) — portais que não aceitam só dígitos
+        if not found and medida_fmt != medida_norm:
+            await _limpar_campos()
+            if await _do_search(use_marca=False, use_indice=False, medida_str=medida_fmt):
+                print(f"  [InterSprint] Nível 4 (só medida formatada {medida_fmt}) com resultados")
                 found = True
 
         if not found:
