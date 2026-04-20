@@ -2081,6 +2081,14 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
             except Exception:
                 pass
             print(f"  [InterSprint] Clicado 'Procura por pneus'")
+            # Guardar HTML após navegação para página de pesquisa
+            try:
+                with open('/tmp/intersprint_after_nav.html', 'w', encoding='utf-8') as _f:
+                    _f.write(await _ctx.content())
+            except Exception:
+                pass
+        else:
+            print(f"  [InterSprint] Link 'Procura por pneus' não encontrado — usar snelzoek")
 
         # ── Helpers de pesquisa ────────────────────────────────────────────
         async def _limpar_campos():
@@ -2194,7 +2202,16 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
             except Exception:
                 pass
             await asyncio.sleep(1)
-            return await _has_results()
+            has = await _has_results()
+            # Guardar HTML sempre (mesmo sem resultados) para diagnóstico
+            try:
+                _dbg = await _ctx.content()
+                with open('/tmp/intersprint_search_page.html', 'w', encoding='utf-8') as _f:
+                    _f.write(_dbg)
+                print(f"  [InterSprint] _do_search: frame URL={_ctx.url} has_results={has} html_len={len(_dbg)}")
+            except Exception as _e:
+                print(f"  [InterSprint] _do_search debug save failed: {_e}")
+            return has
 
         print(f"  [InterSprint] Pesquisa: medida_norm={medida_norm} medida_fmt={medida_fmt} marca={marca_upper} indice={indice}")
 
