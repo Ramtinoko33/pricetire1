@@ -338,6 +338,7 @@ const Comparar = () => {
                       <TableHead>Medida</TableHead>
                       <TableHead>Marca</TableHead>
                       <TableHead>Modelo</TableHead>
+                      <TableHead>Índice</TableHead>
                       <TableHead>Modelo Encontrado</TableHead>
                       <TableHead className="text-right">Meu Preço</TableHead>
                       <TableHead className="text-right">Melhor Preço</TableHead>
@@ -387,6 +388,9 @@ const Comparar = () => {
                           </TableCell>
                           <TableCell className="max-w-[120px] truncate text-slate-600" title={item.modelo}>
                             {item.modelo || '-'}
+                          </TableCell>
+                          <TableCell className="font-mono text-slate-600">
+                            {item.indice || '-'}
                           </TableCell>
                           <TableCell className="max-w-[150px] truncate font-medium" title={item.modelo_encontrado}>
                             {item.modelo_encontrado || '-'}
