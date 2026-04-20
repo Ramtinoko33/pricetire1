@@ -1345,8 +1345,22 @@ class InterSprintAdapter(ScraperBase):
                 )
                 await asyncio.sleep(3)
 
+            # Detectar frame principal (portal usa <frameset>)
+            await asyncio.sleep(3)
+            _ctx = self.page  # fallback
+            _named = self.page.frame(name="mainFrame")
+            if _named:
+                _ctx = _named
+                logger.info(f"InterSprint search: frame 'mainFrame' detectado: {_named.url}")
+            else:
+                for _fr in self.page.frames:
+                    if _fr.url and 'cgirpc32' in _fr.url:
+                        _ctx = _fr
+                        logger.info(f"InterSprint search: frame detectado: {_fr.url}")
+                        break
+
             # Clicar "Procura por pneus" se necessário
-            procura_link = self.page.locator(
+            procura_link = _ctx.locator(
                 'a:has-text("Procura por pneus"), button:has-text("Procura por pneus"), '
                 'a:has-text("procura por pneus"), span:has-text("Procura por pneus"), '
                 'a:has-text("Tyre search"), a:has-text("Zoek band")'
@@ -1360,10 +1374,10 @@ class InterSprintAdapter(ScraperBase):
                     'input[placeholder*="Artigo" i], input[id*="artigo" i]',
                     'input[placeholder*="LI" i], input[id*="lisi" i]',
                 ]:
-                    el = self.page.locator(sel).first
+                    el = _ctx.locator(sel).first
                     if await el.count() > 0:
                         await el.clear()
-                msel = self.page.locator(
+                msel = _ctx.locator(
                     'select[id*="marca" i], select[name*="marca" i], select[id*="brand" i], select'
                 ).first
                 if await msel.count() > 0:
@@ -1373,8 +1387,8 @@ class InterSprintAdapter(ScraperBase):
                         pass
 
             async def _tem_resultados() -> bool:
-                content = await self.page.content()
-                rows_n = await self.page.evaluate('''() => {
+                content = await _ctx.content()
+                rows_n = await _ctx.evaluate('''() => {
                     let max = 0;
                     for (const t of document.querySelectorAll("table")) {
                         const r = t.querySelectorAll("tbody tr").length;
@@ -1385,7 +1399,7 @@ class InterSprintAdapter(ScraperBase):
                 return rows_n > 0 or bool(_re.search(r'\d+[,.]\d{2}\s*€|€\s*\d+', content))
 
             async def _pesquisar(use_marca: bool, use_indice: bool) -> bool:
-                artigo = self.page.locator(
+                artigo = _ctx.locator(
                     'input[placeholder*="Artigo" i], input[id*="artigo" i], '
                     'input[name*="artigo" i], input[placeholder*="article" i]'
                 ).first
@@ -1395,7 +1409,7 @@ class InterSprintAdapter(ScraperBase):
                 await artigo.fill(medida_norm)
 
                 if use_marca and marca_upper:
-                    msel = self.page.locator(
+                    msel = _ctx.locator(
                         'select[id*="marca" i], select[name*="marca" i], '
                         'select[id*="brand" i], select[name*="brand" i], select'
                     ).first
@@ -1413,7 +1427,7 @@ class InterSprintAdapter(ScraperBase):
                             pass
 
                 if use_indice and indice:
-                    lisi = self.page.locator(
+                    lisi = _ctx.locator(
                         'input[placeholder*="LI" i], input[id*="lisi" i], '
                         'input[name*="lisi" i], input[placeholder*="SI" i]'
                     ).first
@@ -1421,7 +1435,7 @@ class InterSprintAdapter(ScraperBase):
                         await lisi.clear()
                         await lisi.fill(indice)
 
-                btn = self.page.locator(
+                btn = _ctx.locator(
                     'button:has-text("Procura"), input[value*="Procura" i], '
                     'button:has-text("Search"), button[type="submit"], input[type="submit"]'
                 ).first
@@ -1455,7 +1469,7 @@ class InterSprintAdapter(ScraperBase):
                 logger.info("InterSprint: sem resultados")
                 return None
 
-            content = await self.page.content()
+            content = await _ctx.content()
 
             # Parser de tabela — mesma lógica de isolated_scraper._parse_intersprint_isolated
             price_re = _re.compile(r'€\s*(\d+[,.]\d{2})|(\d+[,.]\d{2})\s*€', _re.IGNORECASE)
