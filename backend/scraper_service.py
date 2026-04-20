@@ -1406,7 +1406,10 @@ class InterSprintAdapter(ScraperBase):
 
             async def _tem_resultados() -> bool:
                 content = await _ctx.content()
-                return bool(_re.search(r'€\s*\d+[,.]\d{2}|\d+[,.]\d{2}\s*€', content))
+                return bool(_re.search(
+                    r'€\s*\d+[,.]\d{2}|\d+[,.]\d{2}\s*€|&nbsp;\s*\d+,\d{2}\s*&nbsp;',
+                    content
+                ))
 
             async def _pesquisar(use_marca: bool, use_indice: bool, medida_str: str = None) -> bool:
                 _val = medida_str or medida_norm
@@ -1491,7 +1494,10 @@ class InterSprintAdapter(ScraperBase):
             content = await _ctx.content()
 
             # Parser de tabela — mesma lógica de isolated_scraper._parse_intersprint_isolated
-            price_re = _re.compile(r'€\s*(\d+[,.]\d{2})|(\d+[,.]\d{2})\s*€', _re.IGNORECASE)
+            price_re = _re.compile(
+                r'€\s*(\d+[,.]\d{2})|(\d+[,.]\d{2})\s*€|&nbsp;\s*(\d+[,.]\d{2})\s*&nbsp;',
+                _re.IGNORECASE
+            )
             brand_re = _re.compile(
                 r'\b(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|'
                 r'YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|'
@@ -1513,7 +1519,7 @@ class InterSprintAdapter(ScraperBase):
                 if not pm:
                     continue
                 try:
-                    v = float((pm.group(1) or pm.group(2)).replace(',', '.'))
+                    v = float((pm.group(1) or pm.group(2) or pm.group(3)).replace(',', '.'))
                 except ValueError:
                     continue
                 if not (15 < v < 800):
@@ -1532,7 +1538,7 @@ class InterSprintAdapter(ScraperBase):
             fallback_prices = []
             for m in price_re.finditer(content):
                 try:
-                    v = float((m.group(1) or m.group(2)).replace(',', '.'))
+                    v = float((m.group(1) or m.group(2) or m.group(3)).replace(',', '.'))
                     if 15 < v < 800:
                         fallback_prices.append(v)
                 except ValueError:
