@@ -1388,14 +1388,15 @@ class InterSprintAdapter(ScraperBase):
 
             async def _limpar():
                 for sel in [
-                    'input[placeholder*="Artigo" i], input[id*="artigo" i]',
-                    'input[placeholder*="LI" i], input[id*="lisi" i]',
+                    'form[name="f"] input[name="artkode"], input[name="artkode"][class="form2"], input[name="artkode"]',
+                    'input[name="lisi"], input[placeholder*="LI" i], input[id*="lisi" i]',
                 ]:
                     el = _ctx.locator(sel).first
                     if await el.count() > 0:
                         await el.clear()
                 msel = _ctx.locator(
-                    'select[id*="marca" i], select[name*="marca" i], select[id*="brand" i], select'
+                    'select[name="merk"], select[id*="marca" i], select[name*="marca" i], '
+                    'select[id*="brand" i], select[name*="brand" i]'
                 ).first
                 if await msel.count() > 0:
                     try:
@@ -1405,40 +1406,28 @@ class InterSprintAdapter(ScraperBase):
 
             async def _tem_resultados() -> bool:
                 content = await _ctx.content()
-                rows_n = await _ctx.evaluate('''() => {
-                    let max = 0;
-                    for (const t of document.querySelectorAll("table")) {
-                        const r = t.querySelectorAll("tbody tr").length;
-                        if (r > max) max = r;
-                    }
-                    return max;
-                }''')
-                return rows_n > 0 or bool(_re.search(r'\d+[,.]\d{2}\s*€|€\s*\d+', content))
+                return bool(_re.search(r'€\s*\d+[,.]\d{2}|\d+[,.]\d{2}\s*€', content))
 
             async def _pesquisar(use_marca: bool, use_indice: bool, medida_str: str = None) -> bool:
                 _val = medida_str or medida_norm
                 artigo = _ctx.locator(
-                    # Dutch variants
-                    'input[id*="artikel" i], input[name*="artikel" i], input[placeholder*="artikel" i], '
+                    'form[name="f"] input[name="artkode"], '
+                    'input[name="artkode"][class="form2"], '
+                    'input[name="artkode"], '
+                    'input[id*="artikel" i], input[name*="artikel" i], '
                     'input[id*="artnr" i], input[name*="artnr" i], '
-                    'input[id*="zoek" i], input[name*="zoek" i], '
-                    'input[id*="maat" i], input[name*="maat" i], '
-                    # Portuguese / generic
                     'input[placeholder*="Artigo" i], input[id*="artigo" i], '
                     'input[name*="artigo" i], input[placeholder*="article" i], '
                     'input[id*="article" i], input[name*="article" i], '
-                    'input[placeholder*="code" i], input[id*="code" i], input[name*="code" i], '
-                    'input[placeholder*="search" i], input[name*="search" i]'
+                    'input[placeholder*="code" i], input[id*="code" i], input[name*="code" i]'
                 ).first
                 if await artigo.count() > 0:
                     await artigo.clear()
                     await artigo.fill(_val)
                 else:
-                    _fallback = _ctx.locator(
-                        'input[type="text"]:visible, input:not([type]):visible'
-                    ).first
+                    _fallback = _ctx.locator('input[type="text"]:visible').first
                     if await _fallback.count() > 0:
-                        logger.info("InterSprint search: campo artigo não encontrado; fallback 1º input text")
+                        logger.info("InterSprint search: campo artkode não encontrado; fallback 1º input text")
                         await _fallback.clear()
                         await _fallback.fill(_val)
                         artigo = _fallback
@@ -1447,8 +1436,8 @@ class InterSprintAdapter(ScraperBase):
 
                 if use_marca and marca_upper:
                     msel = _ctx.locator(
-                        'select[id*="marca" i], select[name*="marca" i], '
-                        'select[id*="brand" i], select[name*="brand" i], select'
+                        'select[name="merk"], select[id*="marca" i], select[name*="marca" i], '
+                        'select[id*="brand" i], select[name*="brand" i]'
                     ).first
                     if await msel.count() > 0:
                         try:
@@ -1465,8 +1454,7 @@ class InterSprintAdapter(ScraperBase):
 
                 if use_indice and indice:
                     lisi = _ctx.locator(
-                        'input[placeholder*="LI" i], input[id*="lisi" i], '
-                        'input[name*="lisi" i], input[placeholder*="SI" i]'
+                        'input[name="lisi"], input[placeholder*="LI" i], input[id*="lisi" i]'
                     ).first
                     if await lisi.count() > 0:
                         await lisi.clear()
