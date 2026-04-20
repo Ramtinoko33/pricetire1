@@ -1388,8 +1388,8 @@ class InterSprintAdapter(ScraperBase):
 
             async def _limpar():
                 for sel in [
-                    'form[name="f"] input[name="artkode"], input[name="artkode"][class="form2"], input[name="artkode"]',
-                    'input[name="lisi"], input[placeholder*="LI" i], input[id*="lisi" i]',
+                    'form[name="f"] input[name="artkode"]',
+                    'input[name="lisi"]',
                 ]:
                     el = _ctx.locator(sel).first
                     if await el.count() > 0:
@@ -1410,29 +1410,15 @@ class InterSprintAdapter(ScraperBase):
 
             async def _pesquisar(use_marca: bool, use_indice: bool, medida_str: str = None) -> bool:
                 _val = medida_str or medida_norm
-                artigo = _ctx.locator(
-                    'form[name="f"] input[name="artkode"], '
-                    'input[name="artkode"][class="form2"], '
-                    'input[name="artkode"], '
-                    'input[id*="artikel" i], input[name*="artikel" i], '
-                    'input[id*="artnr" i], input[name*="artnr" i], '
-                    'input[placeholder*="Artigo" i], input[id*="artigo" i], '
-                    'input[name*="artigo" i], input[placeholder*="article" i], '
-                    'input[id*="article" i], input[name*="article" i], '
-                    'input[placeholder*="code" i], input[id*="code" i], input[name*="code" i]'
-                ).first
-                if await artigo.count() > 0:
-                    await artigo.clear()
-                    await artigo.fill(_val)
-                else:
-                    _fallback = _ctx.locator('input[type="text"]:visible').first
-                    if await _fallback.count() > 0:
-                        logger.info("InterSprint search: campo artkode não encontrado; fallback 1º input text")
-                        await _fallback.clear()
-                        await _fallback.fill(_val)
-                        artigo = _fallback
-                    else:
-                        return False
+                artigo = _ctx.locator('form[name="f"] input[name="artkode"]')
+                if await artigo.count() == 0:
+                    artigo = _ctx.locator('input[name="artkode"][class="form2"]')
+                if await artigo.count() == 0:
+                    logger.info("InterSprint search: campo artkode (form f) não encontrado")
+                    return False
+                await artigo.first.clear()
+                await artigo.first.fill(_val)
+                artigo = artigo.first
 
                 if use_marca and marca_upper:
                     msel = _ctx.locator(
