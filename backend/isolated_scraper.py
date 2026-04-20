@@ -876,7 +876,10 @@ async def scrape_intersprint(username: str, password: str, medida: str,
 
             async def _tem_resultados() -> bool:
                 content = await _ctx.content()
-                return bool(re.search(r'€\s*\d+[,.]\d{2}|\d+[,.]\d{2}\s*€', content))
+                return bool(re.search(
+                    r'€\s*\d+[,.]\d{2}|\d+[,.]\d{2}\s*€|&nbsp;\s*\d+,\d{2}\s*&nbsp;',
+                    content
+                ))
 
             async def _pesquisar(use_marca: bool, use_indice: bool, medida_str: str = None) -> bool:
                 _val = medida_str or medida_norm
@@ -988,7 +991,10 @@ def _parse_intersprint_isolated(html: str) -> list:
     """Parse HTML resultados InterSprint (versão isolated)."""
     products: list = []
     seen: set = set()
-    price_re = re.compile(r'€\s*(\d+[,.]\d{2})|(\d+[,.]\d{2})\s*€', re.IGNORECASE)
+    price_re = re.compile(
+        r'€\s*(\d+[,.]\d{2})|(\d+[,.]\d{2})\s*€|&nbsp;\s*(\d+[,.]\d{2})\s*&nbsp;',
+        re.IGNORECASE
+    )
     brand_re = re.compile(
         r'\b(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|'
         r'YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|'
@@ -1010,7 +1016,7 @@ def _parse_intersprint_isolated(html: str) -> list:
         if not price_m:
             continue
         try:
-            price = float((price_m.group(1) or price_m.group(2)).replace(',', '.'))
+            price = float((price_m.group(1) or price_m.group(2) or price_m.group(3)).replace(',', '.'))
         except ValueError:
             continue
         if not (15 < price < 800):

@@ -2112,10 +2112,16 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
                     pass
 
         async def _has_results() -> bool:
-            """Verificar se a pesquisa devolveu resultados (preço € na página)."""
-            # Não usar rows_n > 0 — a página de formulário já tem tabelas com linhas
+            """Verificar se a pesquisa devolveu resultados.
+
+            InterSprint não usa € nas células de preço — formato:
+            &nbsp;   125,58 &nbsp;  (cabeçalho da coluna é "EUR", sem símbolo €).
+            """
             content = await _ctx.content()
-            return bool(re.search(r'€\s*\d+[,.]\d{2}|\d+[,.]\d{2}\s*€', content))
+            return bool(re.search(
+                r'€\s*\d+[,.]\d{2}|\d+[,.]\d{2}\s*€|&nbsp;\s*\d+,\d{2}\s*&nbsp;',
+                content
+            ))
 
         async def _do_search(use_marca: bool, use_indice: bool, medida_str: str = None) -> bool:
             """Executar pesquisa. Retorna True se há resultados."""
@@ -2275,7 +2281,11 @@ def _parse_intersprint_html(html: str) -> list:
     products: list = []
     seen: set = set()
 
-    price_re = _re.compile(r'€\s*(\d+[,.]\d{2})|(\d+[,.]\d{2})\s*€', _re.IGNORECASE)
+    # InterSprint não usa € nas células — formato: &nbsp;   125,58 &nbsp;
+    price_re = _re.compile(
+        r'€\s*(\d+[,.]\d{2})|(\d+[,.]\d{2})\s*€|&nbsp;\s*(\d+[,.]\d{2})\s*&nbsp;',
+        _re.IGNORECASE
+    )
     brand_re = _re.compile(
         r'\b(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|'
         r'YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|'
@@ -2300,7 +2310,7 @@ def _parse_intersprint_html(html: str) -> list:
         if not price_m:
             continue
         try:
-            price = float((price_m.group(1) or price_m.group(2)).replace(',', '.'))
+            price = float((price_m.group(1) or price_m.group(2) or price_m.group(3)).replace(',', '.'))
         except ValueError:
             continue
         if not (15 < price < 800):
