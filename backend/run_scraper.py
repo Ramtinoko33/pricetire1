@@ -2037,6 +2037,17 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
                     print(f"  [InterSprint] Frame detectado: {_fr.url}")
                     break
 
+        _all_frames = [(f.name, f.url) for f in page.frames]
+        print(f"  [InterSprint] Todos os frames: {_all_frames}")
+        print(f"  [InterSprint] _ctx tipo: {'Frame' if _ctx is not page else 'Page'}, URL: {_ctx.url}")
+
+        # Guardar conteúdo do frame para debug (/api/scraper/debug-html?supplier=intersprint&file=frame)
+        try:
+            with open('/tmp/intersprint_frame.html', 'w', encoding='utf-8') as _f:
+                _f.write(await _ctx.content())
+        except Exception:
+            pass
+
         # Clicar 'Procura por pneus' se necessário
         procura_link = _ctx.locator(
             'a:has-text("Procura por pneus"), button:has-text("Procura por pneus"), '
