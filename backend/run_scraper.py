@@ -2086,17 +2086,19 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
         async def _limpar_campos():
             """Limpar campos de pesquisa (entre tentativas)."""
             for sel in [
-                'input[placeholder*="Artigo" i], input[id*="artigo" i], input[name*="artigo" i]',
-                'input[placeholder*="LI" i], input[id*="lisi" i], input[name*="lisi" i], '
-                'input[placeholder*="SI" i]',
+                # Campo artigo — nome exacto do portal InterSprint
+                'form[name="f"] input[name="artkode"], input[name="artkode"][class="form2"], '
+                'input[name="artkode"]',
+                # LI/SI
+                'input[name="lisi"], input[placeholder*="LI" i], input[id*="lisi" i]',
             ]:
                 el = _ctx.locator(sel).first
                 if await el.count() > 0:
                     await el.clear()
             # Reset Marca dropdown para primeira opção
             marca_select = _ctx.locator(
-                'select[id*="marca" i], select[name*="marca" i], '
-                'select[id*="brand" i], select[name*="brand" i], select'
+                'select[name="merk"], select[id*="marca" i], select[name*="marca" i], '
+                'select[id*="brand" i], select[name*="brand" i]'
             ).first
             if await marca_select.count() > 0:
                 try:
@@ -2105,59 +2107,47 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
                     pass
 
         async def _has_results() -> bool:
-            """Verificar se a pesquisa devolveu resultados."""
+            """Verificar se a pesquisa devolveu resultados (preço € na página)."""
+            # Não usar rows_n > 0 — a página de formulário já tem tabelas com linhas
             content = await _ctx.content()
-            rows_n = await _ctx.evaluate('''() => {
-                const tables = document.querySelectorAll("table");
-                let maxRows = 0;
-                for (const t of tables) {
-                    const rows = t.querySelectorAll("tbody tr");
-                    if (rows.length > maxRows) maxRows = rows.length;
-                }
-                return maxRows;
-            }''')
-            has_price = bool(re.search(r'\d+[,.]\d{2}\s*€|€\s*\d+', content))
-            return rows_n > 0 or has_price
+            return bool(re.search(r'€\s*\d+[,.]\d{2}|\d+[,.]\d{2}\s*€', content))
 
         async def _do_search(use_marca: bool, use_indice: bool, medida_str: str = None) -> bool:
             """Executar pesquisa. Retorna True se há resultados."""
             _val = medida_str or medida_norm
+            # Selector primário: nome exacto do campo no portal InterSprint
             artigo_input = _ctx.locator(
-                # Dutch variants
-                'input[id*="artikel" i], input[name*="artikel" i], input[placeholder*="artikel" i], '
+                'form[name="f"] input[name="artkode"], '
+                'input[name="artkode"][class="form2"], '
+                'input[name="artkode"], '
+                # Fallbacks genéricos
+                'input[id*="artikel" i], input[name*="artikel" i], '
                 'input[id*="artnr" i], input[name*="artnr" i], '
-                'input[id*="zoek" i], input[name*="zoek" i], '
-                'input[id*="maat" i], input[name*="maat" i], '
-                # Portuguese / generic
                 'input[placeholder*="Artigo" i], input[id*="artigo" i], '
                 'input[name*="artigo" i], input[placeholder*="article" i], '
                 'input[id*="article" i], input[name*="article" i], '
-                'input[placeholder*="code" i], input[id*="code" i], input[name*="code" i], '
-                'input[placeholder*="search" i], input[name*="search" i]'
+                'input[placeholder*="code" i], input[id*="code" i], input[name*="code" i]'
             ).first
             if await artigo_input.count() > 0:
                 await artigo_input.clear()
                 await artigo_input.fill(_val)
             else:
-                # Fallback: first visible text input
-                _fallback = _ctx.locator(
-                    'input[type="text"]:visible, input:not([type]):visible, '
-                    'input[type=""]:visible'
-                ).first
+                # Último recurso: primeiro input text visível
+                _fallback = _ctx.locator('input[type="text"]:visible').first
                 if await _fallback.count() > 0:
-                    print(f"  [InterSprint] Campo artigo não encontrado; a usar 1º input text como fallback")
+                    print(f"  [InterSprint] Campo artkode não encontrado; fallback 1º input text")
                     await _fallback.clear()
                     await _fallback.fill(_val)
                     artigo_input = _fallback
                 else:
-                    print(f"  [InterSprint] Campo artigo não encontrado (sem fallback)")
+                    print(f"  [InterSprint] Campo artigo não encontrado")
                     return False
 
             # Marca dropdown
             if use_marca and marca_upper:
                 marca_select = _ctx.locator(
-                    'select[id*="marca" i], select[name*="marca" i], '
-                    'select[id*="brand" i], select[name*="brand" i], select'
+                    'select[name="merk"], select[id*="marca" i], select[name*="marca" i], '
+                    'select[id*="brand" i], select[name*="brand" i]'
                 ).first
                 if await marca_select.count() > 0:
                     try:
@@ -2179,8 +2169,7 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
             # LI/SI
             if use_indice and indice:
                 lisi_input = _ctx.locator(
-                    'input[placeholder*="LI" i], input[id*="lisi" i], '
-                    'input[name*="lisi" i], input[placeholder*="SI" i]'
+                    'input[name="lisi"], input[placeholder*="LI" i], input[id*="lisi" i]'
                 ).first
                 if await lisi_input.count() > 0:
                     await lisi_input.clear()
