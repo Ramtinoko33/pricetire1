@@ -2094,11 +2094,8 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
         async def _limpar_campos():
             """Limpar campos de pesquisa (entre tentativas)."""
             for sel in [
-                # Campo artigo — nome exacto do portal InterSprint
-                'form[name="f"] input[name="artkode"], input[name="artkode"][class="form2"], '
-                'input[name="artkode"]',
-                # LI/SI
-                'input[name="lisi"], input[placeholder*="LI" i], input[id*="lisi" i]',
+                'form[name="f"] input[name="artkode"]',
+                'input[name="lisi"]',
             ]:
                 el = _ctx.locator(sel).first
                 if await el.count() > 0:
@@ -2123,33 +2120,22 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
         async def _do_search(use_marca: bool, use_indice: bool, medida_str: str = None) -> bool:
             """Executar pesquisa. Retorna True se há resultados."""
             _val = medida_str or medida_norm
-            # Selector primário: nome exacto do campo no portal InterSprint
-            artigo_input = _ctx.locator(
-                'form[name="f"] input[name="artkode"], '
-                'input[name="artkode"][class="form2"], '
-                'input[name="artkode"], '
-                # Fallbacks genéricos
-                'input[id*="artikel" i], input[name*="artikel" i], '
-                'input[id*="artnr" i], input[name*="artnr" i], '
-                'input[placeholder*="Artigo" i], input[id*="artigo" i], '
-                'input[name*="artigo" i], input[placeholder*="article" i], '
-                'input[id*="article" i], input[name*="article" i], '
-                'input[placeholder*="code" i], input[id*="code" i], input[name*="code" i]'
-            ).first
-            if await artigo_input.count() > 0:
-                await artigo_input.clear()
-                await artigo_input.fill(_val)
-            else:
-                # Último recurso: primeiro input text visível
-                _fallback = _ctx.locator('input[type="text"]:visible').first
-                if await _fallback.count() > 0:
-                    print(f"  [InterSprint] Campo artkode não encontrado; fallback 1º input text")
-                    await _fallback.clear()
-                    await _fallback.fill(_val)
-                    artigo_input = _fallback
-                else:
-                    print(f"  [InterSprint] Campo artigo não encontrado")
-                    return False
+            # Selector exclusivo para o formulário principal (form[name="f"]).
+            # NÃO usar input[name="artkode"] genérico — há 2 inputs com esse
+            # nome na página: um no snelzoek (canto sup-dir) e outro no form f.
+            # Playwright .first selecciona por DOM order, apanhando o snelzoek
+            # primeiro. Isso preenche o campo errado e o submit devolve a mesma
+            # página (artkode vazio no form f).
+            artigo_input = _ctx.locator('form[name="f"] input[name="artkode"]')
+            if await artigo_input.count() == 0:
+                # Fallback: input com class form2 (mesmo campo, sem contexto form)
+                artigo_input = _ctx.locator('input[name="artkode"][class="form2"]')
+            if await artigo_input.count() == 0:
+                print(f"  [InterSprint] Campo artkode (form f) não encontrado")
+                return False
+            await artigo_input.first.clear()
+            await artigo_input.first.fill(_val)
+            artigo_input = artigo_input.first
 
             # Marca dropdown
             if use_marca and marca_upper:
