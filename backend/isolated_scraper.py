@@ -8,6 +8,7 @@ import json
 import re
 import sys
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '/pw-browsers'
@@ -443,11 +444,11 @@ async def scrape_tugapneus(username: str, password: str, medida: str,
         "price": None,
         "error": None,
         "products": [],
-        "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
     medida_norm = normalize_medida(medida)
-    _m = __import__('re').match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
+    _m = re.match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
     medida_slashed = f"{_m.group(1)}/{_m.group(2)}R{_m.group(3)}" if _m else medida_norm
 
     async with async_playwright() as p:
@@ -713,7 +714,7 @@ async def scrape_intersprint(username: str, password: str, medida: str,
         "price": None,
         "error": None,
         "products": [],
-        "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
     medida_norm = normalize_medida(medida)
@@ -1002,7 +1003,7 @@ def _parse_intersprint_isolated(html: str) -> list:
         r'YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|'
         r'GENERAL|UNIROYAL|GISLAVED|FULDA|SEMPERIT|SAVA|KLEBER|BF.?GOODRICH|'
         r'COOPER|MINERVA|WESTLAKE|THREE-A|MASSIMO|LASSA|LANDSAIL|NANKANG|'
-        r'SAILUN|WINDFORCE|WANLI|DAVANTI|ATLAS|DOUBLESTAR|LINGLONG|ACCELERA|'
+        r'SAILUN|WINDFORCE|WANLI|DAVANTI|ATLAS|TORQUE|DOUBLESTAR|LINGLONG|ACCELERA|'
         r'APLUS|GT.?RADIAL|CACHLAND|HIFLY|MILESTONE)\b',
         re.IGNORECASE
     )
