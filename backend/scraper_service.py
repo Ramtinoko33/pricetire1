@@ -1525,7 +1525,8 @@ class InterSprintAdapter(ScraperBase):
                 if not (15 < v < 800):
                     continue
                 bm = brand_re.search(row_text)
-                brand = bm.group(1).upper() if bm else 'UNKNOWN'
+                brand = (bm.group(1).upper() if bm
+                         else (marca_upper if marca_upper else 'UNKNOWN'))
                 product_prices.append(v)
                 logger.debug(f"InterSprint produto: {brand} €{v}")
 
