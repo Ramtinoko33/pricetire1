@@ -2618,17 +2618,22 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     conn_save = await _pg_connect()
                     try:
                         if products:
-                            for prod in products:
-                                marca = prod.get('brand', '').upper()
-                                modelo = prod.get('model', '')
+                            # Apagar TODOS os registos antigos deste fornecedor+medida+marca
+                            # antes de inserir os novos — garante que modelos fora de stock
+                            # não ficam no BD após um re-scrape.
+                            marcas_encontradas = {prod.get('brand', '').upper() for prod in products}
+                            for m_brand in marcas_encontradas:
                                 await conn_save.execute(
                                     """
                                     DELETE FROM scraped_prices
                                     WHERE supplier_name = $1 AND medida = $2
-                                      AND COALESCE(marca,'') = $3 AND COALESCE(modelo,'') = $4
+                                      AND COALESCE(marca,'') = $3
                                     """,
-                                    supplier['name'], medida, marca, modelo,
+                                    supplier['name'], medida, m_brand,
                                 )
+                            for prod in products:
+                                marca = prod.get('brand', '').upper()
+                                modelo = prod.get('model', '')
                                 await conn_save.execute(
                                     """
                                     INSERT INTO scraped_prices

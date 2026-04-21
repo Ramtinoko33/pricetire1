@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional, Dict
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import asyncio
 from io import BytesIO
 import json
@@ -537,11 +537,16 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
 
         unique_medidas = list({_norm_medida(item['medida']) for item in items})
 
-        # Unique (medida, marca) pairs — usado para cache check mais granular
-        unique_pairs = list({
-            (_norm_medida(item['medida']), (item.get('marca') or '').strip().upper())
+        # Triplos únicos (medida, marca, modelo) para cache check granular
+        unique_triples = list({
+            (
+                _norm_medida(item['medida']),
+                (item.get('marca')  or '').strip().upper(),
+                (item.get('modelo') or '').strip().upper(),
+            )
             for item in items
         })
+        unique_pairs = list({(m, b) for m, b, _ in unique_triples})
 
         if force:
             # Apaga todo o cache para estas medidas — força re-scrape completo
@@ -551,63 +556,89 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
             )
             pairs_sem_dados = unique_pairs
         else:
-            # Cache check por FORNECEDOR:
-            #   (supplier, medida, marca) — se algum fornecedor não tem dados para um par,
-            #   esse par é incluído no scrape.
-            # Isto garante que fornecedores novos (ex: InterSprint) são sempre raspados
-            # mesmo que outros já tenham dados para a mesma (medida, marca).
-            # Apenas fornecedores ACTIVOS contam para o cache check
+            # ── Nova política de cache ──────────────────────────────────────
+            # Um par (medida, marca) só usa o cache se:
+            #   1. O item não tem modelo especificado (qualquer dado recente serve), OU
+            #   2. Existe um match exato de modelo nos últimos 12h em TODOS os fornecedores
+            #      activos.
+            # Em qualquer outro caso → re-scrape para verificar stock actual.
+            CACHE_TTL_H = 12
+            cache_cutoff = datetime.now(timezone.utc) - timedelta(hours=CACHE_TTL_H)
+
             active_supplier_names = {
                 r['name'] for r in
                 await conn.fetch("SELECT name FROM suppliers WHERE is_active = TRUE")
             }
-            # Limpar registos antigos do InterSprint com marca mas sem modelo
-            # (gerados pelo parser antigo antes de a extracção de modelo estar corrigida).
-            # Força re-scrape com o parser actualizado para popular o campo modelo.
-            await conn.execute(
-                """DELETE FROM scraped_prices
-                   WHERE supplier_name ILIKE '%inter-sprint%'
-                     AND medida = ANY($1)
-                     AND marca IS NOT NULL AND marca != ''
-                     AND (modelo IS NULL OR modelo = '')""",
-                unique_medidas,
-            )
 
-            rows_with_data = await conn.fetch(
-                """SELECT DISTINCT sp.supplier_name, sp.medida, UPPER(COALESCE(sp.marca,'')) AS marca_up
+            # Obter dados recentes (< 12h) com marca E modelo preenchidos
+            rows_cache = await conn.fetch(
+                """SELECT sp.supplier_name, sp.medida,
+                          UPPER(COALESCE(sp.marca,''))  AS marca_up,
+                          UPPER(COALESCE(sp.modelo,'')) AS modelo_up
                    FROM scraped_prices sp
                    JOIN suppliers s ON s.name = sp.supplier_name
                    WHERE sp.medida = ANY($1)
                      AND sp.price IS NOT NULL
                      AND sp.marca IS NOT NULL AND sp.marca != ''
+                     AND sp.scraped_at > $2
                      AND s.is_active = TRUE""",
-                unique_medidas,
+                unique_medidas, cache_cutoff,
             )
-            # (supplier, medida, marca_up) que já têm dados
-            data_exists = {
-                (r['supplier_name'], r['medida'], r['marca_up'])
-                for r in rows_with_data
-            }
-            # Um par precisa de scrape se algum fornecedor ACTIVO não tem dados para ele
-            pairs_sem_dados = []
-            for m, b in unique_pairs:
-                missing = any(
-                    (s, m, b) not in data_exists
-                    for s in active_supplier_names
-                )
-                if missing:
-                    pairs_sem_dados.append((m, b))
+
+            # (supplier, medida, marca) → conjunto de modelos em cache recente
+            cache_modelos: dict = {}
+            for r in rows_cache:
+                key = (r['supplier_name'], r['medida'], r['marca_up'])
+                cache_modelos.setdefault(key, set()).add(r['modelo_up'])
+
+            pairs_sem_dados_set: set = set()
+            for m, b, mod in unique_triples:
+                for s in active_supplier_names:
+                    key = (s, m, b)
+                    cached = cache_modelos.get(key, set())
+
+                    if not mod:
+                        # Sem modelo especificado: basta ter qualquer dado recente
+                        if not cached:
+                            pairs_sem_dados_set.add((m, b))
+                        break
+
+                    # Com modelo: exigir match exato no cache recente
+                    # (modelo guardado começa com ou contém o modelo pesquisado)
+                    has_exact = any(
+                        mod == stored or stored.startswith(mod + ' ') or stored.startswith(mod)
+                        for stored in cached
+                        if stored
+                    )
+                    if not has_exact:
+                        pairs_sem_dados_set.add((m, b))
+                    break  # basta verificar um fornecedor (todos recebem o mesmo scrape)
+
+            pairs_sem_dados = list(pairs_sem_dados_set)
 
     # Scrape pares (medida, marca) em falta (ou todos se force=true)
     if pairs_sem_dados:
         medidas_sem_dados = list({p[0] for p in pairs_sem_dados})
-        # Limpa registos sem marca para essas medidas
+        marcas_sem_dados  = list({b for _, b in pairs_sem_dados if b})
+        # Limpa registos sem marca E registos antigos (> 12h) das marcas a re-scrape
+        # para não servir modelos fora de stock após a pesquisa
         pool2 = await get_db()
         async with pool2.acquire() as conn:
             await conn.execute(
                 "DELETE FROM scraped_prices WHERE medida = ANY($1) AND marca IS NULL",
                 medidas_sem_dados,
             )
+            if marcas_sem_dados:
+                stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=12)
+                await conn.execute(
+                    """DELETE FROM scraped_prices
+                       WHERE medida = ANY($1)
+                         AND UPPER(COALESCE(marca,'')) = ANY($2)
+                         AND scraped_at < $3""",
+                    medidas_sem_dados,
+                    [b.upper() for b in marcas_sem_dados],
+                    stale_cutoff,
+                )
         items_json = json.dumps([{"medida": m, "marca": b} for m, b in pairs_sem_dados])
         logger.info(f"A correr scraper para {len(pairs_sem_dados)} pares medida+marca...")
         env = os.environ.copy()
