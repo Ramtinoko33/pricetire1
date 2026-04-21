@@ -2249,7 +2249,7 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
         except Exception:
             pass
 
-        products = _parse_intersprint_html(content)
+        products = _parse_intersprint_html(content, marca_upper)
 
         if products:
             result["products"] = products
@@ -2274,8 +2274,14 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
     return result
 
 
-def _parse_intersprint_html(html: str) -> list:
-    """Parse HTML da página de resultados InterSprint."""
+def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
+    """Parse HTML da página de resultados InterSprint.
+
+    search_brand: marca usada na pesquisa (ex: 'MICHELIN'). Usada como
+    fallback quando brand_re não encontra a marca na linha (ex: rowspan —
+    a célula da marca só aparece na 1ª linha de um grupo de produtos do
+    mesmo fornecedor, as restantes ficam sem célula repetida).
+    """
     import re as _re
 
     products: list = []
@@ -2320,7 +2326,11 @@ def _parse_intersprint_html(html: str) -> list:
         medida_m = medida_re.search(row_text)
         indice_m = indice_re.search(row_text)
 
-        brand      = brand_m.group(1).upper()  if brand_m  else 'UNKNOWN'
+        # Fallback de marca: InterSprint usa rowspan na coluna da marca —
+        # a 1ª linha de um grupo tem <td>MICHELIN</td> mas as restantes
+        # não repetem a célula. Nesse caso, usar a marca da pesquisa.
+        brand      = (brand_m.group(1).upper() if brand_m
+                      else (search_brand.upper() if search_brand else 'UNKNOWN'))
         medida_val = medida_m.group(1).upper() if medida_m else ''
         indice_val = indice_m.group(1).upper() if indice_m else ''
 
