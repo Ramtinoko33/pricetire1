@@ -561,6 +561,18 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                 r['name'] for r in
                 await conn.fetch("SELECT name FROM suppliers WHERE is_active = TRUE")
             }
+            # Limpar registos antigos do InterSprint com marca mas sem modelo
+            # (gerados pelo parser antigo antes de a extracção de modelo estar corrigida).
+            # Força re-scrape com o parser actualizado para popular o campo modelo.
+            await conn.execute(
+                """DELETE FROM scraped_prices
+                   WHERE supplier_name ILIKE '%inter-sprint%'
+                     AND medida = ANY($1)
+                     AND marca IS NOT NULL AND marca != ''
+                     AND (modelo IS NULL OR modelo = '')""",
+                unique_medidas,
+            )
+
             rows_with_data = await conn.fetch(
                 """SELECT DISTINCT sp.supplier_name, sp.medida, UPPER(COALESCE(sp.marca,'')) AS marca_up
                    FROM scraped_prices sp

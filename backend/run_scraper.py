@@ -2338,6 +2338,9 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
         remaining = price_re.sub('', brand_re.sub('', medida_re.sub('', row_text)))
         remaining = _re.sub(r'[€\s,]+', ' ', remaining).strip()
         model = remaining[:60].strip().upper()
+        # Fallback: se não há descrição de modelo, guardar pelo menos o índice
+        if not model and indice_val:
+            model = indice_val
 
         key = f"{brand}|{medida_val}|{indice_val}|{price}"
         if key not in seen:
