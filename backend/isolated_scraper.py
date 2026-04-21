@@ -988,23 +988,21 @@ async def scrape_intersprint(username: str, password: str, medida: str,
 
 
 def _parse_intersprint_isolated(html: str, search_brand: str = '') -> list:
-    """Parse HTML resultados InterSprint (versão isolated)."""
+    """Parse HTML resultados InterSprint (versão isolated).
+
+    Estrutura da tabela: Marca | Descricao | ... | LI/SI | ... | EUR
+    Descricao format: "{size} {[A-Z]?R}{rim} TL {LI/SI} {brand_abbr} {model}"
+    Exemplo: "205/55 VR16 TL 94V SUNNY NP226 XL"
+    search_brand: fallback quando a célula da marca está vazia.
+    """
     products: list = []
     seen: set = set()
     price_re = re.compile(
         r'€\s*(\d+[,.]\d{2})|(\d+[,.]\d{2})\s*€|&nbsp;\s*(\d+[,.]\d{2})\s*&nbsp;',
         re.IGNORECASE
     )
-    brand_re = re.compile(
-        r'\b(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|'
-        r'YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|'
-        r'GENERAL|UNIROYAL|GISLAVED|FULDA|SEMPERIT|SAVA|KLEBER|BF.?GOODRICH|'
-        r'COOPER|MINERVA|WESTLAKE|THREE-A|MASSIMO|LASSA|LANDSAIL|NANKANG|'
-        r'SAILUN|WINDFORCE|WANLI|DAVANTI|ATLAS|TORQUE|DOUBLESTAR|LINGLONG|ACCELERA|'
-        r'APLUS|GT.?RADIAL|CACHLAND|HIFLY|MILESTONE)\b',
-        re.IGNORECASE
-    )
-    medida_re = re.compile(r'\b(\d{3}/\d{2}R\d{2})\b', re.IGNORECASE)
+    # Medida: "205/55 VR16" (InterSprint), "205/55R16" (standard), "225/40 ZR18"
+    medida_re = re.compile(r'(\d{3}/\d{2})\s*[A-Z]?R(\d{2})\b', re.IGNORECASE)
     indice_re = re.compile(r'\b(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\b')
     tag_re    = re.compile(r'<[^>]+>')
     row_re    = re.compile(r'<tr[^>]*>(.*?)</tr>', re.IGNORECASE | re.DOTALL)
@@ -1021,23 +1019,43 @@ def _parse_intersprint_isolated(html: str, search_brand: str = '') -> list:
             continue
         if not (15 < price < 800):
             continue
-        brand_m  = brand_re.search(row_text)
-        medida_m = medida_re.search(row_text)
-        indice_m = indice_re.search(row_text)
-        brand      = (brand_m.group(1).upper() if brand_m
-                      else (search_brand.upper() if search_brand else 'UNKNOWN'))
-        medida_val = medida_m.group(1).upper() if medida_m else ''
+
+        # Medida: suporta "205/55 VR16" e "205/55R16"
+        medida_m   = medida_re.search(row_text)
+        medida_val = (f"{medida_m.group(1)}R{medida_m.group(2)}").upper() if medida_m else ''
+        indice_m   = indice_re.search(row_text)
         indice_val = indice_m.group(1).upper() if indice_m else ''
-        remaining  = re.sub(r'[€\s,]+', ' ',
-                     price_re.sub('', brand_re.sub('', medida_re.sub('', row_text)))).strip()
-        model = remaining[:60].strip().upper()
-        # Fallback: se não há descrição de modelo, guardar pelo menos o índice
+
+        # Marca: texto antes da medida (= coluna "Marca" da tabela)
+        brand_val = ''
+        if medida_m:
+            brand_val = row_text[:medida_m.start()].strip().upper()
+        if not brand_val:
+            brand_val = search_brand.upper() if search_brand else 'UNKNOWN'
+
+        # Modelo: Descricao após tamanho, TL/TW, LI/SI e abreviatura da marca
+        remaining = row_text[medida_m.end():] if medida_m else row_text
+        remaining = price_re.sub('', remaining)
+        remaining = re.sub(r'&\w+;', ' ', remaining)
+        remaining = re.sub(r'\bTL\b|\bTW\b', ' ', remaining, flags=re.IGNORECASE)
+        remaining = re.sub(r'\b\d{2,3}[A-Z]{1,2}(?:\s+XL)?\b', ' ', remaining)
+        remaining = re.sub(r'\b\d+\b', ' ', remaining)
+        remaining = re.sub(r'[€\s]+', ' ', remaining).strip()
+        parts = remaining.upper().split()
+        if parts:
+            first = parts[0]
+            if (first == brand_val
+                    or brand_val.startswith(first)
+                    or (len(first) <= 3 and first.isalpha())):
+                parts = parts[1:]
+        model = ' '.join(parts)[:60].strip()
         if not model and indice_val:
             model = indice_val
-        key = f"{brand}|{medida_val}|{indice_val}|{price}"
+
+        key = f"{brand_val}|{medida_val}|{indice_val}|{price}"
         if key not in seen:
             seen.add(key)
-            products.append({'brand': brand, 'medida': medida_val,
+            products.append({'brand': brand_val, 'medida': medida_val,
                              'indice': indice_val, 'model': model, 'price': price})
     print(f"  [InterSprint] _parse: {len(products)} produtos")
     return products
