@@ -2283,88 +2283,115 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
     Descricao format: "{size} {[A-Z]?R}{rim} TL {LI/SI} {brand_abbr} {model}"
     Exemplo: "205/55 VR16 TL 94V SUNNY NP226 XL"
 
-    A marca está na 1ª coluna e também na Descricao como abreviatura.
-    NOTA: brand_re foi abandonado — as marcas do InterSprint (SUNNY, DELINTE,
-    LANDSAIL, ROADHOG, DOUBLE COIN, etc.) não estão numa lista fixa.
-    Extrai-se a marca do texto antes do padrão de tamanho.
+    FIXES v5:
+    - Decode HTML entities (&nbsp; → space, &#47; → /) BEFORE running any regex,
+      because InterSprint separates column content with &nbsp; inside <td>.
+    - medida_re now allows optional spaces around the speed-letter and R.
+    - Context tracking: when a row has size info but no price (rowspan header),
+      the next row(s) with price inherit that context.
+    - debug print for rows with price but no medida after decode.
     search_brand: fallback quando a célula da marca está vazia.
     """
     import re as _re
 
     products: list = []
     seen: set = set()
+    _no_medida_dbg: list = []  # DEBUG: primeiras linhas com preço mas sem medida
 
     price_re = _re.compile(
         r'€\s*(\d+[,.]\d{2})|(\d+[,.]\d{2})\s*€|&nbsp;\s*(\d+[,.]\d{2})\s*&nbsp;',
         _re.IGNORECASE
     )
-    # Medida: "205/55 VR16" (InterSprint), "195/65R15" (standard), "225/40 ZR18"
-    # Grupo 1 = "205/55", Grupo 2 = "16"
-    medida_re = _re.compile(r'(\d{3}/\d{2})\s*[A-Z]?R(\d{2})\b', _re.IGNORECASE)
-    indice_re = _re.compile(r'\b(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\b')
+    # medida_re aceita espaços opcionais ao redor da letra de construção e entre R e jante
+    # Suporta: "205/55 VR16", "205/55R16", "205/55 R16", "205/55 ZR18", "205/55 R 16"
+    medida_re = _re.compile(r'(\d{3}/\d{2})\s*[A-Z]?\s*R\s*(\d{2})\b', _re.IGNORECASE)
+    # indice_re aceita espaço opcional entre número e letra (ex: "94 V" ou "94V")
+    indice_re = _re.compile(r'\b(\d{2,3}\s*[A-Z]{1,2}(?:\s*XL)?)\b')
     tag_re    = _re.compile(r'<[^>]+>')
     row_re    = _re.compile(r'<tr[^>]*>(.*?)</tr>', _re.IGNORECASE | _re.DOTALL)
 
+    # Contexto do último row que tinha informação de medida/marca
+    # (para tabelas com rowspan onde o preço fica em linhas separadas)
+    _ctx_brand  = ''
+    _ctx_medida = ''
+    _ctx_indice = ''
+    _ctx_model  = ''
+
+    def _decode_entities(text: str) -> str:
+        """Decodifica entidades HTML comuns antes do matching de regex."""
+        text = text.replace('&#47;', '/').replace('&amp;', '&')
+        text = text.replace('&nbsp;', ' ').replace('&lt;', '<').replace('&gt;', '>')
+        text = _re.sub(r'&#(\d+);', lambda m: chr(int(m.group(1))), text)
+        text = _re.sub(r'&\w+;', ' ', text)  # outras entidades → espaço
+        return _re.sub(r'\s+', ' ', text).strip()
+
+    def _extract_model(row_text: str, after_pos: int, brand: str) -> str:
+        rem = row_text[after_pos:]
+        rem = price_re.sub('', rem)
+        rem = _re.sub(r'\bTL\b|\bTW\b', ' ', rem, flags=_re.IGNORECASE)
+        rem = _re.sub(r'\b\d{2,3}\s*[A-Z]{1,2}(?:\s*XL)?\b', ' ', rem)
+        rem = _re.sub(r'\b\d+\b', ' ', rem)
+        rem = _re.sub(r'\s+', ' ', rem).strip()
+        parts = rem.upper().split()
+        if parts:
+            first = parts[0]
+            if (first == brand
+                    or brand.startswith(first)
+                    or (len(first) <= 3 and first.isalpha())):
+                parts = parts[1:]
+        return ' '.join(parts)[:60].strip()
+
     for row_m in row_re.finditer(html):
-        row_text = _re.sub(r'\s+', ' ', tag_re.sub(' ', row_m.group(1))).strip()
+        # 1. Strip tags → raw text
+        raw = _re.sub(r'\s+', ' ', tag_re.sub(' ', row_m.group(1))).strip()
+        if len(raw) < 5:
+            continue
+
+        # 2. Decode HTML entities (CRÍTICO: &nbsp; é separador de colunas no portal)
+        row_text = _decode_entities(raw)
         if len(row_text) < 10:
             continue
 
-        # ── Preço ────────────────────────────────────────────────────────────
+        # 3. Tentar extrair medida DESTA linha (atualiza contexto se encontrar)
+        medida_m = medida_re.search(row_text)
+        if medida_m:
+            g1 = medida_m.group(1).replace(' ', '')   # normaliza "205 / 55" → "205/55"
+            _ctx_medida = f"{g1}R{medida_m.group(2)}".upper()
+            _ctx_brand  = row_text[:medida_m.start()].strip().upper()
+            if not _ctx_brand:
+                _ctx_brand = search_brand.upper() if search_brand else 'UNKNOWN'
+            # Índice: procurar a partir do início da medida
+            im = indice_re.search(row_text[medida_m.start():])
+            _ctx_indice = im.group(1).upper().replace(' ', '') if im else ''
+            _ctx_model  = _extract_model(row_text, medida_m.end(), _ctx_brand)
+            if not _ctx_model and _ctx_indice:
+                _ctx_model = _ctx_indice
+
+        # 4. Verificar se esta linha tem preço
         price_m = price_re.search(row_text)
         if not price_m:
             continue
         try:
-            price = float((price_m.group(1) or price_m.group(2) or price_m.group(3)).replace(',', '.'))
+            price = float(
+                (price_m.group(1) or price_m.group(2) or price_m.group(3)).replace(',', '.')
+            )
         except ValueError:
             continue
         if not (15 < price < 800):
             continue
 
-        # ── Medida ───────────────────────────────────────────────────────────
-        # Suporta "205/55 VR16" (InterSprint) e "205/55R16" (formato standard)
-        medida_m   = medida_re.search(row_text)
-        medida_val = (f"{medida_m.group(1)}R{medida_m.group(2)}").upper() if medida_m else ''
+        # 5. Usar medida/marca do contexto (desta linha ou da última linha com medida)
+        medida_val = _ctx_medida
+        brand_val  = _ctx_brand if _ctx_brand else (search_brand.upper() or 'UNKNOWN')
+        indice_val = _ctx_indice
+        model_val  = _ctx_model
 
-        # ── Índice de carga/velocidade ────────────────────────────────────────
-        indice_m   = indice_re.search(row_text)
-        indice_val = indice_m.group(1).upper() if indice_m else ''
+        # DEBUG: registar linhas com preço mas sem medida (máx 3)
+        if not medida_val and len(_no_medida_dbg) < 3:
+            _no_medida_dbg.append(row_text[:300])
 
-        # ── Marca: texto antes da medida (= coluna "Marca" da tabela) ─────────
-        # O InterSprint coloca a marca na 1ª coluna; aparece antes da medida.
-        # Não se usa brand_re porque as marcas do InterSprint (SUNNY, DELINTE,
-        # ROADHOG, DOUBLE COIN, etc.) não são enumeráveis numa lista fechada.
-        brand_val = ''
-        if medida_m:
-            brand_val = row_text[:medida_m.start()].strip().upper()
-        if not brand_val:
-            brand_val = search_brand.upper() if search_brand else 'UNKNOWN'
-
-        # ── Modelo: Descricao após tamanho, TL/TW, LI/SI e abreviatura marca ──
-        # Descricao: "205/55 VR16 TL 94V SUNNY NP226 XL"
-        # Após remover: size → "TL 94V SUNNY NP226 XL" → "SUNNY NP226 XL" → "NP226 XL"
-        remaining = row_text[medida_m.end():] if medida_m else row_text
-        remaining = price_re.sub('', remaining)                           # remove preço
-        remaining = _re.sub(r'&\w+;', ' ', remaining)                    # remove entidades HTML
-        remaining = _re.sub(r'\bTL\b|\bTW\b', ' ', remaining, flags=_re.IGNORECASE)
-        remaining = _re.sub(r'\b\d{2,3}[A-Z]{1,2}(?:\s+XL)?\b', ' ', remaining)   # LI/SI
-        remaining = _re.sub(r'\b\d+\b', ' ', remaining)                  # números soltos (stock)
-        remaining = _re.sub(r'[€\s]+', ' ', remaining).strip()
-
-        # Remove abreviatura/nome da marca do início do texto restante
-        # (a Descricao repete a marca como prefixo antes do nome do modelo)
-        parts = remaining.upper().split()
-        if parts:
-            first = parts[0]
-            if (first == brand_val
-                    or brand_val.startswith(first)
-                    or (len(first) <= 3 and first.isalpha())):
-                parts = parts[1:]
-        model = ' '.join(parts)[:60].strip()
-
-        # Fallback: sem nome de modelo → guardar pelo menos o índice
-        if not model and indice_val:
-            model = indice_val
+        if not model_val and indice_val:
+            model_val = indice_val
 
         key = f"{brand_val}|{medida_val}|{indice_val}|{price}"
         if key not in seen:
@@ -2373,11 +2400,13 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
                 'brand':  brand_val,
                 'medida': medida_val,
                 'indice': indice_val,
-                'model':  model,
+                'model':  model_val,
                 'price':  price,
             })
 
     print(f"  [InterSprint] _parse_intersprint_html: {len(products)} produtos")
+    if _no_medida_dbg:
+        print(f"  [InterSprint] DEBUG linhas-sem-medida: {_no_medida_dbg}")
     return products
 
 
