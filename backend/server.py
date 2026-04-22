@@ -415,8 +415,8 @@ async def run_scraping_job(job_id: str):
             item_status = ItemStatus.NOT_FOUND.value
             if best_price is not None:
                 economia_euro = item['meu_preco'] - best_price
-                economia_percent = (economia_euro / item['meu_preco']) * 100
-                if economia_euro >= job['threshold_euro'] or economia_percent >= job['threshold_percent']:
+                economia_percent = (economia_euro / item['meu_preco']) * 100 if item['meu_preco'] else None
+                if economia_euro >= job['threshold_euro'] or (economia_percent is not None and economia_percent >= job['threshold_percent']):
                     item_status = ItemStatus.FOUND.value
                     found += 1
                     total_savings += economia_euro
@@ -616,6 +616,7 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
 
             pairs_sem_dados = list(pairs_sem_dados_set)
 
+    scraper_timed_out = False
     # Scrape pares (medida, marca) em falta (ou todos se force=true)
     if pairs_sem_dados:
         medidas_sem_dados = list({p[0] for p in pairs_sem_dados})
@@ -659,6 +660,7 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
         except asyncio.TimeoutError:
             proc.kill()
             logger.warning("Scraper timeout após 10 minutos")
+            scraper_timed_out = True
 
     pool = await get_db()
     async with pool.acquire() as conn:
@@ -823,6 +825,7 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
         "items_matched": matched_count,
         "items_with_savings": found_count,
         "total_savings": round(total_savings, 2),
+        "scraper_timeout": scraper_timed_out,
     }
 
 
