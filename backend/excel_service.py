@@ -140,14 +140,20 @@ class ExcelService:
                     cell.alignment = Alignment(horizontal='center', vertical='center')
                     cell.border = border
                 
+                # Find Economia€ column index (1-based) dynamically
+                economia_col_idx = next(
+                    (i + 1 for i, col in enumerate(df.columns) if col == 'Economia€'),
+                    9,
+                )
+
                 # Format data rows
                 for row_idx, row in enumerate(worksheet.iter_rows(min_row=2, max_row=worksheet.max_row), start=2):
                     for cell in row:
                         cell.border = border
                         cell.alignment = Alignment(vertical='center')
-                        
+
                         # Highlight rows with savings
-                        if cell.column == 9:  # Economia€ column
+                        if cell.column == economia_col_idx:
                             if isinstance(cell.value, (int, float)) and cell.value > 0:
                                 for c in row:
                                     c.fill = savings_fill

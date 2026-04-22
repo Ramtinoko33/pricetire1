@@ -1120,6 +1120,8 @@ async def main():
         result = await scrape_euromais(username, password, medida)
     elif 'tugapneus' in supplier or 'tuga' in supplier:
         result = await scrape_tugapneus(username, password, medida, marca, modelo)
+    elif 'intersprint' in supplier or 'inter-sprint' in supplier:
+        result = await scrape_intersprint(username, password, medida, marca, modelo)
     else:
         result = {"supplier": supplier, "price": None, "error": f"Unknown supplier: {supplier}"}
     

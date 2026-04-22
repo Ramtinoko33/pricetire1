@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Standalone scraper that runs independently and saves results to MongoDB.
+Standalone scraper that runs independently and saves results to PostgreSQL.
 Can be triggered manually or via cron.
 
 Usage:
@@ -55,7 +55,7 @@ def extract_prices(content: str) -> list:
             try:
                 price_str = match.replace(',', '.')
                 price = float(price_str)
-                if 15 < price < 500:
+                if 15 < price < 800:
                     found_prices.append(price)
             except ValueError:
                 continue
@@ -2685,16 +2685,17 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                     supplier['name'], medida, m_brand,
                                 )
                             for prod in products:
-                                marca = prod.get('brand', '').upper()
-                                modelo = prod.get('model', '')
+                                prod_marca = prod.get('brand', '').upper()
+                                prod_modelo = prod.get('model', '')
+                                prod_indice = prod.get('indice') or ''
                                 await conn_save.execute(
                                     """
                                     INSERT INTO scraped_prices
-                                        (id, supplier_name, medida, marca, modelo, price, scraped_at)
-                                    VALUES ($1,$2,$3,$4,$5,$6,$7)
+                                        (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
+                                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
                                     """,
                                     str(uuid.uuid4()), supplier['name'], medida,
-                                    marca, modelo, prod.get('price'), now,
+                                    prod_marca, prod_modelo, prod.get('price'), prod_indice, now,
                                 )
                             print(f"  {medida}: saved {len(products)} products with brand/model")
                         else:
