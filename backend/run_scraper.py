@@ -2328,6 +2328,8 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
     def _extract_model(row_text: str, after_pos: int, brand: str) -> str:
         rem = row_text[after_pos:]
         rem = price_re.sub('', rem)
+        # Após decode, preços ficam como "93,16" sem &nbsp; — remover explicitamente
+        rem = _re.sub(r'\b\d+[,.]\d{2}\b', ' ', rem)
         rem = _re.sub(r'\bTL\b|\bTW\b', ' ', rem, flags=_re.IGNORECASE)
         rem = _re.sub(r'\b\d{2,3}\s*[A-Z]{1,2}(?:\s*XL)?\b', ' ', rem)
         rem = _re.sub(r'\b\d+\b', ' ', rem)
@@ -2367,8 +2369,8 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
             if not _ctx_model and _ctx_indice:
                 _ctx_model = _ctx_indice
 
-        # 4. Verificar se esta linha tem preço
-        price_m = price_re.search(row_text)
+        # 4. Verificar se esta linha tem preço (usar raw: &nbsp; ainda intacto)
+        price_m = price_re.search(raw)
         if not price_m:
             continue
         try:
