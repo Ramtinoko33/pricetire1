@@ -1028,6 +1028,8 @@ def _parse_intersprint_isolated(html: str, search_brand: str = '') -> list:
     def _extract_model(row_text: str, after_pos: int, brand: str) -> str:
         rem = row_text[after_pos:]
         rem = price_re.sub('', rem)
+        # Após decode, preços ficam como "89.90" sem € — remover explicitamente
+        rem = re.sub(r'\b\d+[,.]\d{2}\b', ' ', rem)
         rem = re.sub(r'\bTL\b|\bTW\b', ' ', rem, flags=re.IGNORECASE)
         rem = re.sub(r'\b\d{2,3}\s*[A-Z]{1,2}(?:\s*XL)?\b', ' ', rem)
         rem = re.sub(r'\b\d+\b', ' ', rem)
@@ -1063,7 +1065,8 @@ def _parse_intersprint_isolated(html: str, search_brand: str = '') -> list:
             if not _ctx_model and _ctx_indice:
                 _ctx_model = _ctx_indice
 
-        price_m = price_re.search(row_text)
+        # usar raw: &nbsp; ainda não foi decodificado, padrão &nbsp;123.45&nbsp; requer texto original
+        price_m = price_re.search(raw)
         if not price_m:
             continue
         try:
