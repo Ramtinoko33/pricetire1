@@ -2391,6 +2391,8 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
             continue
         if not (15 < price < 800):
             continue
+        if price < 50:
+            print(f"  [InterSprint] DEBUG low_price={price} raw={raw[:200]!r}")
 
         # 5. Usar medida/marca do contexto (desta linha ou da última linha com medida)
         medida_val = _ctx_medida
