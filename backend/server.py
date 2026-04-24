@@ -1128,7 +1128,12 @@ async def get_scraped_prices(
     pool = await get_db()
     async with pool.acquire() as conn:
         rs = rows(await conn.fetch(
-            f"SELECT * FROM scraped_prices WHERE {where} ORDER BY scraped_at DESC LIMIT 500",
+            f"""
+            SELECT sp.* FROM scraped_prices sp
+            INNER JOIN suppliers s ON LOWER(s.name) = LOWER(sp.supplier_name) AND s.is_active = TRUE
+            WHERE {where}
+            ORDER BY sp.scraped_at DESC LIMIT 500
+            """,
             *params,
         ))
     return rs
@@ -1141,9 +1146,10 @@ async def get_best_price(medida: str):
     async with pool.acquire() as conn:
         rs = rows(await conn.fetch(
             """
-            SELECT * FROM scraped_prices
-            WHERE medida ILIKE $1 AND price IS NOT NULL
-            ORDER BY price ASC LIMIT 100
+            SELECT sp.* FROM scraped_prices sp
+            INNER JOIN suppliers s ON LOWER(s.name) = LOWER(sp.supplier_name) AND s.is_active = TRUE
+            WHERE sp.medida ILIKE $1 AND sp.price IS NOT NULL
+            ORDER BY sp.price ASC LIMIT 100
             """,
             f"%{mn}%",
         ))
