@@ -2344,12 +2344,12 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
         return ' '.join(parts)[:60].strip()
 
     _all_rows = list(row_re.finditer(html))
-    print(f"  [InterSprint] DEBUG total <tr>: {len(_all_rows)}")
     _pr_hits = [r for r in _all_rows if price_re.search(_re.sub(r'\s+', ' ', tag_re.sub(' ', r.group(1))).strip())]
-    print(f"  [InterSprint] DEBUG rows com preço: {len(_pr_hits)}")
-    for _i, _r in enumerate(_all_rows[:3]):
-        _s = _re.sub(r'\s+', ' ', tag_re.sub(' ', _r.group(1))).strip()[:200]
-        print(f"  [InterSprint] DEBUG row[{_i}]: {_s!r}")
+    print(f"  [InterSprint] DEBUG total <tr>: {len(_all_rows)}, rows com preço: {len(_pr_hits)}")
+    for _i, _r in enumerate(_pr_hits[:5]):
+        _raw = _re.sub(r'\s+', ' ', tag_re.sub(' ', _r.group(1))).strip()
+        _dec = _decode_entities(_raw)
+        print(f"  [InterSprint] DEBUG price_row[{_i}] raw={_raw[:150]!r} decoded={_dec[:100]!r}")
 
     for row_m in row_re.finditer(html):
         # 1. Strip tags → raw text
@@ -2357,9 +2357,11 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
         if len(raw) < 5:
             continue
 
-        # 2. Decode HTML entities (CRÍTICO: &nbsp; é separador de colunas no portal)
+        # 2. Decode HTML entities (&nbsp; é separador de colunas no portal)
+        # Nota: linhas de preço isoladas ficam com < 10 chars após decode (ex: "93,16")
+        # por isso não filtrar pelo comprimento do decoded text — só rejeitar verdadeiramente vazias.
         row_text = _decode_entities(raw)
-        if len(row_text) < 10:
+        if not row_text:
             continue
 
         # 3. Tentar extrair medida DESTA linha (atualiza contexto se encontrar)
