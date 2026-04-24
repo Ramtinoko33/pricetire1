@@ -2343,6 +2343,14 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
                 parts = parts[1:]
         return ' '.join(parts)[:60].strip()
 
+    _all_rows = list(row_re.finditer(html))
+    print(f"  [InterSprint] DEBUG total <tr>: {len(_all_rows)}")
+    _pr_hits = [r for r in _all_rows if price_re.search(_re.sub(r'\s+', ' ', tag_re.sub(' ', r.group(1))).strip())]
+    print(f"  [InterSprint] DEBUG rows com preço: {len(_pr_hits)}")
+    for _i, _r in enumerate(_all_rows[:3]):
+        _s = _re.sub(r'\s+', ' ', tag_re.sub(' ', _r.group(1))).strip()[:200]
+        print(f"  [InterSprint] DEBUG row[{_i}]: {_s!r}")
+
     for row_m in row_re.finditer(html):
         # 1. Strip tags → raw text
         raw = _re.sub(r'\s+', ' ', tag_re.sub(' ', row_m.group(1))).strip()
