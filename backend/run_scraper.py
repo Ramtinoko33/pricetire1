@@ -1066,9 +1066,11 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         _save_debug('/tmp/soledad_after_login.html', await page.content())
         print(f"  [Soledad] After login: {url_after}")
 
-        # Verificar sucesso: password ainda visível OU URL não saiu da página de login
+        # Verificar sucesso: password ainda visível OU URL é exactamente a mesma da página de login.
+        # NOTA: não usar 'login' in url_after — o redirect SSO pós-auth tem /login?params=... na URL
+        # mas NÃO é a página de login (é um redirect para domínio diferente).
         login_form_still_visible = await page.locator('input[type="password"]').count() > 0
-        still_on_login_page = 'login' in url_after.lower() or url_after.rstrip('/') == url_login.rstrip('/')
+        still_on_login_page = url_after.rstrip('/') == url_login.rstrip('/')
         if login_form_still_visible or still_on_login_page:
             result["error"] = (
                 f"Login failed — password_visible={login_form_still_visible}, url={url_after}"
