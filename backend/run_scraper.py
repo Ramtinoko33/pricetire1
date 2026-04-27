@@ -1184,6 +1184,11 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                 return result
 
             ui_selectors = [
+                # Known selector for b2b.new.gruposoledad.com ng-bootstrap typeahead
+                '#typeahead-basic-busqueda',
+                'input[id*="busqueda" i]',
+                'input[id*="typeahead" i]',
+                # Generic fallbacks
                 'cx-searchbox input',                     # Spartacus searchbox
                 'input[placeholder*="medida" i]',
                 'input[placeholder*="pesqui" i]',
@@ -1248,6 +1253,49 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                 except Exception as se:
                     print(f"  [Soledad] Input error ({sel}): {se}")
                     continue
+
+            # Strategy B2: page.evaluate() fallback for Angular typeahead inputs
+            # that Playwright locators can't reach (shadow DOM or custom type attr)
+            if not search_done:
+                print(f"  [Soledad] Trying page.evaluate() typeahead fallback...")
+                for term in [medida_slashed, medida_norm]:
+                    try:
+                        found = await page.evaluate('''(term) => {
+                            const el = document.getElementById("typeahead-basic-busqueda")
+                                     || document.querySelector("input[id*='busqueda']")
+                                     || document.querySelector("input[id*='typeahead']");
+                            if (!el) return false;
+                            el.focus();
+                            el.value = term;
+                            el.dispatchEvent(new Event("input", {bubbles: true}));
+                            el.dispatchEvent(new Event("change", {bubbles: true}));
+                            return true;
+                        }''', term)
+                        if not found:
+                            print(f"  [Soledad] evaluate(): element not found in DOM")
+                            break
+                        print(f"  [Soledad] evaluate(): typed '{term}', pressing Enter")
+                        await asyncio.sleep(0.5)
+                        await page.keyboard.press('Enter')
+                        await asyncio.sleep(6)
+                        try:
+                            await page.wait_for_load_state("load", timeout=15000)
+                        except Exception:
+                            pass
+                        await asyncio.sleep(2)
+
+                        html_after = await page.content()
+                        has_s = medida_slashed.lower() in html_after.lower() or medida_norm in html_after
+                        has_p = bool(re.search(r'[€£$]\s*\d{2,3}|\d{2,3}[,\.]\d{2}\s*[€£$]', html_after))
+                        if has_s:
+                            print(f"  [Soledad] evaluate() search ok for '{term}' (has_price={has_p})")
+                            search_done = True
+                            _save_debug('/tmp/soledad_results.html', html_after)
+                            break
+                        print(f"  [Soledad] evaluate(): '{term}' not in results HTML")
+                    except Exception as ev_err:
+                        print(f"  [Soledad] evaluate() error: {ev_err}")
+                        break
 
         # Save final page state regardless
         final_html = await page.content()
