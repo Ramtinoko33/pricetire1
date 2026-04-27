@@ -945,8 +945,11 @@ async def scrape_euromais(page, username: str, password: str, medida: str) -> di
 
 async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                                url_login: str = "https://www.gruposoledad.com/b2b/current/login",
-                               url_search: str = "https://b2b.new.gruposoledad.com/dashboard/main") -> dict:
-    """Scrape Grupo Soledad B2B portal (modern SPA at b2b.new.gruposoledad.com)."""
+                               url_search: str = "https://b2b.new.gruposoledad.com/dashboard/main",
+                               skip_login: bool = False) -> dict:
+    """Scrape Grupo Soledad B2B portal (modern SPA at b2b.new.gruposoledad.com).
+    skip_login=True reuses an already-authenticated page (session reuse for multiple medidas).
+    """
     result = {
         "supplier": "Grupo Soledad",
         "price": None,
@@ -987,101 +990,104 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
 
     page.on('response', _capture_api_response)
 
+    url_origin = '/'.join(url_search.split('/')[:3])  # https://b2b.new.gruposoledad.com
+
     try:
-        # ── Login ────────────────────────────────────────────────────────────
-        print(f"  [Soledad] Navigating to: {url_login}")
-        try:
-            await page.goto(url_login, wait_until="domcontentloaded", timeout=60000)
-        except Exception:
-            await page.goto(url_login, wait_until="commit", timeout=60000)
-        try:
-            await page.wait_for_load_state("load", timeout=20000)
-        except Exception:
-            pass
-        await asyncio.sleep(2)
-        _save_debug('/tmp/soledad_pre_login.html', await page.content())
-        print(f"  [Soledad] Login page URL: {page.url}")
-
-        # Fill username — seletores específicos; evitar input[type="text"] genérico
-        # que apanharia qualquer campo de texto na página.
-        user_field = page.locator(
-            'input[name="userId"], input[name="username"], input[name="email"], '
-            'input[name="user"], input[type="email"], '
-            'input[id*="userId" i], input[id*="user" i], input[id*="email" i], '
-            'input[placeholder*="user" i], input[placeholder*="email" i], '
-            'input[placeholder*="utilizador" i], input[placeholder*="usuario" i]'
-        ).first
-        if await user_field.count() > 0:
-            await user_field.click()
-            await user_field.type(username, delay=80)
-            print(f"  [Soledad] Username entered")
+        if skip_login:
+            print(f"  [Soledad] Skipping login — reusing existing session for {medida}")
         else:
-            result["error"] = "Username field not found"
-            return result
+            # ── Login ────────────────────────────────────────────────────────────
+            print(f"  [Soledad] Navigating to: {url_login}")
+            try:
+                await page.goto(url_login, wait_until="domcontentloaded", timeout=60000)
+            except Exception:
+                await page.goto(url_login, wait_until="commit", timeout=60000)
+            try:
+                await page.wait_for_load_state("load", timeout=20000)
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+            _save_debug('/tmp/soledad_pre_login.html', await page.content())
+            print(f"  [Soledad] Login page URL: {page.url}")
 
-        await asyncio.sleep(0.4)
+            # Fill username — seletores específicos; evitar input[type="text"] genérico
+            # que apanharia qualquer campo de texto na página.
+            user_field = page.locator(
+                'input[name="userId"], input[name="username"], input[name="email"], '
+                'input[name="user"], input[type="email"], '
+                'input[id*="userId" i], input[id*="user" i], input[id*="email" i], '
+                'input[placeholder*="user" i], input[placeholder*="email" i], '
+                'input[placeholder*="utilizador" i], input[placeholder*="usuario" i]'
+            ).first
+            if await user_field.count() > 0:
+                await user_field.click()
+                await user_field.type(username, delay=80)
+                print(f"  [Soledad] Username entered")
+            else:
+                result["error"] = "Username field not found"
+                return result
 
-        pass_field = page.locator('input[type="password"]').first
-        if await pass_field.count() > 0:
-            await pass_field.click()
-            await pass_field.type(password, delay=80)
-            print(f"  [Soledad] Password entered")
-        else:
-            result["error"] = "Password field not found"
-            return result
+            await asyncio.sleep(0.4)
 
-        await asyncio.sleep(0.5)
+            pass_field = page.locator('input[type="password"]').first
+            if await pass_field.count() > 0:
+                await pass_field.click()
+                await pass_field.type(password, delay=80)
+                print(f"  [Soledad] Password entered")
+            else:
+                result["error"] = "Password field not found"
+                return result
 
-        # Click submit button
-        submit = page.locator(
-            'button[type="submit"], input[type="submit"], '
-            'button:has-text("Entrar"), button:has-text("Login"), '
-            'button:has-text("Iniciar"), button:has-text("Acceder"), '
-            'button:has-text("Sign In"), button:has-text("Iniciar sesión")'
-        ).first
-        if await submit.count() > 0:
-            await submit.click()
-            print(f"  [Soledad] Submit clicked")
-        else:
-            await pass_field.press('Enter')
-            print(f"  [Soledad] Submit via Enter")
-
-        # Wait for login: poll until password field disappears (works for any SPA/MPA)
-        print(f"  [Soledad] Waiting for login to complete...")
-        for _i in range(40):  # Up to 20 seconds
             await asyncio.sleep(0.5)
-            if await page.locator('input[type="password"]').count() == 0:
-                print(f"  [Soledad] Password field gone after ~{_i * 0.5:.0f}s")
-                break
-        else:
-            print(f"  [Soledad] Warning: password field still present after 20s")
 
-        try:
-            await page.wait_for_load_state("load", timeout=15000)
-        except Exception:
-            pass
-        await asyncio.sleep(3)
+            # Click submit button
+            submit = page.locator(
+                'button[type="submit"], input[type="submit"], '
+                'button:has-text("Entrar"), button:has-text("Login"), '
+                'button:has-text("Iniciar"), button:has-text("Acceder"), '
+                'button:has-text("Sign In"), button:has-text("Iniciar sesión")'
+            ).first
+            if await submit.count() > 0:
+                await submit.click()
+                print(f"  [Soledad] Submit clicked")
+            else:
+                await pass_field.press('Enter')
+                print(f"  [Soledad] Submit via Enter")
 
-        url_after = page.url
-        _save_debug('/tmp/soledad_after_login.html', await page.content())
-        print(f"  [Soledad] After login: {url_after}")
+            # Wait for login: poll until password field disappears (works for any SPA/MPA)
+            print(f"  [Soledad] Waiting for login to complete...")
+            for _i in range(40):  # Up to 20 seconds
+                await asyncio.sleep(0.5)
+                if await page.locator('input[type="password"]').count() == 0:
+                    print(f"  [Soledad] Password field gone after ~{_i * 0.5:.0f}s")
+                    break
+            else:
+                print(f"  [Soledad] Warning: password field still present after 20s")
 
-        # Verificar sucesso: password ainda visível OU URL é exactamente a mesma da página de login.
-        # NOTA: não usar 'login' in url_after — o redirect SSO pós-auth tem /login?params=... na URL
-        # mas NÃO é a página de login (é um redirect para domínio diferente).
-        login_form_still_visible = await page.locator('input[type="password"]').count() > 0
-        still_on_login_page = url_after.rstrip('/') == url_login.rstrip('/')
-        if login_form_still_visible or still_on_login_page:
-            result["error"] = (
-                f"Login failed — password_visible={login_form_still_visible}, url={url_after}"
-            )
-            print(f"  [Soledad] {result['error']}")
-            return result
-        print(f"  [Soledad] Login succeeded")
+            try:
+                await page.wait_for_load_state("load", timeout=15000)
+            except Exception:
+                pass
+            await asyncio.sleep(3)
+
+            url_after = page.url
+            _save_debug('/tmp/soledad_after_login.html', await page.content())
+            print(f"  [Soledad] After login: {url_after}")
+
+            # Verificar sucesso: password ainda visível OU URL é exactamente a mesma da página de login.
+            # NOTA: não usar 'login' in url_after — o redirect SSO pós-auth tem /login?params=... na URL
+            # mas NÃO é a página de login (é um redirect para domínio diferente).
+            login_form_still_visible = await page.locator('input[type="password"]').count() > 0
+            still_on_login_page = url_after.rstrip('/') == url_login.rstrip('/')
+            if login_form_still_visible or still_on_login_page:
+                result["error"] = (
+                    f"Login failed — password_visible={login_form_still_visible}, url={url_after}"
+                )
+                print(f"  [Soledad] {result['error']}")
+                return result
+            print(f"  [Soledad] Login succeeded")
 
         # ── Navigate to search page ───────────────────────────────────────────
-        url_origin = '/'.join(url_search.split('/')[:3])  # https://b2b.new.gruposoledad.com
-
         # Clear any API responses captured during login — we only want search responses
         api_responses.clear()
 
@@ -2721,8 +2727,74 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
         else:
             targets = [(m, '', '') for m in medidas]
 
+        # ── Grupo Soledad: sessão única para todas as medidas (evita login repetido) ──
+        if 'soledad' in supplier_name:
+            _sol_ctx_kwargs = dict(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1920, 'height': 1080},
+                locale='pt-PT',
+            )
+            async with async_playwright() as _p_sol:
+                _sol_browser = await _p_sol.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                )
+                _sol_ctx = await _sol_browser.new_context(**_sol_ctx_kwargs)
+                _sol_page = await _sol_ctx.new_page()
+                await _sol_page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
+                _sol_first = True
+                for medida, marca, modelo in targets:
+                    try:
+                        result = await scrape_grupo_soledad(
+                            _sol_page, supplier['username'], supplier['password'], medida,
+                            supplier.get('url_login', ''), supplier.get('url_search', ''),
+                            skip_login=(not _sol_first),
+                        )
+                        _sol_first = False
+                        result["medida"] = medida
+                        results.append(result)
+                        # Save to PostgreSQL
+                        products = result.get('products', [])
+                        now = datetime.now(timezone.utc)
+                        conn_save = await _pg_connect()
+                        try:
+                            if products:
+                                marcas_encontradas = {prod.get('brand', '').upper() for prod in products}
+                                for m_brand in marcas_encontradas:
+                                    await conn_save.execute(
+                                        "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2 AND COALESCE(marca,'')=$3",
+                                        supplier['name'], medida, m_brand,
+                                    )
+                                for prod in products:
+                                    await conn_save.execute(
+                                        "INSERT INTO scraped_prices (id,supplier_name,medida,marca,modelo,price,load_index,scraped_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        prod.get('brand', '').upper(), prod.get('model', ''),
+                                        prod.get('price'), prod.get('indice') or '', datetime.now(timezone.utc),
+                                    )
+                                print(f"  {medida}: saved {len(products)} products")
+                            else:
+                                await conn_save.execute(
+                                    "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2 AND marca IS NULL",
+                                    supplier['name'], medida,
+                                )
+                                if result.get('price') is not None:
+                                    await conn_save.execute(
+                                        "INSERT INTO scraped_prices (id,supplier_name,medida,price,scraped_at) VALUES ($1,$2,$3,$4,$5)",
+                                        str(uuid.uuid4()), supplier['name'], medida, result['price'], datetime.now(timezone.utc),
+                                    )
+                                print(f"  {medida}: €{result.get('price')} (no brand data)")
+                        finally:
+                            await conn_save.close()
+                        print(f"  {medida}: best price €{result.get('price')}" if result.get('price') else f"  {medida}: {result.get('error','No price found')}")
+                    except Exception as _e_sol:
+                        print(f"  Error (Soledad {medida}): {_e_sol}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_sol)})
+                await _sol_browser.close()
+            continue  # Skip the generic per-medida loop below
+
         for medida, marca, modelo in targets:
-            # Create completely fresh browser for each supplier (like test script does)
+            # Create completely fresh browser for each medida
             async with async_playwright() as p:
                 browser = await p.chromium.launch(
                     headless=True,
@@ -2741,10 +2813,10 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         'password': supplier['password'],
                     }
                 context = await browser.new_context(**_ctx_kwargs)
-                
+
                 page = await context.new_page()
                 await page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
-                
+
                 try:
                     if 'mp24' in supplier_name:
                         result = await scrape_mp24(page, supplier['username'], supplier['password'], medida)
@@ -2757,9 +2829,6 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                                     supplier.get('url_login', ''), supplier.get('url_search', ''))
                     elif 'euromais' in supplier_name or 'eurotyre' in supplier_name:
                         result = await scrape_euromais(page, supplier['username'], supplier['password'], medida)
-                    elif 'soledad' in supplier_name:
-                        result = await scrape_grupo_soledad(page, supplier['username'], supplier['password'], medida,
-                                                            supplier.get('url_login', ''), supplier.get('url_search', ''))
                     elif 'aguesport' in supplier_name:
                         result = await scrape_aguesport(page, supplier['username'], supplier['password'], medida)
                     elif 'abt' in supplier_name:
