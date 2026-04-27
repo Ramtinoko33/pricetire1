@@ -955,11 +955,6 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-    if not url_login:
-        url_login = "https://www.gruposoledad.com/b2b/current/login"
-    if not url_search:
-        url_search = "https://b2b.new.gruposoledad.com/dashboard/main"
-
     def _save_debug(path: str, content: str):
         try:
             with open(path, 'w', encoding='utf-8') as fh:
@@ -1007,14 +1002,14 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         _save_debug('/tmp/soledad_pre_login.html', await page.content())
         print(f"  [Soledad] Login page URL: {page.url}")
 
-        # Fill username (try multiple field name patterns)
+        # Fill username — seletores específicos; evitar input[type="text"] genérico
+        # que apanharia qualquer campo de texto na página.
         user_field = page.locator(
             'input[name="userId"], input[name="username"], input[name="email"], '
             'input[name="user"], input[type="email"], '
             'input[id*="userId" i], input[id*="user" i], input[id*="email" i], '
             'input[placeholder*="user" i], input[placeholder*="email" i], '
-            'input[placeholder*="utilizador" i], input[placeholder*="usuario" i], '
-            'input[type="text"]'
+            'input[placeholder*="utilizador" i], input[placeholder*="usuario" i]'
         ).first
         if await user_field.count() > 0:
             await user_field.click()
@@ -1071,10 +1066,13 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         _save_debug('/tmp/soledad_after_login.html', await page.content())
         print(f"  [Soledad] After login: {url_after}")
 
-        # Verify login success
+        # Verificar sucesso: password ainda visível OU URL não saiu da página de login
         login_form_still_visible = await page.locator('input[type="password"]').count() > 0
-        if login_form_still_visible:
-            result["error"] = f"Login failed — password form still visible at {url_after}"
+        still_on_login_page = 'login' in url_after.lower() or url_after.rstrip('/') == url_login.rstrip('/')
+        if login_form_still_visible or still_on_login_page:
+            result["error"] = (
+                f"Login failed — password_visible={login_form_still_visible}, url={url_after}"
+            )
             print(f"  [Soledad] {result['error']}")
             return result
         print(f"  [Soledad] Login succeeded")
@@ -1326,8 +1324,9 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                 _parse_api_json(data)
                 if len(products) > before:
                     print(f"  [Soledad] +{len(products)-before} products from {resp['url'].split('?')[0][-50:]}")
-            except Exception:
-                pass
+            except Exception as _parse_err:
+                print(f"  [Soledad] Warning: falha ao parsear resposta API "
+                      f"{resp['url'].split('?')[0][-50:]}: {_parse_err}")
 
         if products:
             print(f"  [Soledad] {len(products)} products from API interception")
@@ -1385,10 +1384,10 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                     }
                 }
 
-                // Deduplicate keeping lowest price
+                // Deduplicate keeping lowest price — chave usa model completo para não fundir variantes
                 const seen={};
                 for(const p of products){
-                    const k=(p.brand||"")+(p.model||"").substring(0,30);
+                    const k=(p.brand||"")+"|"+(p.model||"").trim();
                     if(!seen[k]||p.price<seen[k].price) seen[k]=p;
                 }
                 return Object.values(seen);
