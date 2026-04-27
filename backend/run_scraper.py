@@ -1126,182 +1126,142 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                 return result
 
         # ── Search ────────────────────────────────────────────────────────────
-        print(f"  [Soledad] Searching: {medida_slashed}")
-
-        # Strategy A: URL-based search (Spartacus / SAP Commerce patterns)
-        search_url_candidates = [
-            f"{url_origin}/search?query={medida_slashed}",
-            f"{url_origin}/search?q={medida_slashed}",
-            f"{url_origin}/products?search={medida_slashed}",
-            f"{url_origin}/catalog?q={medida_slashed}",
-            f"{url_origin}/b2b/current/search?text={medida_slashed}",
-            f"{url_origin}/b2b/current/search?q={medida_slashed}",
-        ]
+        # Portal: b2b.new.gruposoledad.com/dashboard/main
+        # Form fields: Medida (id=typeahead-basic-busqueda), Marca dropdown
+        # Submit: click red "Pesquisar" button → navigates to dashboard/products/car
+        print(f"  [Soledad] Searching: {medida_norm}")
 
         search_done = False
-        for surl in search_url_candidates:
+
+        # Always (re-)navigate to the search dashboard.
+        # Previous code left the browser on a wrong page due to failed URL attempts.
+        if page.url.rstrip('/') != url_search.rstrip('/'):
+            print(f"  [Soledad] Navigating to search form: {url_search}")
             try:
-                print(f"  [Soledad] URL search: {surl}")
-                await page.goto(surl, wait_until="domcontentloaded", timeout=25000)
+                await page.goto(url_search, wait_until="domcontentloaded", timeout=30000)
                 try:
                     await page.wait_for_load_state("load", timeout=15000)
                 except Exception:
                     pass
-                await asyncio.sleep(5)  # Angular needs time to render after route change
+                await asyncio.sleep(4)
+            except Exception as nav_e:
+                print(f"  [Soledad] Navigation warning: {nav_e}")
 
-                cur = page.url
-                if await page.locator('input[type="password"]').count() > 0:
-                    print(f"  [Soledad] URL search redirected to login, trying UI search")
-                    await page.goto(url_search, wait_until="domcontentloaded", timeout=30000)
-                    try:
-                        await page.wait_for_load_state("load", timeout=15000)
-                    except Exception:
-                        pass
-                    await asyncio.sleep(4)
-                    break
+        # Guard: abort if we ended up on login page
+        if await page.locator('input[type="password"]').count() > 0:
+            print(f"  [Soledad] Login page detected, aborting")
+            result["error"] = "Redirected to login before search — session issue"
+            _save_debug('/tmp/soledad_results.html', await page.content())
+            return result
 
-                html = await page.content()
-                has_size = medida_slashed.lower() in html.lower() or medida_norm in html
-                has_price = bool(re.search(r'[€£$]\s*\d{2,3}|\d{2,3}[,\.]\d{2}\s*[€£$]', html))
-                if has_size and has_price:
-                    print(f"  [Soledad] URL search found results at: {cur}")
-                    search_done = True
-                    _save_debug('/tmp/soledad_results.html', html)
-                    break
-                print(f"  [Soledad] {surl.split('?')[0]} — no size+price in HTML")
-            except Exception as ue:
-                print(f"  [Soledad] URL search error: {ue}")
+        # Wait for the Medida input to be visible (Angular renders asynchronously)
+        medida_css = '#typeahead-basic-busqueda, input[placeholder*="Medida" i], input[placeholder*="2055516" i]'
+        try:
+            await page.wait_for_selector(medida_css, timeout=15000, state="visible")
+            print(f"  [Soledad] Medida input is visible")
+        except Exception as ws_e:
+            print(f"  [Soledad] wait_for_selector timeout: {ws_e}")
+
+        # Step 1: Fill the Medida input
+        # Use medida_norm (e.g. "2056016") as shown in the field placeholder
+        filled = False
+        for sel in ['#typeahead-basic-busqueda',
+                    'input[placeholder*="Medida" i]',
+                    'input[placeholder*="2055516" i]']:
+            try:
+                el = page.locator(sel).first
+                if await el.count() == 0:
+                    continue
+                await el.click()
+                await el.fill(medida_norm)
+                print(f"  [Soledad] Filled medida '{medida_norm}' via locator: {sel}")
+                filled = True
+                break
+            except Exception as fe:
+                print(f"  [Soledad] Fill error ({sel}): {fe}")
                 continue
 
-        # Strategy B: UI search (type in search box)
-        if not search_done:
-            print(f"  [Soledad] Trying UI search...")
-            # Make sure we're on the dashboard, not login
-            if await page.locator('input[type="password"]').count() > 0:
-                print(f"  [Soledad] Login page detected, can't search")
-                result["error"] = "Redirected to login before search — session issue"
-                _save_debug('/tmp/soledad_results.html', await page.content())
-                return result
+        if not filled:
+            # Fallback: Angular-aware JS setter (works even with custom type= attributes)
+            print(f"  [Soledad] Locator fill failed, trying page.evaluate() setter...")
+            filled = await page.evaluate('''(term) => {
+                const el = document.getElementById("typeahead-basic-busqueda")
+                         || document.querySelector("input[placeholder*='Medida']")
+                         || document.querySelector("input[placeholder*='2055516']");
+                if (!el) return false;
+                // Angular-compatible native value setter
+                const setter = Object.getOwnPropertyDescriptor(
+                    window.HTMLInputElement.prototype, "value").set;
+                setter.call(el, term);
+                el.dispatchEvent(new Event("input", {bubbles: true}));
+                el.dispatchEvent(new Event("change", {bubbles: true}));
+                el.focus();
+                return true;
+            }''', medida_norm)
+            print(f"  [Soledad] evaluate() fill: {filled}")
 
-            ui_selectors = [
-                # Known selector for b2b.new.gruposoledad.com ng-bootstrap typeahead
-                '#typeahead-basic-busqueda',
-                'input[id*="busqueda" i]',
-                'input[id*="typeahead" i]',
-                # Generic fallbacks
-                'cx-searchbox input',                     # Spartacus searchbox
-                'input[placeholder*="medida" i]',
-                'input[placeholder*="pesqui" i]',
-                'input[placeholder*="buscar" i]',
-                'input[placeholder*="search" i]',
-                'input[placeholder*="referência" i]',
-                'input[placeholder*="dimensão" i]',
-                'input[placeholder*="referencia" i]',
-                'input[name*="search" i]',
-                'input[name*="pesqui" i]',
-                'input[name*="medida" i]',
-                'input[name*="query" i]',
-                'input[name*="texto" i]',
-                '[class*="search"] input',
-                '[role="search"] input',
-                'input[type="search"]',
-                'input[type="text"]:not([name*="user" i]):not([name*="email" i]):not([autocomplete*="email" i])',
-            ]
+        await asyncio.sleep(0.3)
 
-            for sel in ui_selectors:
-                try:
-                    el = page.locator(sel).first
-                    if await el.count() == 0:
-                        continue
-                    print(f"  [Soledad] Found input: {sel}")
-
-                    for term in [medida_slashed, medida_norm]:
-                        await el.click()
-                        await el.triple_click()
-                        await el.fill("")
-                        await el.type(term, delay=60)
-                        print(f"  [Soledad] Typed '{term}'")
-                        await asyncio.sleep(0.5)
-                        await el.press('Enter')
-                        await asyncio.sleep(6)  # Generous wait for SPA render
-                        try:
-                            await page.wait_for_load_state("load", timeout=15000)
-                        except Exception:
-                            pass
-                        await asyncio.sleep(2)
-
-                        html_after = await page.content()
-                        has_s = medida_slashed.lower() in html_after.lower() or medida_norm in html_after
-                        has_p = bool(re.search(r'[€£$]\s*\d{2,3}|\d{2,3}[,\.]\d{2}\s*[€£$]', html_after))
-                        if has_s:
-                            print(f"  [Soledad] UI search ok for '{term}' (has_price={has_p})")
-                            search_done = True
-                            _save_debug('/tmp/soledad_results.html', html_after)
-                            break
-                        print(f"  [Soledad] '{term}' not in results HTML")
-                        try:
-                            await el.triple_click()
-                        except Exception:
-                            pass
-
-                    if not search_done:
-                        # Still accept whatever state we're in — save for debug
-                        _save_debug('/tmp/soledad_results.html', await page.content())
-                        search_done = True
-                    break
-
-                except Exception as se:
-                    print(f"  [Soledad] Input error ({sel}): {se}")
+        # Step 2: Click the "Pesquisar" button (pressing Enter does NOT submit this form)
+        pesquisar_clicked = False
+        for btn_sel in [
+            'button:has-text("Pesquisar")',
+            'button:has-text("Pesquisa")',
+            'input[value*="Pesquisar" i]',
+            'button[type="submit"]',
+        ]:
+            try:
+                btn = page.locator(btn_sel).first
+                if await btn.count() == 0:
                     continue
+                await btn.click()
+                print(f"  [Soledad] Clicked Pesquisar via locator: {btn_sel}")
+                pesquisar_clicked = True
+                break
+            except Exception as be:
+                print(f"  [Soledad] Button error ({btn_sel}): {be}")
+                continue
 
-            # Strategy B2: page.evaluate() fallback for Angular typeahead inputs
-            # that Playwright locators can't reach (shadow DOM or custom type attr)
-            if not search_done:
-                print(f"  [Soledad] Trying page.evaluate() typeahead fallback...")
-                for term in [medida_slashed, medida_norm]:
-                    try:
-                        found = await page.evaluate('''(term) => {
-                            const el = document.getElementById("typeahead-basic-busqueda")
-                                     || document.querySelector("input[id*='busqueda']")
-                                     || document.querySelector("input[id*='typeahead']");
-                            if (!el) return false;
-                            el.focus();
-                            el.value = term;
-                            el.dispatchEvent(new Event("input", {bubbles: true}));
-                            el.dispatchEvent(new Event("change", {bubbles: true}));
-                            return true;
-                        }''', term)
-                        if not found:
-                            print(f"  [Soledad] evaluate(): element not found in DOM")
-                            break
-                        print(f"  [Soledad] evaluate(): typed '{term}', pressing Enter")
-                        await asyncio.sleep(0.5)
-                        await page.keyboard.press('Enter')
-                        await asyncio.sleep(6)
-                        try:
-                            await page.wait_for_load_state("load", timeout=15000)
-                        except Exception:
-                            pass
-                        await asyncio.sleep(2)
+        if not pesquisar_clicked:
+            print(f"  [Soledad] Locator click failed, trying page.evaluate() for button...")
+            pesquisar_clicked = await page.evaluate('''() => {
+                for (const b of document.querySelectorAll("button")) {
+                    if (b.textContent.trim().toLowerCase().includes("pesquisar")) {
+                        b.click();
+                        return true;
+                    }
+                }
+                return false;
+            }''')
+            print(f"  [Soledad] evaluate() button click: {pesquisar_clicked}")
 
-                        html_after = await page.content()
-                        has_s = medida_slashed.lower() in html_after.lower() or medida_norm in html_after
-                        has_p = bool(re.search(r'[€£$]\s*\d{2,3}|\d{2,3}[,\.]\d{2}\s*[€£$]', html_after))
-                        if has_s:
-                            print(f"  [Soledad] evaluate() search ok for '{term}' (has_price={has_p})")
-                            search_done = True
-                            _save_debug('/tmp/soledad_results.html', html_after)
-                            break
-                        print(f"  [Soledad] evaluate(): '{term}' not in results HTML")
-                    except Exception as ev_err:
-                        print(f"  [Soledad] evaluate() error: {ev_err}")
-                        break
+        # Step 3: Wait for the products page (dashboard/products/car)
+        if filled or pesquisar_clicked:
+            await asyncio.sleep(2)
+            try:
+                await page.wait_for_url("**/products/car**", timeout=20000)
+                print(f"  [Soledad] Navigated to products page: {page.url}")
+            except Exception:
+                try:
+                    await page.wait_for_url("**/products**", timeout=8000)
+                except Exception:
+                    pass
+            await asyncio.sleep(5)  # Angular needs extra time to render product list
 
-        # Save final page state regardless
+            products_html = await page.content()
+            has_s = medida_slashed.lower() in products_html.lower() or medida_norm in products_html
+            has_p = bool(re.search(r'[€£$]\s*\d{2,3}|\d{2,3}[,\.]\d{2}\s*[€£$]', products_html))
+            print(f"  [Soledad] Products page: url=.../{page.url.split('/')[-1]} has_size={has_s} has_price={has_p}")
+            _save_debug('/tmp/soledad_results.html', products_html)
+            search_done = True
+        else:
+            print(f"  [Soledad] Could not fill medida or click Pesquisar")
+
+        # Save final page state for debugging
         final_html = await page.content()
         if not search_done:
             _save_debug('/tmp/soledad_results.html', final_html)
-            print(f"  [Soledad] No search input found")
+            print(f"  [Soledad] Search not completed")
 
         # ── Extract products ──────────────────────────────────────────────────
         # Primary: parse intercepted JSON API responses
