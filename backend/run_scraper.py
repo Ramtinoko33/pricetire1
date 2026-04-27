@@ -1094,14 +1094,14 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         # Navigate to the B2B search dashboard
         print(f"  [Soledad] Navigating to: {url_search}")
         try:
-            await page.goto(url_search, wait_until="domcontentloaded", timeout=60000)
+            await page.goto(url_search, wait_until="domcontentloaded", timeout=20000)
         except Exception as nav_e:
             print(f"  [Soledad] Navigation warning: {nav_e}")
         try:
-            await page.wait_for_load_state("load", timeout=20000)
+            await page.wait_for_load_state("load", timeout=8000)
         except Exception:
             pass
-        await asyncio.sleep(4)  # Extra wait for Angular to render
+        await asyncio.sleep(2)  # Angular render
 
         _save_debug('/tmp/soledad_search_page.html', await page.content())
         search_page_url = page.url
@@ -1144,12 +1144,12 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         if page.url.rstrip('/') != url_search.rstrip('/'):
             print(f"  [Soledad] Navigating to search form: {url_search}")
             try:
-                await page.goto(url_search, wait_until="domcontentloaded", timeout=30000)
+                await page.goto(url_search, wait_until="domcontentloaded", timeout=15000)
                 try:
-                    await page.wait_for_load_state("load", timeout=15000)
+                    await page.wait_for_load_state("load", timeout=6000)
                 except Exception:
                     pass
-                await asyncio.sleep(4)
+                await asyncio.sleep(2)
             except Exception as nav_e:
                 print(f"  [Soledad] Navigation warning: {nav_e}")
 
@@ -1163,7 +1163,7 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         # Wait for the Medida input to be visible (Angular renders asynchronously)
         medida_css = '#typeahead-basic-busqueda, input[placeholder*="Medida" i], input[placeholder*="2055516" i]'
         try:
-            await page.wait_for_selector(medida_css, timeout=15000, state="visible")
+            await page.wait_for_selector(medida_css, timeout=10000, state="visible")
             print(f"  [Soledad] Medida input is visible")
         except Exception as ws_e:
             print(f"  [Soledad] wait_for_selector timeout: {ws_e}")
@@ -1245,14 +1245,14 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         if filled or pesquisar_clicked:
             await asyncio.sleep(2)
             try:
-                await page.wait_for_url("**/products/car**", timeout=20000)
+                await page.wait_for_url("**/products/car**", timeout=15000)
                 print(f"  [Soledad] Navigated to products page: {page.url}")
             except Exception:
                 try:
-                    await page.wait_for_url("**/products**", timeout=8000)
+                    await page.wait_for_url("**/products**", timeout=5000)
                 except Exception:
                     pass
-            await asyncio.sleep(5)  # Angular needs extra time to render product list
+            await asyncio.sleep(3)  # Angular needs extra time to render product list
 
             products_html = await page.content()
             has_s = medida_slashed.lower() in products_html.lower() or medida_norm in products_html
@@ -2745,12 +2745,14 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                 _sol_first = True
                 for medida, marca, modelo in targets:
                     try:
+                        _is_first = _sol_first
+                        _sol_first = False  # set before await so exceptions don't leave it True
                         result = await scrape_grupo_soledad(
                             _sol_page, supplier['username'], supplier['password'], medida,
-                            supplier.get('url_login', ''), supplier.get('url_search', ''),
-                            skip_login=(not _sol_first),
+                            supplier.get('url_login') or 'https://www.gruposoledad.com/b2b/current/login',
+                            supplier.get('url_search') or 'https://b2b.new.gruposoledad.com/dashboard/main',
+                            skip_login=(not _is_first),
                         )
-                        _sol_first = False
                         result["medida"] = medida
                         results.append(result)
                         # Save to PostgreSQL
