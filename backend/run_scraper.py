@@ -2343,14 +2343,6 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
                 parts = parts[1:]
         return ' '.join(parts)[:60].strip()
 
-    _all_rows = list(row_re.finditer(html))
-    _pr_hits = [r for r in _all_rows if price_re.search(_re.sub(r'\s+', ' ', tag_re.sub(' ', r.group(1))).strip())]
-    print(f"  [InterSprint] DEBUG total <tr>: {len(_all_rows)}, rows com preço: {len(_pr_hits)}")
-    for _i, _r in enumerate(_pr_hits[:5]):
-        _raw = _re.sub(r'\s+', ' ', tag_re.sub(' ', _r.group(1))).strip()
-        _dec = _decode_entities(_raw)
-        print(f"  [InterSprint] DEBUG price_row[{_i}] raw={_raw[:150]!r} decoded={_dec[:100]!r}")
-
     for row_m in row_re.finditer(html):
         # 1. Strip tags → raw text
         raw = _re.sub(r'\s+', ' ', tag_re.sub(' ', row_m.group(1))).strip()
@@ -2391,8 +2383,6 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
             continue
         if not (15 < price < 800):
             continue
-        if price < 50:
-            print(f"  [InterSprint] DEBUG low_price={price} raw={raw[:200]!r} brand={_ctx_brand!r} model={_ctx_model!r} indice={_ctx_indice!r}")
 
         # 5. Usar medida/marca do contexto (desta linha ou da última linha com medida)
         medida_val = _ctx_medida
