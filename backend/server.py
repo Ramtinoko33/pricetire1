@@ -655,11 +655,11 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
             cwd='/app/backend',
         )
         try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=600)
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=1200)
             logger.info(f"Scraper concluído. Output final: {stdout.decode()[-500:]}")
         except asyncio.TimeoutError:
             proc.kill()
-            logger.warning("Scraper timeout após 10 minutos")
+            logger.warning("Scraper timeout após 20 minutos")
             scraper_timed_out = True
 
     pool = await get_db()

@@ -1264,6 +1264,80 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             print(f"  [Soledad] Search not completed")
 
         # ── Extract products ──────────────────────────────────────────────────
+        # Brand/model abbreviation tables for Grupo Soledad's description format
+        # e.g. "195/65X15 MICH.PCY4 91H" → brand=MICHELIN, model=PRIMACY 4
+        _SOL_BRANDS = {
+            'MICH': 'MICHELIN',    'CONT': 'CONTINENTAL',  'GY': 'GOODYEAR',
+            'GOOD': 'GOODYEAR',    'PIREL': 'PIRELLI',     'PIRE': 'PIRELLI',
+            'BS': 'BRIDGESTONE',   'BRID': 'BRIDGESTONE',  'DUN': 'DUNLOP',
+            'DUNL': 'DUNLOP',      'HAN': 'HANKOOK',       'HANK': 'HANKOOK',
+            'YOKO': 'YOKOHAMA',    'TOYO': 'TOYO',         'NEXEN': 'NEXEN',
+            'KUMHO': 'KUMHO',      'FALK': 'FALKEN',       'FALKEN': 'FALKEN',
+            'NOK': 'NOKIAN',       'NOKIAN': 'NOKIAN',     'VRED': 'VREDESTEIN',
+            'MAXX': 'MAXXIS',      'UNIR': 'UNIROYAL',     'COOP': 'COOPER',
+            'SEMP': 'SEMPERIT',    'SEMPERIT': 'SEMPERIT', 'BARUM': 'BARUM',
+            'KLEB': 'KLEBER',      'KLEBER': 'KLEBER',     'FULDA': 'FULDA',
+            'GISL': 'GISLAVED',    'LINGL': 'LINGLONG',    'GEN': 'GENERAL',
+            'SAIL': 'SAILUN',      'WEST': 'WESTLAKE',     'NANK': 'NANKANG',
+            'TRIAN': 'TRIANGLE',   'LASSA': 'LASSA',       'SAVA': 'SAVA',
+        }
+        _SOL_MODELS = {
+            # MICHELIN
+            'PCY4': 'PRIMACY 4',        'PCY5': 'PRIMACY 5',
+            'PCY3': 'PRIMACY 3',        'PCY.ST': 'PRIMACY ST',
+            'CROSSC.2': 'CROSSCLIMATE 2', 'CROSSC.+': 'CROSSCLIMATE+',
+            'CROSSC+': 'CROSSCLIMATE+', 'CROSSCLIMATE.2': 'CROSSCLIMATE 2',
+            'PILOT.SP.4': 'PILOT SPORT 4', 'PILOT.SP.5': 'PILOT SPORT 5',
+            'PILOT.SP.4S': 'PILOT SPORT 4S', 'PILOT.SP.3': 'PILOT SPORT 3',
+            'PILOT.SP.CUP2': 'PILOT SPORT CUP 2',
+            'ALPIN.6': 'ALPIN 6',       'ALPIN.A4': 'ALPIN A4',
+            'ALPIN.A3': 'ALPIN A3',
+            'LAT.SP.3': 'LATITUDE SPORT 3', 'LAT.SPORT': 'LATITUDE SPORT',
+            'LAT.XCLIM': 'LATITUDE X-ICE', 'LAT.ALPIN': 'LATITUDE ALPIN',
+            'E.PRIM.4': 'E PRIMACY 4',
+            'AGIL.+': 'AGILITY+',       'EN.SAV+': 'ENERGY SAVER+',
+            # CONTINENTAL
+            'PREMIUMCONTACT.7': 'PREMIUMCONTACT 7', 'PREMIUMCONTACT.6': 'PREMIUMCONTACT 6',
+            'SPORTCONTACT.7': 'SPORTCONTACT 7', 'SPORTCONTACT.6': 'SPORTCONTACT 6',
+            'ECOCONTACT.6': 'ECOCONTACT 6', 'ALLSEASONS.CONT.3': 'ALLSEASONCONTACT 3',
+            'WINTERCONTACT.TS870': 'WINTERCONTACT TS 870',
+            # BRIDGESTONE
+            'TURANZA.T005': 'TURANZA T005', 'TURANZA.T006': 'TURANZA T006',
+            'POTENZA.SPORT': 'POTENZA SPORT', 'BLIZZAK.LM005': 'BLIZZAK LM005',
+            # GOODYEAR
+            'EFF.GRIP.PERF.2': 'EFFICIENTGRIP PERF 2', 'EFF.GRIP.2': 'EFFICIENTGRIP 2',
+            'EAGLE.F1.ASYMM.6': 'EAGLE F1 ASYMMETRIC 6',
+            'ULTRA.GRIP.9+': 'ULTRAGRIP 9+',
+        }
+        # Description regex: optional medida + BRAND.MODEL_CODE + LI+SI
+        _sol_desc_re = re.compile(
+            r'^(?:\d{3}/\d{2}[Xx]\d{2}\s+)?'  # optional "195/65X15 "
+            r'([A-Z]{2,8})\.'                   # brand code like MICH
+            r'([A-Z0-9.+]+(?:\s+\w+)?)'         # model code like PCY4 or CROSSC.2
+            r'(?:\s+\d{2,3}[A-Z]+(?:\s+XL)?)?$',  # optional LI+SI
+            re.IGNORECASE
+        )
+
+        def _expand_soledad(brand: str, model: str):
+            """Expand Grupo Soledad brand abbreviations and model codes."""
+            b = brand.strip().upper()
+            m = model.strip()
+            # Try to expand known brand abbreviation
+            expanded_b = _SOL_BRANDS.get(b, b)
+            # If model looks like a description (BRAND.MODEL), parse it
+            if not expanded_b or expanded_b == b:
+                src = m.upper() if m else b
+                hit = _sol_desc_re.match(src)
+                if hit:
+                    b_code = hit.group(1).upper()
+                    m_code = hit.group(2).strip().upper()
+                    expanded_b = _SOL_BRANDS.get(b_code, b_code)
+                    expanded_m = _SOL_MODELS.get(m_code, m_code.replace('.', ' ').replace('_', ' '))
+                    return expanded_b, expanded_m
+            # Expand known model code
+            expanded_m = _SOL_MODELS.get(m.upper(), m)
+            return expanded_b, expanded_m
+
         # Primary: parse intercepted JSON API responses
         products = []
 
@@ -1274,10 +1348,13 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             if isinstance(data, list):
                 for item in data:
                     if isinstance(item, dict):
-                        # Try to find price
+                        # Try to find price — extended field list for Spanish/Portuguese B2B portals
                         price_val = None
-                        for pk in ['price', 'preco', 'pvp', 'valor', 'netPrice',
-                                   'purchasePrice', 'salePrice', 'unitPrice']:
+                        used_pk = None
+                        for pk in ['pvp', 'preco', 'precoBruto', 'precoFinal', 'precoUnitario',
+                                   'pvpFinal', 'pvpNet', 'netPrice', 'purchasePrice',
+                                   'salePrice', 'unitPrice', 'price', 'valor',
+                                   'coste', 'tarifa', 'importe']:
                             v = item.get(pk)
                             if v is None:
                                 continue
@@ -1287,6 +1364,8 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                                 price_val = float(str(v).replace(',', '.').replace('€', '').strip())
                                 if price_val < 10 or price_val > 2000:
                                     price_val = None
+                                else:
+                                    used_pk = pk
                             except Exception:
                                 pass
                             if price_val:
@@ -1297,20 +1376,24 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                             continue
 
                         brand_val = ''
-                        for bk in ['marca', 'brand', 'manufacturer', 'fabricante', 'brandName']:
+                        for bk in ['marca', 'brand', 'manufacturer', 'fabricante',
+                                   'brandName', 'marque', 'fabricant']:
                             v = item.get(bk)
                             if v:
                                 brand_val = str(v).upper()
                                 break
 
                         model_val = ''
-                        for mk in ['modelo', 'model', 'description', 'descricao',
-                                   'name', 'nome', 'designation', 'title']:
+                        for mk in ['descripcion', 'descricao', 'description', 'modelo',
+                                   'model', 'name', 'nome', 'designation', 'title',
+                                   'denominacion', 'referencia']:
                             v = item.get(mk)
                             if v:
                                 model_val = str(v)
                                 break
 
+                        print(f"  [Soledad] API product: brand={brand_val!r} "
+                              f"model={model_val[:40]!r} price={price_val} (field={used_pk})")
                         products.append({'brand': brand_val, 'model': model_val, 'price': price_val})
                     else:
                         _parse_api_json(item, depth + 1)
@@ -1345,7 +1428,8 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             print(f"  [Soledad] No API products — trying DOM extraction")
             products = await page.evaluate(r'''() => {
                 const products = [];
-                const BRANDS = /MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL|SEMPERIT|BARUM|LASSA|SAVA|KLEBER|FULDA|GISLAVED|COOPER|NANKANG|LINGLONG|TRIANGLE|SAILUN|WESTLAKE/i;
+                // Full names + Grupo Soledad abbreviations (MICH.PCY4, CONT.ECO6, etc.)
+                const BRANDS = /MICHELIN|MICH(?=\.)|BRIDGESTONE|BS(?=\.)|CONTINENTAL|CONT(?=\.)|PIRELLI|PIREL(?=\.)|GOODYEAR|GY(?=\.)|DUNLOP|DUN(?=\.)|HANKOOK|HAN(?=\.)|YOKOHAMA|YOKO(?=\.)|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|FALK(?=\.)|NOKIAN|NOK(?=\.)|VREDESTEIN|VRED(?=\.)|MAXXIS|MAXX(?=\.)|GENERAL|GEN(?=\.)|UNIROYAL|UNIR(?=\.)|SEMPERIT|SEMP(?=\.)|BARUM|LASSA|SAVA|KLEBER|KLEB(?=\.)|FULDA|GISLAVED|GISL(?=\.)|COOPER|COOP(?=\.)|NANKANG|NANK(?=\.)|LINGLONG|LINGL(?=\.)|TRIANGLE|TRIAN(?=\.)|SAILUN|SAIL(?=\.)|WESTLAKE|WEST(?=\.)/i;
 
                 // Strategy 1: tables
                 for (const tbl of document.querySelectorAll("table")) {
@@ -1390,7 +1474,8 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                             const bm=at.match(BRANDS);
                             if(bm){brand=bm[0];model=ancestor.textContent.trim().substring(0,120);break;}
                         }
-                        if(brand) products.push({brand,model,price});
+                        // Accept abbreviated brand format (MICH.PCY4) even if BRANDS regex didn't match
+                        if(brand || /[A-Z]{2,8}\.[A-Z0-9]/.test(model.toUpperCase())) products.push({brand,model,price});
                     }
                 }
 
@@ -1405,7 +1490,20 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             if products:
                 print(f"  [Soledad] {len(products)} products from DOM")
 
+        # Post-process: expand Grupo Soledad brand abbreviations and model codes
+        # e.g. brand="MICH" → "MICHELIN", model="PCY4" → "PRIMACY 4"
+        # Also handles full description in model field: "195/65X15 MICH.PCY4 91H"
+        for p in products:
+            b, m = _expand_soledad(p.get('brand', ''), p.get('model', ''))
+            if b:
+                p['brand'] = b
+            if m:
+                p['model'] = m
+
         if products:
+            print(f"  [Soledad] {len(products)} products after brand expansion")
+            for p in products[:5]:
+                print(f"    brand={p.get('brand')!r} model={p.get('model','')[:40]!r} price={p.get('price')}")
             result["products"] = products
             prices = [p['price'] for p in products]
             result["price"] = min(prices)
