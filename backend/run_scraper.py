@@ -1163,86 +1163,73 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             _save_debug('/tmp/soledad_results.html', await page.content())
             return result
 
-        # Wait for the Medida input to be visible (Angular renders asynchronously)
-        medida_css = '#typeahead-basic-busqueda, input[placeholder*="Medida" i], input[placeholder*="2055516" i]'
-        try:
-            await page.wait_for_selector(medida_css, timeout=10000, state="visible")
-            print(f"  [Soledad] Medida input is visible")
-        except Exception as ws_e:
-            print(f"  [Soledad] wait_for_selector timeout: {ws_e}")
-
-        # Step 1: Fill the Medida input
-        # Use medida_norm (e.g. "2056016") as shown in the field placeholder
-        filled = False
-        for sel in ['#typeahead-basic-busqueda',
-                    'input[placeholder*="Medida" i]',
-                    'input[placeholder*="2055516" i]']:
-            try:
-                el = page.locator(sel).first
-                if await el.count() == 0:
-                    continue
-                await el.click()
-                await el.fill(medida_norm)
-                print(f"  [Soledad] Filled medida '{medida_norm}' via locator: {sel}")
-                filled = True
-                break
-            except Exception as fe:
-                print(f"  [Soledad] Fill error ({sel}): {fe}")
-                continue
+        # Step 1: Fill the Medida input via evaluate() (bypasses visibility checks)
+        # The Angular input is in the DOM but may not be "visible" to Playwright
+        # (hidden by CSS transitions/animations). evaluate() works regardless.
+        filled = await page.evaluate('''(term) => {
+            const el = document.getElementById("typeahead-basic-busqueda")
+                     || document.querySelector("input[placeholder*='Medida']")
+                     || document.querySelector("input[placeholder*='2055516']");
+            if (!el) return false;
+            const setter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, "value").set;
+            setter.call(el, term);
+            el.dispatchEvent(new Event("input", {bubbles: true}));
+            el.dispatchEvent(new Event("change", {bubbles: true}));
+            el.focus();
+            return true;
+        }''', medida_norm)
+        print(f"  [Soledad] evaluate() fill '{medida_norm}': {filled}")
 
         if not filled:
-            # Fallback: Angular-aware JS setter (works even with custom type= attributes)
-            print(f"  [Soledad] Locator fill failed, trying page.evaluate() setter...")
-            filled = await page.evaluate('''(term) => {
-                const el = document.getElementById("typeahead-basic-busqueda")
-                         || document.querySelector("input[placeholder*='Medida']")
-                         || document.querySelector("input[placeholder*='2055516']");
-                if (!el) return false;
-                // Angular-compatible native value setter
-                const setter = Object.getOwnPropertyDescriptor(
-                    window.HTMLInputElement.prototype, "value").set;
-                setter.call(el, term);
-                el.dispatchEvent(new Event("input", {bubbles: true}));
-                el.dispatchEvent(new Event("change", {bubbles: true}));
-                el.focus();
-                return true;
-            }''', medida_norm)
-            print(f"  [Soledad] evaluate() fill: {filled}")
+            # Fallback: try locator with short timeout (3s max to fail fast)
+            for sel in ['#typeahead-basic-busqueda',
+                        'input[placeholder*="Medida" i]',
+                        'input[placeholder*="2055516" i]']:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() == 0:
+                        continue
+                    await el.click(timeout=3000)
+                    await el.fill(medida_norm, timeout=3000)
+                    print(f"  [Soledad] Filled via locator: {sel}")
+                    filled = True
+                    break
+                except Exception as fe:
+                    print(f"  [Soledad] Fill error ({sel}): {fe}")
+                    continue
 
         await asyncio.sleep(0.3)
 
-        # Step 2: Click the "Pesquisar" button (pressing Enter does NOT submit this form)
-        pesquisar_clicked = False
-        for btn_sel in [
-            'button:has-text("Pesquisar")',
-            'button:has-text("Pesquisa")',
-            'input[value*="Pesquisar" i]',
-            'button[type="submit"]',
-        ]:
-            try:
-                btn = page.locator(btn_sel).first
-                if await btn.count() == 0:
-                    continue
-                await btn.click()
-                print(f"  [Soledad] Clicked Pesquisar via locator: {btn_sel}")
-                pesquisar_clicked = True
-                break
-            except Exception as be:
-                print(f"  [Soledad] Button error ({btn_sel}): {be}")
-                continue
+        # Step 2: Click "Pesquisar" via evaluate() first (bypasses visibility)
+        pesquisar_clicked = await page.evaluate('''() => {
+            for (const b of document.querySelectorAll("button")) {
+                if (b.textContent.trim().toLowerCase().includes("pesquisar")) {
+                    b.click();
+                    return true;
+                }
+            }
+            // Fallback: submit the form directly
+            const form = document.querySelector("form");
+            if (form) { form.dispatchEvent(new Event("submit", {bubbles:true,cancelable:true})); return true; }
+            return false;
+        }''')
+        print(f"  [Soledad] evaluate() button click: {pesquisar_clicked}")
 
         if not pesquisar_clicked:
-            print(f"  [Soledad] Locator click failed, trying page.evaluate() for button...")
-            pesquisar_clicked = await page.evaluate('''() => {
-                for (const b of document.querySelectorAll("button")) {
-                    if (b.textContent.trim().toLowerCase().includes("pesquisar")) {
-                        b.click();
-                        return true;
-                    }
-                }
-                return false;
-            }''')
-            print(f"  [Soledad] evaluate() button click: {pesquisar_clicked}")
+            # Fallback: try locator with short timeout
+            for btn_sel in ['button:has-text("Pesquisar")', 'button[type="submit"]']:
+                try:
+                    btn = page.locator(btn_sel).first
+                    if await btn.count() == 0:
+                        continue
+                    await btn.click(timeout=3000, force=True)
+                    print(f"  [Soledad] Clicked Pesquisar via locator: {btn_sel}")
+                    pesquisar_clicked = True
+                    break
+                except Exception as be:
+                    print(f"  [Soledad] Button error ({btn_sel}): {be}")
+                    continue
 
         # Step 3: Wait for the products page (dashboard/products/car)
         if filled or pesquisar_clicked:
@@ -2743,10 +2730,13 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
                 )
                 _sol_ctx = await _sol_browser.new_context(**_sol_ctx_kwargs)
-                _sol_page = await _sol_ctx.new_page()
-                await _sol_page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
+                # Nota: cada medida usa uma página nova no mesmo contexto.
+                # O contexto partilha cookies (sessão autenticada), mas a página é fresca.
+                # Isto evita que um timeout/cancel numa medida corrompa o estado do browser.
                 _sol_first = True
                 for medida, marca, modelo in targets:
+                    _sol_page = await _sol_ctx.new_page()
+                    await _sol_page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
                     try:
                         _is_first = _sol_first
                         _sol_first = False  # set before await so exceptions don't leave it True
@@ -2806,6 +2796,11 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     except Exception as _e_sol:
                         print(f"  Error (Soledad {medida}): {_e_sol}")
                         results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_sol)})
+                    finally:
+                        try:
+                            await _sol_page.close()
+                        except Exception:
+                            pass
                 await _sol_browser.close()
             continue  # Skip the generic per-medida loop below
 
