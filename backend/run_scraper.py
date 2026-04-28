@@ -944,7 +944,7 @@ async def scrape_euromais(page, username: str, password: str, medida: str) -> di
 # ============================================================
 
 async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
-                               url_login: str = "https://www.gruposoledad.com/b2b/current/login",
+                               url_login: str = "https://b2b.new.gruposoledad.com/login",
                                url_search: str = "https://b2b.new.gruposoledad.com/dashboard/main",
                                skip_login: bool = False) -> dict:
     """Scrape Grupo Soledad B2B portal (modern SPA at b2b.new.gruposoledad.com).
@@ -1163,53 +1163,55 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             _save_debug('/tmp/soledad_results.html', await page.content())
             return result
 
-        # Step 1: Fill the Medida input via evaluate() (bypasses visibility checks)
-        # The Angular input is in the DOM but may not be "visible" to Playwright
-        # (hidden by CSS transitions/animations). evaluate() works regardless.
-        filled = await page.evaluate('''(term) => {
+        # Step 1: Fill Medida — focus via JS then type via keyboard (full Angular event pipeline)
+        el_focused = await page.evaluate('''() => {
             const el = document.getElementById("typeahead-basic-busqueda")
                      || document.querySelector("input[placeholder*='Medida']")
                      || document.querySelector("input[placeholder*='2055516']");
             if (!el) return false;
-            const setter = Object.getOwnPropertyDescriptor(
-                window.HTMLInputElement.prototype, "value").set;
-            setter.call(el, term);
-            el.dispatchEvent(new Event("input", {bubbles: true}));
-            el.dispatchEvent(new Event("change", {bubbles: true}));
             el.focus();
+            el.select();
             return true;
-        }''', medida_norm)
-        print(f"  [Soledad] evaluate() fill '{medida_norm}': {filled}")
+        }''')
+        filled = False
+        if el_focused:
+            try:
+                await page.keyboard.type(medida_norm, delay=40)
+                await asyncio.sleep(0.3)
+                val_in_dom = await page.evaluate(
+                    'document.getElementById("typeahead-basic-busqueda")?.value || ""')
+                filled = medida_norm in (val_in_dom or '')
+                print(f"  [Soledad] keyboard.type fill: dom_val={val_in_dom!r} ok={filled}")
+            except Exception as ke:
+                print(f"  [Soledad] keyboard.type error: {ke}")
 
         if not filled:
-            # Fallback: try locator with short timeout (3s max to fail fast)
-            for sel in ['#typeahead-basic-busqueda',
-                        'input[placeholder*="Medida" i]',
-                        'input[placeholder*="2055516" i]']:
-                try:
-                    el = page.locator(sel).first
-                    if await el.count() == 0:
-                        continue
-                    await el.click(timeout=3000)
-                    await el.fill(medida_norm, timeout=3000)
-                    print(f"  [Soledad] Filled via locator: {sel}")
-                    filled = True
-                    break
-                except Exception as fe:
-                    print(f"  [Soledad] Fill error ({sel}): {fe}")
-                    continue
+            # Fallback: native value setter + input/change events
+            filled = await page.evaluate('''(term) => {
+                const el = document.getElementById("typeahead-basic-busqueda")
+                         || document.querySelector("input[placeholder*='Medida']");
+                if (!el) return false;
+                const setter = Object.getOwnPropertyDescriptor(
+                    window.HTMLInputElement.prototype, "value").set;
+                setter.call(el, term);
+                el.dispatchEvent(new Event("input", {bubbles: true}));
+                el.dispatchEvent(new Event("change", {bubbles: true}));
+                return true;
+            }''', medida_norm)
+            print(f"  [Soledad] evaluate() fill fallback: {filled}")
 
         await asyncio.sleep(0.3)
 
-        # Step 2: Click "Pesquisar" via evaluate() first (bypasses visibility)
+        # Step 2: Click "Pesquisar" via evaluate() — also dispatches ngSubmit on the form
         pesquisar_clicked = await page.evaluate('''() => {
             for (const b of document.querySelectorAll("button")) {
                 if (b.textContent.trim().toLowerCase().includes("pesquisar")) {
                     b.click();
+                    const form = b.closest("form") || document.querySelector("form");
+                    if (form) form.dispatchEvent(new Event("submit", {bubbles:true,cancelable:true}));
                     return true;
                 }
             }
-            // Fallback: submit the form directly
             const form = document.querySelector("form");
             if (form) { form.dispatchEvent(new Event("submit", {bubbles:true,cancelable:true})); return true; }
             return false;
@@ -1405,6 +1407,8 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         _save_debug('/tmp/soledad_api.html', json.dumps(api_debug_info, indent=2, ensure_ascii=False))
         print(f"  [Soledad] {len(api_responses)} JSON API responses captured: "
               f"{[r['url'].split('?')[0][-40:] for r in api_responses]}")
+        for _r in api_responses[:3]:
+            print(f"  [Soledad] API preview ({_r['url'].split('?')[0][-40:]}): {_r['body'][:200]}")
 
         for resp in api_responses:
             try:
@@ -2742,11 +2746,15 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         _sol_first = False  # set before await so exceptions don't leave it True
                         _t0 = datetime.now()
                         print(f"  [Soledad] Início medida {medida} às {_t0.strftime('%H:%M:%S')} (skip_login={not _is_first})")
+                        # url_login: o portal NOVO tem auth própria — usar b2b.new.gruposoledad.com/login
+                        # O portal antigo (gruposoledad.com/b2b/current/login) não dá sessão válida no novo
+                        _sol_url_login = 'https://b2b.new.gruposoledad.com/login'
+                        _sol_url_search = supplier.get('url_search') or 'https://b2b.new.gruposoledad.com/dashboard/main'
                         result = await asyncio.wait_for(
                             scrape_grupo_soledad(
                                 _sol_page, supplier['username'], supplier['password'], medida,
-                                supplier.get('url_login') or 'https://www.gruposoledad.com/b2b/current/login',
-                                supplier.get('url_search') or 'https://b2b.new.gruposoledad.com/dashboard/main',
+                                _sol_url_login,
+                                _sol_url_search,
                                 skip_login=(not _is_first),
                             ),
                             timeout=150,  # 2.5 min max por medida → 5 medidas = 12.5 min max
