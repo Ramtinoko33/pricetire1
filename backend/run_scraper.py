@@ -2743,10 +2743,13 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
                 )
                 _sol_ctx = await _sol_browser.new_context(**_sol_ctx_kwargs)
-                _sol_page = await _sol_ctx.new_page()
-                await _sol_page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
+                # Nota: cada medida usa uma página nova no mesmo contexto.
+                # O contexto partilha cookies (sessão autenticada), mas a página é fresca.
+                # Isto evita que um timeout/cancel numa medida corrompa o estado do browser.
                 _sol_first = True
                 for medida, marca, modelo in targets:
+                    _sol_page = await _sol_ctx.new_page()
+                    await _sol_page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
                     try:
                         _is_first = _sol_first
                         _sol_first = False  # set before await so exceptions don't leave it True
@@ -2806,6 +2809,11 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     except Exception as _e_sol:
                         print(f"  Error (Soledad {medida}): {_e_sol}")
                         results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_sol)})
+                    finally:
+                        try:
+                            await _sol_page.close()
+                        except Exception:
+                            pass
                 await _sol_browser.close()
             continue  # Skip the generic per-medida loop below
 
