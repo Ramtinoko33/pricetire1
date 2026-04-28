@@ -1059,11 +1059,15 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             print(f"  [Soledad] Waiting for login to complete...")
             for _i in range(40):  # Up to 20 seconds
                 await asyncio.sleep(0.5)
+                _url_now = page.url
                 if await page.locator('input[type="password"]').count() == 0:
-                    print(f"  [Soledad] Password field gone after ~{_i * 0.5:.0f}s")
+                    print(f"  [Soledad] Password field gone after ~{_i * 0.5:.0f}s — url={_url_now}")
                     break
+                # Log URL changes during login (angular routing steps)
+                if _i % 4 == 0:
+                    print(f"  [Soledad] Login wait {_i * 0.5:.0f}s — url={_url_now}")
             else:
-                print(f"  [Soledad] Warning: password field still present after 20s")
+                print(f"  [Soledad] Warning: password field still present after 20s — url={page.url}")
 
             try:
                 await page.wait_for_load_state("load", timeout=15000)
@@ -1074,6 +1078,18 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             url_after = page.url
             _save_debug('/tmp/soledad_after_login.html', await page.content())
             print(f"  [Soledad] After login: {url_after}")
+
+            # Log visible error messages on the page
+            _login_errors = await page.evaluate('''() => {
+                const selectors = ['.alert', '.error', '[class*="error"]', '[class*="invalid"]',
+                                   '[class*="danger"]', '[role="alert"]', '.toast', '.notification',
+                                   'p.text-danger', 'span.text-danger', '.mat-error'];
+                return Array.from(new Set(
+                    selectors.flatMap(s => Array.from(document.querySelectorAll(s)))
+                )).map(el => el.textContent.trim()).filter(t => t.length > 2 && t.length < 300);
+            }''')
+            if _login_errors:
+                print(f"  [Soledad] Login page errors: {_login_errors}")
 
             # Verificar sucesso: password ainda visível OU URL é exactamente a mesma da página de login.
             # NOTA: não usar 'login' in url_after — o redirect SSO pós-auth tem /login?params=... na URL
