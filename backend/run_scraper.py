@@ -944,7 +944,7 @@ async def scrape_euromais(page, username: str, password: str, medida: str) -> di
 # ============================================================
 
 async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
-                               url_login: str = "https://www.gruposoledad.com/b2b/current/login",
+                               url_login: str = "https://b2b.new.gruposoledad.com/login",
                                url_search: str = "https://b2b.new.gruposoledad.com/dashboard/main",
                                skip_login: bool = False) -> dict:
     """Scrape Grupo Soledad B2B portal (modern SPA at b2b.new.gruposoledad.com).
@@ -2746,11 +2746,15 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         _sol_first = False  # set before await so exceptions don't leave it True
                         _t0 = datetime.now()
                         print(f"  [Soledad] Início medida {medida} às {_t0.strftime('%H:%M:%S')} (skip_login={not _is_first})")
+                        # url_login: o portal NOVO tem auth própria — usar b2b.new.gruposoledad.com/login
+                        # O portal antigo (gruposoledad.com/b2b/current/login) não dá sessão válida no novo
+                        _sol_url_login = 'https://b2b.new.gruposoledad.com/login'
+                        _sol_url_search = supplier.get('url_search') or 'https://b2b.new.gruposoledad.com/dashboard/main'
                         result = await asyncio.wait_for(
                             scrape_grupo_soledad(
                                 _sol_page, supplier['username'], supplier['password'], medida,
-                                supplier.get('url_login') or 'https://www.gruposoledad.com/b2b/current/login',
-                                supplier.get('url_search') or 'https://b2b.new.gruposoledad.com/dashboard/main',
+                                _sol_url_login,
+                                _sol_url_search,
                                 skip_login=(not _is_first),
                             ),
                             timeout=150,  # 2.5 min max por medida → 5 medidas = 12.5 min max
