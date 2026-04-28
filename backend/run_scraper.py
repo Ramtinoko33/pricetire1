@@ -993,6 +993,7 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
     url_origin = '/'.join(url_search.split('/')[:3])  # https://b2b.new.gruposoledad.com
 
     try:
+        _scrape_t0 = datetime.now()
         if skip_login:
             print(f"  [Soledad] Skipping login — reusing existing session for {medida}")
         else:
@@ -1092,7 +1093,8 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         api_responses.clear()
 
         # Navigate to the B2B search dashboard
-        print(f"  [Soledad] Navigating to: {url_search}")
+        _t_nav = datetime.now()
+        print(f"  [Soledad] Navigating to: {url_search} (login took {(_t_nav-_scrape_t0).total_seconds():.0f}s)")
         try:
             await page.goto(url_search, wait_until="domcontentloaded", timeout=20000)
         except Exception as nav_e:
@@ -1135,7 +1137,8 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         # Portal: b2b.new.gruposoledad.com/dashboard/main
         # Form fields: Medida (id=typeahead-basic-busqueda), Marca dropdown
         # Submit: click red "Pesquisar" button → navigates to dashboard/products/car
-        print(f"  [Soledad] Searching: {medida_norm}")
+        _t_search = datetime.now()
+        print(f"  [Soledad] Searching: {medida_norm} (nav took {(_t_search-_t_nav).total_seconds():.0f}s)")
 
         search_done = False
 
@@ -2747,12 +2750,19 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     try:
                         _is_first = _sol_first
                         _sol_first = False  # set before await so exceptions don't leave it True
-                        result = await scrape_grupo_soledad(
-                            _sol_page, supplier['username'], supplier['password'], medida,
-                            supplier.get('url_login') or 'https://www.gruposoledad.com/b2b/current/login',
-                            supplier.get('url_search') or 'https://b2b.new.gruposoledad.com/dashboard/main',
-                            skip_login=(not _is_first),
+                        _t0 = datetime.now()
+                        print(f"  [Soledad] Início medida {medida} às {_t0.strftime('%H:%M:%S')} (skip_login={not _is_first})")
+                        result = await asyncio.wait_for(
+                            scrape_grupo_soledad(
+                                _sol_page, supplier['username'], supplier['password'], medida,
+                                supplier.get('url_login') or 'https://www.gruposoledad.com/b2b/current/login',
+                                supplier.get('url_search') or 'https://b2b.new.gruposoledad.com/dashboard/main',
+                                skip_login=(not _is_first),
+                            ),
+                            timeout=150,  # 2.5 min max por medida → 5 medidas = 12.5 min max
                         )
+                        _dt = (datetime.now() - _t0).total_seconds()
+                        print(f"  [Soledad] Fim medida {medida}: {_dt:.0f}s, price={result.get('price')}, products={len(result.get('products',[]))}")
                         result["medida"] = medida
                         results.append(result)
                         # Save to PostgreSQL
@@ -2789,6 +2799,10 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         finally:
                             await conn_save.close()
                         print(f"  {medida}: best price €{result.get('price')}" if result.get('price') else f"  {medida}: {result.get('error','No price found')}")
+                    except asyncio.TimeoutError:
+                        _dt = (datetime.now() - _t0).total_seconds()
+                        print(f"  [Soledad] TIMEOUT medida {medida} após {_dt:.0f}s — a avançar para próxima medida")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": "Timeout 150s"})
                     except Exception as _e_sol:
                         print(f"  Error (Soledad {medida}): {_e_sol}")
                         results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_sol)})
