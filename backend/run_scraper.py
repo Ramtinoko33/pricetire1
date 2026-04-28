@@ -944,10 +944,10 @@ async def scrape_euromais(page, username: str, password: str, medida: str) -> di
 # ============================================================
 
 async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
-                               url_login: str = "https://b2b.new.gruposoledad.com/login",
-                               url_search: str = "https://b2b.new.gruposoledad.com/dashboard/main",
+                               url_login: str = "https://b2b.current.gruposoledad.com/login",
+                               url_search: str = "https://b2b.current.gruposoledad.com/dashboard/main",
                                skip_login: bool = False) -> dict:
-    """Scrape Grupo Soledad B2B portal (modern SPA at b2b.new.gruposoledad.com).
+    """Scrape Grupo Soledad B2B portal (SPA at b2b.current.gruposoledad.com).
     skip_login=True reuses an already-authenticated page (session reuse for multiple medidas).
     """
     result = {
@@ -2762,10 +2762,10 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         _sol_first = False  # set before await so exceptions don't leave it True
                         _t0 = datetime.now()
                         print(f"  [Soledad] Início medida {medida} às {_t0.strftime('%H:%M:%S')} (skip_login={not _is_first})")
-                        # url_login: o portal NOVO tem auth própria — usar b2b.new.gruposoledad.com/login
-                        # O portal antigo (gruposoledad.com/b2b/current/login) não dá sessão válida no novo
-                        _sol_url_login = 'https://b2b.new.gruposoledad.com/login'
-                        _sol_url_search = supplier.get('url_search') or 'https://b2b.new.gruposoledad.com/dashboard/main'
+                        # b2b.current.gruposoledad.com aceita as credenciais (confirmado via test).
+                        # b2b.new.gruposoledad.com rejeita as mesmas credenciais (auth separada).
+                        _sol_url_login = 'https://b2b.current.gruposoledad.com/login'
+                        _sol_url_search = supplier.get('url_search') or 'https://b2b.current.gruposoledad.com/dashboard/main'
                         result = await asyncio.wait_for(
                             scrape_grupo_soledad(
                                 _sol_page, supplier['username'], supplier['password'], medida,
