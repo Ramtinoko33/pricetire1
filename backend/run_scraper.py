@@ -2762,10 +2762,12 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         _sol_first = False  # set before await so exceptions don't leave it True
                         _t0 = datetime.now()
                         print(f"  [Soledad] Início medida {medida} às {_t0.strftime('%H:%M:%S')} (skip_login={not _is_first})")
-                        # b2b.current.gruposoledad.com aceita as credenciais (confirmado via test).
-                        # b2b.new.gruposoledad.com rejeita as mesmas credenciais (auth separada).
+                        # Ambos os URLs hardcoded para b2b.current.gruposoledad.com:
+                        # - login: credenciais confirmadas funcionam neste portal
+                        # - search: localStorage de b2b.current != b2b.new (domínios distintos),
+                        #   por isso a sessão pós-login só é válida dentro do mesmo domínio.
                         _sol_url_login = 'https://b2b.current.gruposoledad.com/login'
-                        _sol_url_search = supplier.get('url_search') or 'https://b2b.current.gruposoledad.com/dashboard/main'
+                        _sol_url_search = 'https://b2b.current.gruposoledad.com/dashboard/main'
                         result = await asyncio.wait_for(
                             scrape_grupo_soledad(
                                 _sol_page, supplier['username'], supplier['password'], medida,
