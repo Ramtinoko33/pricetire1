@@ -956,9 +956,11 @@ async def run_manual_scraper(medidas: list):
             if line:
                 output_lines.append(line)
                 scraper_status["progress"] = line
+                logger.info(f"[scraper] {line}")
         await proc.wait()
         scraper_status["progress"] = "Completed"
         scraper_status["results"] = output_lines[-100:]
+        logger.info(f"Scraper manual concluído. {len(output_lines)} linhas de output.")
     except Exception as e:
         scraper_status["progress"] = f"Error: {str(e)}"
         logger.error(f"Scraper error: {e}")
