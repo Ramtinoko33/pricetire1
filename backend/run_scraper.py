@@ -1114,8 +1114,14 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             # After login, b2b.current redirects to b2b.new.gruposoledad.com/login?params=TOKEN
             # This SSO token is processed by b2b.new and creates the session there.
             # We must wait for this redirect to complete before navigating anywhere.
+            #
+            # Three observed cases after login:
+            #  A) URL is b2b.new/login?params=TOKEN — SSO in progress (wait for it)
+            #  B) URL is b2b.new/dashboard/* — SSO already completed during sleep(3)
+            #  C) URL is b2b.current/* — SSO hasn't triggered yet (wait for it)
             _post_login_url = page.url
             if 'params=' in _post_login_url and '/login' in _post_login_url:
+                # Case A: SSO token in URL — wait for b2b.new to process it
                 print(f"  [Soledad] SSO handoff in progress — waiting for dashboard redirect...")
                 for _sso_i in range(30):
                     await asyncio.sleep(1)
@@ -1127,10 +1133,35 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         print(f"  [Soledad] SSO wait {_sso_i}s — {_sso_url}")
                 else:
                     print(f"  [Soledad] SSO timeout — still on {page.url}")
-                # Session was established on b2b.new — update search URL accordingly
                 url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
                 url_origin = 'https://b2b.new.gruposoledad.com'
                 print(f"  [Soledad] Search URL updated to b2b.new (SSO domain)")
+            elif 'b2b.new' in _post_login_url and '/login' not in _post_login_url:
+                # Case B: already on b2b.new dashboard — SSO completed during sleep
+                url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
+                url_origin = 'https://b2b.new.gruposoledad.com'
+                print(f"  [Soledad] Already on b2b.new after login — SSO complete: {_post_login_url}")
+            else:
+                # Case C: still on b2b.current — SSO hasn't triggered yet.
+                # Wait up to 25s for the page to navigate to b2b.new.
+                print(f"  [Soledad] Waiting for SSO redirect from {_post_login_url}...")
+                try:
+                    await page.wait_for_url('**/b2b.new/**', timeout=25000)
+                    _url_now = page.url
+                    url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
+                    url_origin = 'https://b2b.new.gruposoledad.com'
+                    print(f"  [Soledad] SSO redirect detected: {_url_now}")
+                    if 'params=' in _url_now and '/login' in _url_now:
+                        for _sso_proc in range(20):
+                            await asyncio.sleep(1)
+                            if '/login' not in page.url:
+                                print(f"  [Soledad] SSO token processed after {_sso_proc+1}s")
+                                break
+                except Exception:
+                    # SSO never happened — proceed anyway, session may still work
+                    url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
+                    url_origin = 'https://b2b.new.gruposoledad.com'
+                    print(f"  [Soledad] No SSO redirect after 25s — proceeding to b2b.new")
 
         # ── Navigate to search page ───────────────────────────────────────────
         # Clear any API responses captured during login — we only want search responses
@@ -1441,8 +1472,11 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
 
         # Price/brand/model field names — case-insensitive search covers Grupo Soledad
         # AR_ prefix pattern (AR_PRECIO, AR_MARCA, AR_DESCRIPCION) used in Spanish B2B systems.
-        _PRICE_SUBSTRINGS = ('pvp', 'preco', 'precio', 'price', 'valor', 'coste',
-                             'tarifa', 'importe', 'unitprice', 'saleprice', 'netprice')
+        # NOTE: 'valor' and 'importe' intentionally excluded — too generic:
+        #   VALOR appears in filter dropdowns, IMPORTE_SIGUIENTE/CONSEGUIDO in promotions.
+        _PRICE_SUBSTRINGS = ('pvp', 'preco', 'precio', 'price', 'coste',
+                             'tarifa', 'unitprice', 'saleprice', 'netprice', 'preciouni',
+                             'precouni', 'pvpfinal', 'pvpnet')
         _BRAND_SUBSTRINGS = ('marca', 'brand', 'manufacturer', 'fabricante', 'marque')
         _MODEL_SUBSTRINGS = ('descripcion', 'descricao', 'description', 'modelo',
                              'model', 'nome', 'designation', 'denominacion', 'referencia')
@@ -1477,7 +1511,7 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                                 v = v.get('value') or v.get('formattedValue') or v.get('amount') or 0
                             try:
                                 price_val = float(str(v).replace(',', '.').replace('€', '').strip())
-                                if price_val < 10 or price_val > 2000:
+                                if price_val < 15 or price_val > 2000:
                                     price_val = None
                                 else:
                                     used_pk = orig_k
@@ -1495,6 +1529,11 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                             if any(sub in lk for sub in _BRAND_SUBSTRINGS) and v:
                                 brand_val = str(v).upper()
                                 break
+
+                        if not brand_val:
+                            # No brand field → not a tire product (promotions, filters, etc.)
+                            _parse_api_json(item, depth + 1)
+                            continue
 
                         model_val = ''
                         for lk, (orig_k, v) in item_lc.items():
