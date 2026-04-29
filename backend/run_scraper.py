@@ -1377,6 +1377,16 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         # Primary: parse intercepted JSON API responses
         products = []
 
+        # Price/brand/model field names — case-insensitive search covers Grupo Soledad
+        # AR_ prefix pattern (AR_PRECIO, AR_MARCA, AR_DESCRIPCION) used in Spanish B2B systems.
+        _PRICE_SUBSTRINGS = ('pvp', 'preco', 'precio', 'price', 'valor', 'coste',
+                             'tarifa', 'importe', 'unitprice', 'saleprice', 'netprice')
+        _BRAND_SUBSTRINGS = ('marca', 'brand', 'manufacturer', 'fabricante', 'marque')
+        _MODEL_SUBSTRINGS = ('descripcion', 'descricao', 'description', 'modelo',
+                             'model', 'nome', 'designation', 'denominacion', 'referencia')
+
+        _logged_keys: set = set()  # avoid printing the same key set twice
+
         def _parse_api_json(data, depth=0):
             """Recursively search JSON for objects that look like tire products."""
             if depth > 6:
@@ -1384,14 +1394,21 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             if isinstance(data, list):
                 for item in data:
                     if isinstance(item, dict):
-                        # Try to find price — extended field list for Spanish/Portuguese B2B portals
+                        # Case-insensitive price field search (covers AR_PRECIO, PRECIO, pvp, etc.)
+                        item_lc = {k.lower(): (k, v) for k, v in item.items()}
+
+                        # Log the key set once per unique response to aid diagnostics
+                        keys_sig = frozenset(item_lc.keys())
+                        if keys_sig not in _logged_keys and len(item_lc) > 3:
+                            _logged_keys.add(keys_sig)
+                            print(f"  [Soledad] API item keys (depth={depth}): "
+                                  f"{sorted(item_lc.keys())[:20]}")
+
                         price_val = None
                         used_pk = None
-                        for pk in ['pvp', 'preco', 'precoBruto', 'precoFinal', 'precoUnitario',
-                                   'pvpFinal', 'pvpNet', 'netPrice', 'purchasePrice',
-                                   'salePrice', 'unitPrice', 'price', 'valor',
-                                   'coste', 'tarifa', 'importe']:
-                            v = item.get(pk)
+                        for lk, (orig_k, v) in item_lc.items():
+                            if not any(sub in lk for sub in _PRICE_SUBSTRINGS):
+                                continue
                             if v is None:
                                 continue
                             if isinstance(v, dict):
@@ -1401,7 +1418,7 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                                 if price_val < 10 or price_val > 2000:
                                     price_val = None
                                 else:
-                                    used_pk = pk
+                                    used_pk = orig_k
                             except Exception:
                                 pass
                             if price_val:
@@ -1412,19 +1429,14 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                             continue
 
                         brand_val = ''
-                        for bk in ['marca', 'brand', 'manufacturer', 'fabricante',
-                                   'brandName', 'marque', 'fabricant']:
-                            v = item.get(bk)
-                            if v:
+                        for lk, (orig_k, v) in item_lc.items():
+                            if any(sub in lk for sub in _BRAND_SUBSTRINGS) and v:
                                 brand_val = str(v).upper()
                                 break
 
                         model_val = ''
-                        for mk in ['descripcion', 'descricao', 'description', 'modelo',
-                                   'model', 'name', 'nome', 'designation', 'title',
-                                   'denominacion', 'referencia']:
-                            v = item.get(mk)
-                            if v:
+                        for lk, (orig_k, v) in item_lc.items():
+                            if any(sub in lk for sub in _MODEL_SUBSTRINGS) and v:
                                 model_val = str(v)
                                 break
 
@@ -1445,8 +1457,9 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         _save_debug('/tmp/soledad_api.html', json.dumps(api_debug_info, indent=2, ensure_ascii=False))
         print(f"  [Soledad] {len(api_responses)} JSON API responses captured: "
               f"{[r['url'].split('?')[0][-40:] for r in api_responses]}")
-        for _r in api_responses[:3]:
-            print(f"  [Soledad] API preview ({_r['url'].split('?')[0][-40:]}): {_r['body'][:200]}")
+        # Preview the 3 largest responses (most likely to contain product data)
+        for _r in sorted(api_responses, key=lambda x: len(x['body']), reverse=True)[:3]:
+            print(f"  [Soledad] API preview ({_r['url'].split('?')[0][-40:]}): {_r['body'][:300]}")
 
         for resp in api_responses:
             try:
