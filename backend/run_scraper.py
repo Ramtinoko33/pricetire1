@@ -1480,8 +1480,17 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         _BRAND_SUBSTRINGS = ('marca', 'brand', 'manufacturer', 'fabricante', 'marque')
         _MODEL_SUBSTRINGS = ('descripcion', 'descricao', 'description', 'modelo',
                              'model', 'nome', 'designation', 'denominacion', 'referencia')
+        # IC = Índice de Carga (load number, e.g. 91), CV = Categoría Velocidad (letter, e.g. H)
+        # Combined they form the load/speed index like "91H", "94V", "95W XL"
+        _IC_SUBSTRINGS  = ('ic', 'indcarga', 'indice_carga', 'loadindex', 'load_index',
+                           'load_rating', 'cargaindice', 'indicecarga', 'li')
+        _CV_SUBSTRINGS  = ('cv', 'velocidad', 'speedindex', 'speed_index', 'speed_rating',
+                           'indvel', 'indice_velocidad', 'categoriaveloc', 'si')
+        _IDX_SUBSTRINGS = ('indice', 'indíce', 'index', 'caracteristicas',
+                           'característica', 'ic_cv', 'iccv', 'spec')
 
         _logged_keys: set = set()  # avoid printing the same key set twice
+        import re as _re_idx
 
         def _parse_api_json(data, depth=0):
             """Recursively search JSON for objects that look like tire products."""
@@ -1541,9 +1550,39 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                                 model_val = str(v)
                                 break
 
+                        # Extract load/speed index — try IC+CV separately, then combined field,
+                        # then fall back to regex on the model description (e.g. "PCY4 91H" → "91H")
+                        ic_val = cv_val = ''
+                        for lk, (orig_k, v) in item_lc.items():
+                            if any(lk == sub or lk.endswith('_' + sub) or lk.startswith(sub + '_')
+                                   for sub in _IC_SUBSTRINGS) and v:
+                                ic_val = str(v).strip()
+                                break
+                        for lk, (orig_k, v) in item_lc.items():
+                            if any(lk == sub or lk.endswith('_' + sub) or lk.startswith(sub + '_')
+                                   for sub in _CV_SUBSTRINGS) and v:
+                                cv_val = str(v).strip().upper()
+                                break
+                        indice_val = (ic_val + cv_val).strip()
+                        if not indice_val:
+                            for lk, (orig_k, v) in item_lc.items():
+                                if any(sub in lk for sub in _IDX_SUBSTRINGS) and v:
+                                    _cand = str(v).strip().upper()
+                                    if _re_idx.match(r'^\d{2,3}[A-Z]', _cand):
+                                        indice_val = _cand
+                                        break
+                        if not indice_val and model_val:
+                            # Last resort: regex on model description, e.g. "PRIMACY 4 91H XL"
+                            _m_idx = _re_idx.search(r'\b(\d{2,3}[A-Z])(?:\s+XL)?\b',
+                                                    model_val.upper())
+                            if _m_idx:
+                                indice_val = _m_idx.group(0).strip()
+
                         print(f"  [Soledad] API product: brand={brand_val!r} "
-                              f"model={model_val[:40]!r} price={price_val} (field={used_pk})")
-                        products.append({'brand': brand_val, 'model': model_val, 'price': price_val})
+                              f"model={model_val[:40]!r} price={price_val} "
+                              f"indice={indice_val!r} (field={used_pk})")
+                        products.append({'brand': brand_val, 'model': model_val,
+                                         'price': price_val, 'indice': indice_val})
                     else:
                         _parse_api_json(item, depth + 1)
             elif isinstance(data, dict):

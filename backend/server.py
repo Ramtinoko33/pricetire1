@@ -697,10 +697,22 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
     total_savings = 0.0
     bulk_updates = []
 
+    def _index_matches(scraped_idx: str, want_idx: str) -> bool:
+        """True if the scraped load/speed index satisfies the requested index."""
+        if not want_idx:
+            return True
+        s = (scraped_idx or '').upper().strip()
+        w = want_idx.upper().strip()
+        if not s:
+            return False
+        # Exact or scraped starts with wanted (e.g. "94H XL" matches want "94H")
+        return s == w or s.startswith(w)
+
     for item in items:
         medida_norm = item['medida'].replace('/', '').replace('R', '').replace('r', '')
         marca_norm  = (item.get('marca')  or '').strip().upper()
         modelo_norm = (item.get('modelo') or '').strip().upper()
+        indice_norm = (item.get('indice') or '').strip().upper()
 
         scraped = []
         match_type = None
@@ -739,10 +751,23 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                                 if scraped:
                                     match_type = "modelo_parcial"
 
+                # After model matching: refine by load/speed index when specified
+                if scraped and indice_norm:
+                    idx_filtered = [p for p in scraped
+                                    if _index_matches(p.get('load_index') or '', indice_norm)]
+                    if idx_filtered:
+                        scraped = idx_filtered  # same match_type — index is a refinement
+
             if not scraped and marca_norm:
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').upper() == marca_norm]
                 if marca_prices:
-                    scraped = marca_prices
+                    # Try to filter by index at brand level too
+                    if indice_norm:
+                        idx_filtered = [p for p in marca_prices
+                                        if _index_matches(p.get('load_index') or '', indice_norm)]
+                        scraped = idx_filtered if idx_filtered else marca_prices
+                    else:
+                        scraped = marca_prices
                     match_type = "marca"
                 else:
                     pat_marca = re.compile(f"^{marca_norm.replace(' ', '.*')}$", re.IGNORECASE)
