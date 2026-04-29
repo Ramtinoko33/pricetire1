@@ -1290,11 +1290,35 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                     pass
             await asyncio.sleep(4)  # Angular needs extra time to render product list
 
-            # Scroll down to trigger lazy-loaded product list (Angular virtual scroll)
+            # Scroll to trigger lazy-loaded product list.
+            # Angular CDK virtual scroll uses a specific container — scroll it directly,
+            # not just window, otherwise virtual scroll items may never render.
             try:
-                await page.evaluate("window.scrollTo(0, 600)")
+                await page.evaluate("""() => {
+                    // Try Angular CDK virtual scroll viewport first, then generic containers
+                    const sel = [
+                        '.cdk-virtual-scroll-viewport',
+                        'app-car-products', 'app-product-list', 'app-products',
+                        '[class*="product-list"]', '[class*="products-container"]',
+                        'main', 'app-layout-main-search'
+                    ];
+                    let scroller = null;
+                    for (const s of sel) {
+                        const el = document.querySelector(s);
+                        if (el && el.scrollHeight > el.clientHeight) { scroller = el; break; }
+                    }
+                    if (scroller) { scroller.scrollTop = 600; }
+                    window.scrollTo(0, 600);
+                }""")
                 await asyncio.sleep(3)
-                await page.evaluate("window.scrollTo(0, 1200)")
+                await page.evaluate("""() => {
+                    const sel = ['.cdk-virtual-scroll-viewport','app-car-products','app-product-list','main'];
+                    for (const s of sel) {
+                        const el = document.querySelector(s);
+                        if (el && el.scrollHeight > el.clientHeight) { el.scrollTop = 1200; break; }
+                    }
+                    window.scrollTo(0, 1200);
+                }""")
                 await asyncio.sleep(3)
                 await page.evaluate("window.scrollTo(0, 2000)")
                 await asyncio.sleep(2)
@@ -2843,12 +2867,14 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                 # O contexto partilha cookies (sessão autenticada), mas a página é fresca.
                 # Isto evita que um timeout/cancel numa medida corrompa o estado do browser.
                 _sol_first = True
+                _sol_relogin = False  # set True when session expires mid-scrape
                 for medida, marca, modelo in targets:
                     _sol_page = await _sol_ctx.new_page()
                     await _sol_page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
                     try:
-                        _is_first = _sol_first
-                        _sol_first = False  # set before await so exceptions don't leave it True
+                        _is_first = _sol_first or _sol_relogin
+                        _sol_first = False
+                        _sol_relogin = False
                         _t0 = datetime.now()
                         print(f"  [Soledad] Início medida {medida} às {_t0.strftime('%H:%M:%S')} (skip_login={not _is_first})")
                         # Login em b2b.current (credenciais funcionam aqui).
@@ -2867,20 +2893,27 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         )
                         _dt = (datetime.now() - _t0).total_seconds()
                         print(f"  [Soledad] Fim medida {medida}: {_dt:.0f}s, price={result.get('price')}, products={len(result.get('products',[]))}")
+
+                        # Detect session expiry — next medida must re-login via b2b.current
+                        if 'session issue' in (result.get('error') or ''):
+                            _sol_relogin = True
+                            print(f"  [Soledad] Sessão expirou em {medida} — próxima medida irá re-autenticar")
+
                         result["medida"] = medida
                         results.append(result)
                         # Save to PostgreSQL
                         products = result.get('products', [])
-                        now = datetime.now(timezone.utc)
+                        _is_session_err = 'session issue' in (result.get('error') or '')
                         conn_save = await _pg_connect()
                         try:
+                            if not _is_session_err:
+                                # Clear ALL old entries for this medida — prevents stale prices
+                                # from past (incorrect) runs from polluting future comparisons.
+                                await conn_save.execute(
+                                    "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
+                                    supplier['name'], medida,
+                                )
                             if products:
-                                marcas_encontradas = {prod.get('brand', '').upper() for prod in products}
-                                for m_brand in marcas_encontradas:
-                                    await conn_save.execute(
-                                        "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2 AND COALESCE(marca,'')=$3",
-                                        supplier['name'], medida, m_brand,
-                                    )
                                 for prod in products:
                                     await conn_save.execute(
                                         "INSERT INTO scraped_prices (id,supplier_name,medida,marca,modelo,price,load_index,scraped_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
@@ -2889,17 +2922,15 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                         prod.get('price'), prod.get('indice') or '', datetime.now(timezone.utc),
                                     )
                                 print(f"  {medida}: saved {len(products)} products")
-                            else:
-                                await conn_save.execute(
-                                    "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2 AND marca IS NULL",
-                                    supplier['name'], medida,
-                                )
+                            elif not _is_session_err:
                                 if result.get('price') is not None:
                                     await conn_save.execute(
                                         "INSERT INTO scraped_prices (id,supplier_name,medida,price,scraped_at) VALUES ($1,$2,$3,$4,$5)",
                                         str(uuid.uuid4()), supplier['name'], medida, result['price'], datetime.now(timezone.utc),
                                     )
-                                print(f"  {medida}: €{result.get('price')} (no brand data)")
+                                    print(f"  {medida}: €{result['price']} (no brand data)")
+                                else:
+                                    print(f"  {medida}: no products found — old data cleared")
                         finally:
                             await conn_save.close()
                         print(f"  {medida}: best price €{result.get('price')}" if result.get('price') else f"  {medida}: {result.get('error','No price found')}")
