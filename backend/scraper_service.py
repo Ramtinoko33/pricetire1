@@ -1556,6 +1556,226 @@ class InterSprintAdapter(ScraperBase):
             return None
 
 
+class GrupoSoledadAdapter(ScraperBase):
+    """Adapter for Grupo Soledad B2B portal.
+
+    Auth flow:
+      1. Login at b2b.current.gruposoledad.com/login (credentials work here).
+      2. Portal SSO-redirects to b2b.new.gruposoledad.com/login?params=TOKEN.
+      3. Wait for SSO to complete → session created on b2b.new.
+      4. Search on b2b.new.gruposoledad.com/dashboard/main via Angular form + API interception.
+    """
+
+    URL_LOGIN = 'https://b2b.current.gruposoledad.com/login'
+    URL_SEARCH = 'https://b2b.new.gruposoledad.com/dashboard/main'
+
+    @staticmethod
+    def _normalize_medida(medida: str) -> str:
+        import re as _re
+        m = _re.match(r'^(\d{3})(\d{2})(\d{2})$', medida.strip())
+        return f"{m.group(1)}/{m.group(2)}R{m.group(3)}" if m else medida
+
+    async def login(self) -> tuple[bool, str]:
+        try:
+            logger.info(f"[Soledad] Navigating to {self.URL_LOGIN}")
+            try:
+                await self.page.goto(self.URL_LOGIN, wait_until="domcontentloaded", timeout=30000)
+            except Exception:
+                await self.page.goto(self.URL_LOGIN, wait_until="commit", timeout=30000)
+            try:
+                await self.page.wait_for_load_state("load", timeout=10000)
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+
+            # Fill username
+            user_field = self.page.locator(
+                'input[name="username"], input[name="userId"], input[type="email"]'
+            ).first
+            if await user_field.count() == 0:
+                return False, "Username field not found"
+            await user_field.click()
+            await user_field.type(self.username, delay=80)
+            await asyncio.sleep(0.4)
+
+            # Fill password
+            pass_field = self.page.locator('input[type="password"]').first
+            if await pass_field.count() == 0:
+                return False, "Password field not found"
+            await pass_field.click()
+            await pass_field.type(self.password, delay=80)
+            await asyncio.sleep(0.5)
+
+            # Submit
+            submit = self.page.locator('button[type="submit"], input[type="submit"]').first
+            if await submit.count() > 0:
+                await submit.click()
+            else:
+                await pass_field.press('Enter')
+
+            # Wait for password field to disappear
+            for _ in range(40):
+                await asyncio.sleep(0.5)
+                if await self.page.locator('input[type="password"]').count() == 0:
+                    break
+
+            try:
+                await self.page.wait_for_load_state("load", timeout=15000)
+            except Exception:
+                pass
+            await asyncio.sleep(3)
+
+            url_after = self.page.url
+            logger.info(f"[Soledad] After submit: {url_after}")
+
+            if await self.page.locator('input[type="password"]').count() > 0:
+                return False, "Login failed — password form still visible"
+            if url_after.rstrip('/') == self.URL_LOGIN.rstrip('/'):
+                return False, f"Login failed — URL unchanged: {url_after}"
+
+            # Wait for SSO handoff (b2b.new/login?params=TOKEN → dashboard)
+            if 'params=' in url_after and '/login' in url_after:
+                logger.info(f"[Soledad] SSO in progress — waiting for dashboard...")
+                for i in range(30):
+                    await asyncio.sleep(1)
+                    cur = self.page.url
+                    if '/login' not in cur:
+                        logger.info(f"[Soledad] SSO complete after {i+1}s: {cur}")
+                        break
+                    if i % 5 == 0:
+                        logger.info(f"[Soledad] SSO wait {i}s — {cur}")
+                else:
+                    logger.warning(f"[Soledad] SSO timeout: {self.page.url}")
+
+            logger.info(f"[Soledad] Login OK — at {self.page.url}")
+            return True, "Login successful"
+
+        except Exception as e:
+            logger.error(f"[Soledad] Login error: {e}")
+            return False, str(e)
+
+    async def search_product(self, medida: str, marca: str, modelo: str, indice: str) -> Optional[float]:
+        try:
+            import json as _json
+            medida_norm = self._normalize_medida(medida)
+            logger.info(f"[Soledad] Searching: {medida_norm}")
+
+            # Intercept JSON API responses
+            api_responses: list = []
+
+            async def _capture(response):
+                try:
+                    if response.status != 200:
+                        return
+                    ct = response.headers.get('content-type') or ''
+                    if 'json' not in ct:
+                        return
+                    body = await response.text()
+                    if len(body) > 100:
+                        api_responses.append({'url': response.url, 'body': body})
+                        logger.info(f"[Soledad] API: {response.url.split('?')[0][-50:]} ({len(body)}b)")
+                except Exception:
+                    pass
+
+            self.page.on('response', _capture)
+
+            # Navigate to search dashboard
+            try:
+                await self.page.goto(self.URL_SEARCH, wait_until="domcontentloaded", timeout=20000)
+            except Exception as nav_e:
+                logger.warning(f"[Soledad] Nav warning: {nav_e}")
+            try:
+                await self.page.wait_for_load_state("load", timeout=8000)
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+
+            if await self.page.locator('input[type="password"]').count() > 0:
+                logger.warning("[Soledad] Redirected to login — session invalid")
+                return None
+
+            # Focus medida input via JS and type via keyboard
+            focused = await self.page.evaluate('''() => {
+                const el = document.getElementById("typeahead-basic-busqueda")
+                         || document.querySelector("input[placeholder*='Medida']")
+                         || document.querySelector("input[placeholder*='2055516']");
+                if (!el) return false;
+                el.focus(); el.select(); return true;
+            }''')
+
+            if not focused:
+                logger.warning("[Soledad] Search input not found")
+                return None
+
+            await self.page.keyboard.type(medida_norm, delay=40)
+            await asyncio.sleep(2)
+
+            # Click Pesquisar / submit
+            await self.page.evaluate('''() => {
+                for (const b of document.querySelectorAll("button")) {
+                    if (b.textContent.trim().toLowerCase().includes("pesquisar")) {
+                        b.click();
+                        const form = b.closest("form") || document.querySelector("form");
+                        if (form) form.dispatchEvent(new Event("submit", {bubbles:true,cancelable:true}));
+                        return;
+                    }
+                }
+                const form = document.querySelector("form");
+                if (form) form.dispatchEvent(new Event("submit", {bubbles:true,cancelable:true}));
+            }''')
+
+            await asyncio.sleep(5)
+            try:
+                await self.page.wait_for_url(lambda u: 'products' in u or 'car' in u, timeout=15000)
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+
+            # Extract prices from captured API responses
+            prices: list[float] = []
+            price_keys = ['preco', 'price', 'pvp', 'valor', 'unitPrice', 'salePrice',
+                          'precovenda', 'precoVenda', 'precoFinal', 'precoliq']
+            for r in api_responses:
+                try:
+                    data = _json.loads(r['body'])
+                    items = data if isinstance(data, list) else None
+                    if items is None:
+                        for k in ('produtos', 'products', 'items', 'data', 'resultado', 'results'):
+                            v = data.get(k)
+                            if isinstance(v, list):
+                                items = v
+                                break
+                    if not isinstance(items, list):
+                        continue
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        for key in price_keys:
+                            val = item.get(key)
+                            if val is None:
+                                continue
+                            try:
+                                p = float(str(val).replace(',', '.'))
+                                if 15 < p < 1500:
+                                    prices.append(p)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+            if prices:
+                best = min(prices)
+                logger.info(f"[Soledad] {len(prices)} prices from API, best: €{best}")
+                return best
+
+            logger.warning(f"[Soledad] No prices from {len(api_responses)} API responses for {medida_norm}")
+            return None
+
+        except Exception as e:
+            logger.error(f"[Soledad] search_product error: {e}")
+            return None
+
+
 class ScraperService:
     """Main scraper service that orchestrates scraping jobs"""
     
@@ -1572,7 +1792,18 @@ class ScraperService:
         password = supplier.get('password_raw') or supplier.get('password', '')
         
         # Select appropriate adapter based on supplier
-        if 'mp24' in supplier_name_lower or 'mp24' in supplier_url_lower:
+        if 'soledad' in supplier_name_lower or 'gruposoledad' in supplier_url_lower:
+            logger.info(f"Creating GrupoSoledadAdapter for {supplier['name']}")
+            return GrupoSoledadAdapter(
+                supplier_id=supplier_id,
+                supplier_name=supplier['name'],
+                url_login='https://b2b.current.gruposoledad.com/login',
+                url_search='https://b2b.new.gruposoledad.com/dashboard/main',
+                username=supplier['username'],
+                password=password,
+                selectors=supplier.get('selectors')
+            )
+        elif 'mp24' in supplier_name_lower or 'mp24' in supplier_url_lower:
             logger.info(f"Creating MP24Adapter for {supplier['name']}")
             return MP24Adapter(
                 supplier_id=supplier_id,
