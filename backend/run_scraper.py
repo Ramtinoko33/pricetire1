@@ -1601,7 +1601,25 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         for _r in sorted(api_responses, key=lambda x: len(x['body']), reverse=True)[:3]:
             print(f"  [Soledad] API preview ({_r['url'].split('?')[0][-40:]}): {_r['body'][:300]}")
 
-        # Print first raw item from each large response — lets us see ALL field names+values
+        for resp in api_responses:
+            try:
+                data = json.loads(resp['body'])
+                before = len(products)
+                _parse_api_json(data)
+                if len(products) > before:
+                    print(f"  [Soledad] +{len(products)-before} products from {resp['url'].split('?')[0][-50:]}")
+            except Exception as _parse_err:
+                print(f"  [Soledad] Warning: falha ao parsear resposta API "
+                      f"{resp['url'].split('?')[0][-50:]}: {_parse_err}")
+
+        if products:
+            print(f"  [Soledad] {len(products)} products from API interception")
+            # Print first 3 products with all fields so we can verify index extraction
+            for _p in products[:3]:
+                print(f"  [Soledad] DIAG product: {_p}")
+
+        # Print first raw item from the largest response — shows ALL field names+values
+        # Placed AFTER products so it appears at the end of the log (visible in Railway)
         _diag_printed = False
         for _r in sorted(api_responses, key=lambda x: len(x['body']), reverse=True)[:3]:
             try:
@@ -1625,23 +1643,6 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                     _diag_printed = True
             except Exception:
                 pass
-
-        for resp in api_responses:
-            try:
-                data = json.loads(resp['body'])
-                before = len(products)
-                _parse_api_json(data)
-                if len(products) > before:
-                    print(f"  [Soledad] +{len(products)-before} products from {resp['url'].split('?')[0][-50:]}")
-            except Exception as _parse_err:
-                print(f"  [Soledad] Warning: falha ao parsear resposta API "
-                      f"{resp['url'].split('?')[0][-50:]}: {_parse_err}")
-
-        if products:
-            print(f"  [Soledad] {len(products)} products from API interception")
-            # Print first 3 products with all fields so we can verify index extraction
-            for _p in products[:3]:
-                print(f"  [Soledad] DIAG product: {_p}")
         else:
             # Secondary: DOM extraction
             print(f"  [Soledad] No API products — trying DOM extraction")
