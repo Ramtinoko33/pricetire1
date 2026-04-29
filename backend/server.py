@@ -767,12 +767,18 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                                 if scraped:
                                     match_type = "modelo_parcial"
 
-                # After model matching: refine by load/speed index when specified
+                # After model matching: refine by load/speed index when specified.
+                # If the model was found but no product has the right index, clear
+                # the candidates so we fall through to brand-level matching — a
+                # wrong-index tire should never be shown as a model match.
                 if scraped and indice_norm:
                     idx_filtered = [p for p in scraped
                                     if _index_matches(p.get('load_index') or '', indice_norm)]
                     if idx_filtered:
-                        scraped = idx_filtered  # same match_type — index is a refinement
+                        scraped = idx_filtered  # index is a refinement of the model match
+                    else:
+                        scraped = []    # model found but wrong index — fall to brand level
+                        match_type = None
 
             if not scraped and marca_norm:
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').upper() == marca_norm]
