@@ -1284,10 +1284,22 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                     pass
             await asyncio.sleep(3)  # Angular needs extra time to render product list
 
+            # Scroll down to trigger lazy-loaded product list (Angular virtual scroll)
+            try:
+                await page.evaluate("window.scrollTo(0, 600)")
+                await asyncio.sleep(2)
+                await page.evaluate("window.scrollTo(0, 1200)")
+                await asyncio.sleep(2)
+            except Exception:
+                pass
+
             products_html = await page.content()
             has_s = medida_slashed.lower() in products_html.lower() or medida_norm in products_html
             has_p = bool(re.search(r'[€£$]\s*\d{2,3}|\d{2,3}[,\.]\d{2}\s*[€£$]', products_html))
             print(f"  [Soledad] Products page: url=.../{page.url.split('/')[-1]} has_size={has_s} has_price={has_p}")
+            # Print snippet of products HTML for diagnosis
+            _html_snip = products_html.replace('\n', ' ')[:1000]
+            print(f"  [Soledad] Products HTML snippet: {_html_snip}")
             _save_debug('/tmp/soledad_results.html', products_html)
             search_done = True
         else:
