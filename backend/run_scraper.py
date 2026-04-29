@@ -1104,6 +1104,28 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                 return result
             print(f"  [Soledad] Login succeeded")
 
+            # ── SSO handoff: b2b.current → b2b.new ───────────────────────────
+            # After login, b2b.current redirects to b2b.new.gruposoledad.com/login?params=TOKEN
+            # This SSO token is processed by b2b.new and creates the session there.
+            # We must wait for this redirect to complete before navigating anywhere.
+            _post_login_url = page.url
+            if 'params=' in _post_login_url and '/login' in _post_login_url:
+                print(f"  [Soledad] SSO handoff in progress — waiting for dashboard redirect...")
+                for _sso_i in range(30):
+                    await asyncio.sleep(1)
+                    _sso_url = page.url
+                    if '/login' not in _sso_url:
+                        print(f"  [Soledad] SSO complete after {_sso_i+1}s — {_sso_url}")
+                        break
+                    if _sso_i % 5 == 0:
+                        print(f"  [Soledad] SSO wait {_sso_i}s — {_sso_url}")
+                else:
+                    print(f"  [Soledad] SSO timeout — still on {page.url}")
+                # Session was established on b2b.new — update search URL accordingly
+                url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
+                url_origin = 'https://b2b.new.gruposoledad.com'
+                print(f"  [Soledad] Search URL updated to b2b.new (SSO domain)")
+
         # ── Navigate to search page ───────────────────────────────────────────
         # Clear any API responses captured during login — we only want search responses
         api_responses.clear()
@@ -2762,12 +2784,11 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         _sol_first = False  # set before await so exceptions don't leave it True
                         _t0 = datetime.now()
                         print(f"  [Soledad] Início medida {medida} às {_t0.strftime('%H:%M:%S')} (skip_login={not _is_first})")
-                        # Ambos os URLs hardcoded para b2b.current.gruposoledad.com:
-                        # - login: credenciais confirmadas funcionam neste portal
-                        # - search: localStorage de b2b.current != b2b.new (domínios distintos),
-                        #   por isso a sessão pós-login só é válida dentro do mesmo domínio.
+                        # Login em b2b.current (credenciais funcionam aqui).
+                        # b2b.current faz SSO para b2b.new/login?params=TOKEN após auth.
+                        # A sessão é criada no b2b.new — pesquisa usa b2b.new.
                         _sol_url_login = 'https://b2b.current.gruposoledad.com/login'
-                        _sol_url_search = 'https://b2b.current.gruposoledad.com/dashboard/main'
+                        _sol_url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
                         result = await asyncio.wait_for(
                             scrape_grupo_soledad(
                                 _sol_page, supplier['username'], supplier['password'], medida,
