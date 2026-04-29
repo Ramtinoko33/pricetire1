@@ -971,20 +971,26 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
     _m2 = _re2.match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
     medida_slashed = f"{_m2.group(1)}/{_m2.group(2)}R{_m2.group(3)}" if _m2 else medida
 
-    # ── Intercept JSON API responses (primary method for Angular SPAs) ────────
+    # ── Intercept API responses (primary method for Angular SPAs) ────────────
+    # Captures ALL restBusinessDelegate.aspx responses regardless of content-type,
+    # plus any other JSON response. This avoids missing product data that may be
+    # returned with a non-standard content-type from the ASP.NET backend.
     api_responses = []
 
     async def _capture_api_response(response):
         try:
             if response.status != 200:
                 return
+            url = response.url
             ct = response.headers.get('content-type') or ''
-            if 'json' not in ct:
+            is_delegate = 'restBusinessDelegate' in url
+            is_json = 'json' in ct
+            if not is_delegate and not is_json:
                 return
             body = await response.text()
             if len(body) > 80:
-                api_responses.append({'url': response.url, 'body': body})
-                print(f"  [Soledad] API: {response.url.split('?')[0][-60:]} ({len(body)}b)")
+                api_responses.append({'url': url, 'body': body})
+                print(f"  [Soledad] API: {url.split('?')[0][-60:]} ({len(body)}b) ct={ct[:25]!r}")
         except Exception:
             pass
 
@@ -1282,16 +1288,36 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                     await page.wait_for_url("**/products**", timeout=5000)
                 except Exception:
                     pass
-            await asyncio.sleep(3)  # Angular needs extra time to render product list
+            await asyncio.sleep(4)  # Angular needs extra time to render product list
 
             # Scroll down to trigger lazy-loaded product list (Angular virtual scroll)
             try:
                 await page.evaluate("window.scrollTo(0, 600)")
-                await asyncio.sleep(2)
+                await asyncio.sleep(3)
                 await page.evaluate("window.scrollTo(0, 1200)")
+                await asyncio.sleep(3)
+                await page.evaluate("window.scrollTo(0, 2000)")
                 await asyncio.sleep(2)
             except Exception:
                 pass
+
+            # Wait up to 10s for a 'restBusinessDelegate' response that looks like products
+            # (larger than 1KB and contains 'PRECIO' or 'price' in the body, indicating real data)
+            print(f"  [Soledad] Waiting for product data API response...")
+            for _pw in range(20):
+                await asyncio.sleep(0.5)
+                _found_products_api = any(
+                    len(r['body']) > 1000
+                    and ('PRECIO' in r['body'].upper() or '"price"' in r['body'].lower()
+                         or '"valor"' in r['body'].lower())
+                    and 'restBusinessDelegate' in r['url']
+                    for r in api_responses
+                )
+                if _found_products_api:
+                    print(f"  [Soledad] Product API response detected after {_pw*0.5:.1f}s extra wait")
+                    break
+            else:
+                print(f"  [Soledad] No product price API response found after 10s — using DOM")
 
             products_html = await page.content()
             has_s = medida_slashed.lower() in products_html.lower() or medida_norm in products_html
@@ -1494,8 +1520,22 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                 // Full names + Grupo Soledad abbreviations (MICH.PCY4, CONT.ECO6, etc.)
                 const BRANDS = /MICHELIN|MICH(?=\.)|BRIDGESTONE|BS(?=\.)|CONTINENTAL|CONT(?=\.)|PIRELLI|PIREL(?=\.)|GOODYEAR|GY(?=\.)|DUNLOP|DUN(?=\.)|HANKOOK|HAN(?=\.)|YOKOHAMA|YOKO(?=\.)|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|FALK(?=\.)|NOKIAN|NOK(?=\.)|VREDESTEIN|VRED(?=\.)|MAXXIS|MAXX(?=\.)|GENERAL|GEN(?=\.)|UNIROYAL|UNIR(?=\.)|SEMPERIT|SEMP(?=\.)|BARUM|LASSA|SAVA|KLEBER|KLEB(?=\.)|FULDA|GISLAVED|GISL(?=\.)|COOPER|COOP(?=\.)|NANKANG|NANK(?=\.)|LINGLONG|LINGL(?=\.)|TRIANGLE|TRIAN(?=\.)|SAILUN|SAIL(?=\.)|WESTLAKE|WEST(?=\.)/i;
 
-                // Strategy 1: tables
+                // Elements to exclude — navigation bar, promotions sidebar, saldo/SOL€S widget
+                // These contain brand names + numbers that are NOT products
+                const EXCLUDE_SELECTORS = [
+                    'nav', 'header', 'app-top-menu', 'app-saldo-btn', 'app-user-menu',
+                    'app-client-info', 'app-promotions', '[class*="promo"]', '[class*="saldo"]',
+                    'footer'
+                ];
+                function isExcluded(el) {
+                    return EXCLUDE_SELECTORS.some(sel => {
+                        try { return el.closest(sel) !== null; } catch(e) { return false; }
+                    });
+                }
+
+                // Strategy 1: tables (skip excluded sections)
                 for (const tbl of document.querySelectorAll("table")) {
+                    if (isExcluded(tbl)) continue;
                     const rows = Array.from(tbl.querySelectorAll("tr"));
                     if (rows.length < 2) continue;
                     const hdr = Array.from(rows[0].querySelectorAll("th,td")).map(h=>h.textContent.trim().toLowerCase());
@@ -1519,10 +1559,11 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                     if(products.length>0) break;
                 }
 
-                // Strategy 2: any element containing a price near a brand name
+                // Strategy 2: any element containing a price near a brand name (skip excluded sections)
                 if(products.length===0){
                     const allEls = Array.from(document.querySelectorAll("*"));
                     for(const el of allEls){
+                        if (isExcluded(el)) continue;
                         const t = el.childNodes.length===1&&el.childNodes[0].nodeType===3 ? el.textContent.trim() : "";
                         if(!t) continue;
                         const pm=t.match(/^[€$]?\s*(\d{2,3}[,.]\d{2})\s*[€$]?$/);
@@ -1533,6 +1574,7 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         let brand="",model="";
                         let ancestor=el.parentElement;
                         for(let d=0;d<5&&ancestor;d++,ancestor=ancestor.parentElement){
+                            if (isExcluded(ancestor)) { brand=""; break; }
                             const at=ancestor.textContent.toUpperCase();
                             const bm=at.match(BRANDS);
                             if(bm){brand=bm[0];model=ancestor.textContent.trim().substring(0,120);break;}
