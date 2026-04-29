@@ -1601,6 +1601,31 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         for _r in sorted(api_responses, key=lambda x: len(x['body']), reverse=True)[:3]:
             print(f"  [Soledad] API preview ({_r['url'].split('?')[0][-40:]}): {_r['body'][:300]}")
 
+        # Print first raw item from each large response — lets us see ALL field names+values
+        _diag_printed = False
+        for _r in sorted(api_responses, key=lambda x: len(x['body']), reverse=True)[:3]:
+            try:
+                _d = json.loads(_r['body'])
+                def _first_list_item(obj, d=0):
+                    if d > 4: return None
+                    if isinstance(obj, list):
+                        for _x in obj:
+                            if isinstance(_x, dict) and len(_x) > 3:
+                                return _x
+                    if isinstance(obj, dict):
+                        for _v in obj.values():
+                            _r2 = _first_list_item(_v, d+1)
+                            if _r2: return _r2
+                    return None
+                _sample = _first_list_item(_d)
+                if _sample and not _diag_printed:
+                    print(f"  [Soledad] DIAG first item from {_r['url'].split('?')[0][-50:]}:")
+                    for _k, _v in list(_sample.items())[:30]:
+                        print(f"    {_k}={_v!r}")
+                    _diag_printed = True
+            except Exception:
+                pass
+
         for resp in api_responses:
             try:
                 data = json.loads(resp['body'])
@@ -1614,6 +1639,9 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
 
         if products:
             print(f"  [Soledad] {len(products)} products from API interception")
+            # Print first 3 products with all fields so we can verify index extraction
+            for _p in products[:3]:
+                print(f"  [Soledad] DIAG product: {_p}")
         else:
             # Secondary: DOM extraction
             print(f"  [Soledad] No API products — trying DOM extraction")

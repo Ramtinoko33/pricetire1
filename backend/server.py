@@ -657,8 +657,8 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=1800)
             out_str = stdout.decode()
-            head = out_str[:1500]
-            tail = out_str[-1500:] if len(out_str) > 1500 else ""
+            head = out_str[:4000]
+            tail = out_str[-4000:] if len(out_str) > 4000 else ""
             logger.info(f"Scraper concluído. Output início:\n{head}")
             if tail:
                 logger.info(f"Scraper concluído. Output fim:\n{tail}")
@@ -667,9 +667,9 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
             try:
                 out, _ = await proc.communicate()
                 out_str = out.decode()
-                logger.warning(f"Scraper timeout. Output início:\n{out_str[:1500]}")
-                if len(out_str) > 1500:
-                    logger.warning(f"Scraper timeout. Output fim:\n{out_str[-1500:]}")
+                logger.warning(f"Scraper timeout. Output início:\n{out_str[:4000]}")
+                if len(out_str) > 4000:
+                    logger.warning(f"Scraper timeout. Output fim:\n{out_str[-4000:]}")
             except Exception:
                 logger.warning("Scraper timeout após 30 minutos (sem output)")
             scraper_timed_out = True
