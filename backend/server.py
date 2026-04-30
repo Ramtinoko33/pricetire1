@@ -706,6 +706,27 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
         match_type = None
         medida_prices = prices_by_medida.get(medida_norm, [])
 
+        def _speed_letter(idx: str) -> str:
+            """Extract speed category letter from a combined index like '94W XL' → 'W'."""
+            m = re.search(r'\d{2,3}([A-Z])', (idx or '').upper())
+            return m.group(1) if m else ''
+
+        def _index_ok(scraped_idx: str, want_idx: str) -> bool:
+            """True if scraped index is compatible with the wanted index.
+            Compares speed letters (W, V, H…) because that's what Soledad stores.
+            Empty scraped_idx → unknown → treated as compatible (don't reject).
+            """
+            if not want_idx:
+                return True
+            s = (scraped_idx or '').strip().upper()
+            w = want_idx.strip().upper()
+            if not s:
+                return True   # index not stored → can't compare, keep the match
+            if s == w or s.startswith(w) or w.startswith(s):
+                return True
+            # Compare speed letters only (handles stored '94W' vs wanted '94W XL' etc.)
+            return _speed_letter(s) == _speed_letter(w)
+
         if medida_prices:
             if marca_norm and modelo_norm:
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').strip().upper() == marca_norm]
@@ -717,8 +738,6 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                         match_type = "modelo_exato"
                     else:
                         # Level 2: scraped description ends with the user's model name
-                        # e.g. user="crossclimate 2", scraped="MICHELIN 205/55R16 91W CROSSCLIMATE 2"
-                        # Also handles "CROSSCLIMATE 2 XL" (model + suffix like XL/SUV/etc)
                         pat_end = re.compile(
                             r'(?:^|\s)' + re.escape(modelo_norm) + r'(\s+\w+)?$',
                             re.IGNORECASE
@@ -738,6 +757,16 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                                 scraped = [p for p in marca_prices if pat_contains.search(p.get('modelo') or '')]
                                 if scraped:
                                     match_type = "modelo_parcial"
+
+                # Index refinement: if a specific index was requested, prefer products
+                # that match it. If none match, keep all model results but DOWNGRADE
+                # match_type to "marca" so the user sees it's not a spec-exact match.
+                if scraped and indice_norm:
+                    idx_ok = [p for p in scraped if _index_ok(p.get('load_index') or '', indice_norm)]
+                    if idx_ok:
+                        scraped = idx_ok   # narrowed to matching index — keep match_type
+                    else:
+                        match_type = "marca"  # model found but wrong index — honest downgrade
 
             if not scraped and marca_norm:
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').strip().upper() == marca_norm]
