@@ -722,59 +722,72 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
             # Exact match, ou um é prefixo do outro (trata '94W' vs '94W XL')
             return s == w or s.startswith(w) or w.startswith(s)
 
+        # Helper: aplica filtro de índice a uma lista de candidatos.
+        # Se indice_norm não foi especificado, devolve os candidatos sem filtrar.
+        # Se indice_norm foi especificado, devolve só os que têm o índice certo.
+        def _with_index(candidates):
+            if not indice_norm:
+                return candidates
+            return [p for p in candidates if _index_ok(p.get('load_index') or '', indice_norm)]
+
         if medida_prices:
             if marca_norm and modelo_norm:
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').strip().upper() == marca_norm]
                 if marca_prices:
-                    # Level 1: exact match
+                    # Nível 1a: modelo exato (descrição = modelo pedido)
                     pat_exact = re.compile(f"^{re.escape(modelo_norm)}$", re.IGNORECASE)
-                    scraped = [p for p in marca_prices if pat_exact.match(p.get('modelo') or '')]
+                    candidates = [p for p in marca_prices if pat_exact.match(p.get('modelo') or '')]
+                    scraped = _with_index(candidates)
                     if scraped:
                         match_type = "modelo_exato"
-                    else:
-                        # Level 2: scraped description ends with the user's model name
+
+                    if not scraped:
+                        # Nível 1b: descrição termina com o modelo pedido
                         pat_end = re.compile(
                             r'(?:^|\s)' + re.escape(modelo_norm) + r'(\s+\w+)?$',
                             re.IGNORECASE
                         )
-                        scraped = [p for p in marca_prices if pat_end.search(p.get('modelo') or '')]
+                        candidates = [p for p in marca_prices if pat_end.search(p.get('modelo') or '')]
+                        scraped = _with_index(candidates)
                         if scraped:
                             match_type = "modelo_exato"
-                        else:
-                            # Level 3: model name at start of description
-                            pat_start = re.compile(f"^{re.escape(modelo_norm)}(\\s|$)", re.IGNORECASE)
-                            scraped = [p for p in marca_prices if pat_start.match(p.get('modelo') or '')]
-                            if scraped:
-                                match_type = "modelo_parcial"
-                            else:
-                                # Level 4: model name anywhere in description
-                                pat_contains = re.compile(re.escape(modelo_norm), re.IGNORECASE)
-                                scraped = [p for p in marca_prices if pat_contains.search(p.get('modelo') or '')]
-                                if scraped:
-                                    match_type = "modelo_parcial"
 
-                # Index refinement: if a specific index was requested, prefer products
+                    if not scraped:
+                        # Nível 1c: modelo parcial — nome no início da descrição
+                        pat_start = re.compile(f"^{re.escape(modelo_norm)}(\\s|$)", re.IGNORECASE)
+                        candidates = [p for p in marca_prices if pat_start.match(p.get('modelo') or '')]
+                        scraped = _with_index(candidates)
+                        if scraped:
+                            match_type = "modelo_parcial"
+
+                    if not scraped:
+                        # Nível 1d: modelo parcial — nome em qualquer parte da descrição
+                        pat_contains = re.compile(re.escape(modelo_norm), re.IGNORECASE)
+                        candidates = [p for p in marca_prices if pat_contains.search(p.get('modelo') or '')]
+                        scraped = _with_index(candidates)
+                        if scraped:
+                            match_type = "modelo_parcial"
+
+            # Nível 2: sem modelo — qualquer produto da mesma marca com o índice certo
             if not scraped and marca_norm:
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').strip().upper() == marca_norm]
-                if marca_prices:
-                    scraped = marca_prices
+                scraped = _with_index(marca_prices)
+                if scraped:
                     match_type = "marca"
-                else:
-                    pat_marca = re.compile(f"^{marca_norm.replace(' ', '.*')}$", re.IGNORECASE)
-                    marca_parcial = [p for p in medida_prices if pat_marca.match(p.get('marca') or '')]
-                    if marca_parcial:
-                        scraped = marca_parcial
-                        match_type = "marca_parcial"
 
+            if not scraped and marca_norm:
+                # Nível 2b: marca parcial (ex: "MICH" → "MICHELIN")
+                pat_marca = re.compile(f"^{marca_norm.replace(' ', '.*')}$", re.IGNORECASE)
+                marca_parcial = [p for p in medida_prices if pat_marca.match(p.get('marca') or '')]
+                scraped = _with_index(marca_parcial)
+                if scraped:
+                    match_type = "marca_parcial"
+
+            # Nível 3: sem marca nem modelo — o mais barato com o índice certo
             if not scraped:
-                scraped = medida_prices
-                match_type = "medida"
-
-            # Filtro de índice obrigatório: se o índice foi especificado e nenhum
-            # produto tem esse índice, não mostrar resultado (sem_dados).
-            if scraped and indice_norm:
-                idx_ok = [p for p in scraped if _index_ok(p.get('load_index') or '', indice_norm)]
-                scraped = idx_ok  # vazio → sem resultado
+                scraped = _with_index(medida_prices)
+                if scraped:
+                    match_type = "medida"
 
         if scraped:
             scraped = sorted(scraped, key=lambda x: x.get('price', 999999))
