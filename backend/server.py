@@ -754,14 +754,13 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                                     match_type = "modelo_parcial"
 
                 # Index refinement: if a specific index was requested, prefer products
-                # that match it. If none match, keep all model results but DOWNGRADE
-                # match_type to "marca" so the user sees it's not a spec-exact match.
+                # Refinamento por índice: se existir variante com o índice pedido, preferir.
+                # Se não existir, manter o modelo encontrado (match_type inalterado) —
+                # o utilizador vê o índice real na coluna "Índice Encontrado".
                 if scraped and indice_norm:
                     idx_ok = [p for p in scraped if _index_ok(p.get('load_index') or '', indice_norm)]
                     if idx_ok:
-                        scraped = idx_ok   # narrowed to matching index — keep match_type
-                    else:
-                        match_type = "marca"  # model found but wrong index — honest downgrade
+                        scraped = idx_ok   # variante exacta — mantém match_type
 
             if not scraped and marca_norm:
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').strip().upper() == marca_norm]
