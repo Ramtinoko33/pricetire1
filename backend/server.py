@@ -754,38 +754,27 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                                     match_type = "modelo_parcial"
 
                 # Index refinement: if a specific index was requested, prefer products
-                # Refinamento por índice: se existir variante com o índice pedido, preferir.
-                # Se não existir, manter o modelo encontrado (match_type inalterado) —
-                # o utilizador vê o índice real na coluna "Índice Encontrado".
-                if scraped and indice_norm:
-                    idx_ok = [p for p in scraped if _index_ok(p.get('load_index') or '', indice_norm)]
-                    if idx_ok:
-                        scraped = idx_ok   # variante exacta — mantém match_type
-
             if not scraped and marca_norm:
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').strip().upper() == marca_norm]
                 if marca_prices:
-                    # Dentro do fallback de marca, preferir produtos com índice correcto
-                    if indice_norm:
-                        idx_ok = [p for p in marca_prices if _index_ok(p.get('load_index') or '', indice_norm)]
-                        scraped = idx_ok if idx_ok else marca_prices
-                    else:
-                        scraped = marca_prices
+                    scraped = marca_prices
                     match_type = "marca"
                 else:
                     pat_marca = re.compile(f"^{marca_norm.replace(' ', '.*')}$", re.IGNORECASE)
                     marca_parcial = [p for p in medida_prices if pat_marca.match(p.get('marca') or '')]
                     if marca_parcial:
-                        if indice_norm:
-                            idx_ok = [p for p in marca_parcial if _index_ok(p.get('load_index') or '', indice_norm)]
-                            scraped = idx_ok if idx_ok else marca_parcial
-                        else:
-                            scraped = marca_parcial
+                        scraped = marca_parcial
                         match_type = "marca_parcial"
 
             if not scraped:
                 scraped = medida_prices
                 match_type = "medida"
+
+            # Filtro de índice obrigatório: se o índice foi especificado e nenhum
+            # produto tem esse índice, não mostrar resultado (sem_dados).
+            if scraped and indice_norm:
+                idx_ok = [p for p in scraped if _index_ok(p.get('load_index') or '', indice_norm)]
+                scraped = idx_ok  # vazio → sem resultado
 
         if scraped:
             scraped = sorted(scraped, key=lambda x: x.get('price', 999999))
