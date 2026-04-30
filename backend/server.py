@@ -714,15 +714,15 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
 
         def _index_ok(scraped_idx: str, want_idx: str) -> bool:
             """True if scraped index is compatible with the wanted index.
-            Compares speed letters (W, V, H…) because that's what Soledad stores.
-            Empty scraped_idx → unknown → treated as compatible (don't reject).
+            Compares number+letter (e.g. '94W') and handles XL suffix.
+            Empty scraped_idx → can't confirm spec → returns False (downgrade to marca).
             """
             if not want_idx:
                 return True
             s = (scraped_idx or '').strip().upper()
             w = want_idx.strip().upper()
             if not s:
-                return True   # index not stored → can't compare, keep the match
+                return False  # index not stored → can't verify → downgrade to marca
             if s == w or s.startswith(w) or w.startswith(s):
                 return True
             # Compare speed letters only (handles stored '94W' vs wanted '94W XL' etc.)

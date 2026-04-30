@@ -1558,14 +1558,14 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                                 _s = str(v).strip()
                                 if _s.isdigit():
                                     ic_val = _s
-                                break
+                                    break  # only break on success
                         for lk, (orig_k, v) in item_lc.items():
                             if any(lk == suf.lstrip('_') or lk.endswith(suf)
                                    for suf in _CV_FIELD_SUFFIXES) and v is not None:
                                 _s = str(v).strip().upper()
                                 if len(_s) == 1 and _s.isalpha():
                                     cv_val = _s
-                                break
+                                    break  # only break on success
                         indice_val = (ic_val + cv_val).strip()
                         # Fallback: regex on model text e.g. "PRIMACY 4 91H XL"
                         if not indice_val and model_val:
@@ -1575,7 +1575,8 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
 
                         print(f"  [Soledad] API product: brand={brand_val!r} "
                               f"model={model_val[:40]!r} price={price_val} "
-                              f"indice={indice_val!r} (field={used_pk})")
+                              f"ic={ic_val!r} cv={cv_val!r} indice={indice_val!r} "
+                              f"(field={used_pk})")
                         products.append({'brand': brand_val, 'model': model_val,
                                          'price': price_val, 'indice': indice_val})
                     else:
