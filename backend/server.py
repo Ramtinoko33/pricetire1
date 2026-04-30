@@ -707,26 +707,20 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
         match_type = None
         medida_prices = prices_by_medida.get(medida_norm, [])
 
-        def _speed_letter(idx: str) -> str:
-            """Extract speed category letter from a combined index like '94W XL' → 'W'."""
-            m = re.search(r'\d{2,3}([A-Z])', (idx or '').upper())
-            return m.group(1) if m else ''
-
         def _index_ok(scraped_idx: str, want_idx: str) -> bool:
-            """True if scraped index is compatible with the wanted index.
-            Compares number+letter (e.g. '94W') and handles XL suffix.
-            Empty scraped_idx → can't confirm spec → returns False (downgrade to marca).
+            """True se o índice raspado corresponde ao índice pedido.
+            '94W' ↔ '94W XL' → aceite (prefixo).
+            '91V' ↔ '92V'   → rejeitado (índices de carga diferentes).
+            Índice raspado vazio → não é possível verificar → rejeitado.
             """
             if not want_idx:
                 return True
             s = (scraped_idx or '').strip().upper()
             w = want_idx.strip().upper()
             if not s:
-                return False  # index not stored → can't verify → downgrade to marca
-            if s == w or s.startswith(w) or w.startswith(s):
-                return True
-            # Compare speed letters only (handles stored '94W' vs wanted '94W XL' etc.)
-            return _speed_letter(s) == _speed_letter(w)
+                return False  # índice não guardado → não é possível verificar
+            # Exact match, ou um é prefixo do outro (trata '94W' vs '94W XL')
+            return s == w or s.startswith(w) or w.startswith(s)
 
         if medida_prices:
             if marca_norm and modelo_norm:
@@ -772,12 +766,22 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
             if not scraped and marca_norm:
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').strip().upper() == marca_norm]
                 if marca_prices:
-                    scraped = marca_prices
+                    # Dentro do fallback de marca, preferir produtos com índice correcto
+                    if indice_norm:
+                        idx_ok = [p for p in marca_prices if _index_ok(p.get('load_index') or '', indice_norm)]
+                        scraped = idx_ok if idx_ok else marca_prices
+                    else:
+                        scraped = marca_prices
                     match_type = "marca"
                 else:
                     pat_marca = re.compile(f"^{marca_norm.replace(' ', '.*')}$", re.IGNORECASE)
-                    scraped = [p for p in medida_prices if pat_marca.match(p.get('marca') or '')]
-                    if scraped:
+                    marca_parcial = [p for p in medida_prices if pat_marca.match(p.get('marca') or '')]
+                    if marca_parcial:
+                        if indice_norm:
+                            idx_ok = [p for p in marca_parcial if _index_ok(p.get('load_index') or '', indice_norm)]
+                            scraped = idx_ok if idx_ok else marca_parcial
+                        else:
+                            scraped = marca_parcial
                         match_type = "marca_parcial"
 
             if not scraped:
