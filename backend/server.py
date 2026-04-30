@@ -693,6 +693,14 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
         m = sp.get('medida', '')
         prices_by_medida.setdefault(m, []).append(sp)
 
+    # Diagnóstico: logar o que está na BD por medida (ajuda a perceber "sem dados")
+    for _m, _ps in prices_by_medida.items():
+        _idx_counts: Dict[str, int] = {}
+        for _p in _ps:
+            _li = (_p.get('load_index') or '').strip()
+            _idx_counts[_li if _li else '(vazio)'] = _idx_counts.get(_li if _li else '(vazio)', 0) + 1
+        logger.info(f"[compare diag] medida={_m} total={len(_ps)} índices={_idx_counts}")
+
     updated_count = found_count = matched_count = 0
     total_savings = 0.0
     bulk_updates = []
@@ -711,14 +719,14 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
             """True se o índice raspado corresponde ao índice pedido.
             '94W' ↔ '94W XL' → aceite (prefixo).
             '91V' ↔ '92V'   → rejeitado (índices de carga diferentes).
-            Índice raspado vazio → não é possível verificar → rejeitado.
+            Índice raspado vazio → índice desconhecido → aceite (melhor mostrar do que esconder).
             """
             if not want_idx:
                 return True
             s = (scraped_idx or '').strip().upper()
             w = want_idx.strip().upper()
             if not s:
-                return False  # índice não guardado → não é possível verificar
+                return True  # índice não guardado na BD → tratado como desconhecido, não filtrar
             # Exact match, ou um é prefixo do outro (trata '94W' vs '94W XL')
             return s == w or s.startswith(w) or w.startswith(s)
 
@@ -790,7 +798,12 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                     match_type = "medida"
 
         if scraped:
-            scraped = sorted(scraped, key=lambda x: x.get('price', 999999))
+            # Ordenar: preferir produtos com índice guardado na BD (0) sobre índice desconhecido (1),
+            # depois pelo preço mais baixo dentro de cada grupo.
+            scraped = sorted(scraped, key=lambda x: (
+                0 if (x.get('load_index') or '').strip() else 1,
+                x.get('price', 999999),
+            ))
             best = scraped[0]
             best_price    = best['price']
             best_supplier = best['supplier_name']
