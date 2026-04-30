@@ -791,6 +791,7 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
             best_supplier = best['supplier_name']
             best_marca    = best.get('marca', '')
             best_modelo   = best.get('modelo', '')
+            best_indice   = best.get('load_index', '')
             meu_preco     = item.get('meu_preco', 0)
             sup_prices = {}
             for s in scraped:
@@ -817,7 +818,7 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
 
             bulk_updates.append((
                 item['id'], best_price, best_supplier, best_marca, best_modelo,
-                match_type,
+                best_indice, match_type,
                 round(economia_euro, 2) if economia_euro is not None else None,
                 round(economia_percent, 2) if economia_percent is not None else None,
                 sup_prices,
@@ -830,7 +831,7 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                 total_savings += economia_euro
         else:
             bulk_updates.append((
-                item['id'], None, None, None, None, "sem_dados",
+                item['id'], None, None, None, None, None, "sem_dados",
                 None, None, {}, "no_data",
             ))
             updated_count += 1
@@ -842,9 +843,9 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                     """
                     UPDATE job_items SET
                         melhor_preco=$2, melhor_fornecedor=$3, melhor_marca=$4,
-                        modelo_encontrado=$5, match_type=$6,
-                        economia_euro=$7, economia_percent=$8,
-                        supplier_prices=$9, status=$10
+                        modelo_encontrado=$5, indice_encontrado=$6, match_type=$7,
+                        economia_euro=$8, economia_percent=$9,
+                        supplier_prices=$10, status=$11
                     WHERE id=$1
                     """,
                     *u,

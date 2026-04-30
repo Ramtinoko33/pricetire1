@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
-import { Upload as UploadIcon, FileSpreadsheet, Loader2, Scale, Download, TrendingDown, CheckCircle, ArrowRight } from 'lucide-react';
+import { Upload as UploadIcon, FileSpreadsheet, Loader2, Scale, Download, TrendingDown, CheckCircle, ArrowRight, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 const Comparar = () => {
@@ -60,12 +60,14 @@ const Comparar = () => {
     }
   };
 
-  const handleCompare = async () => {
+  const handleCompare = async (force = false) => {
     if (!job?.id) return;
 
     setComparing(true);
     try {
-      const { data } = await jobsAPI.compare(job.id);
+      const { data } = force
+        ? await jobsAPI.forceCompare(job.id)
+        : await jobsAPI.compare(job.id);
       setStats({
         total: data.items_processed,
         found: data.items_with_savings,
@@ -312,14 +314,29 @@ const Comparar = () => {
                       <p className="text-3xl font-bold text-emerald-600">€{stats.savings?.toFixed(2)}</p>
                     </div>
                   </div>
-                  <Button onClick={handleExport} disabled={exporting} data-testid="export-btn">
-                    {exporting ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Download className="mr-2 h-4 w-4" />
-                    )}
-                    Exportar Excel
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => handleCompare(true)}
+                      disabled={comparing}
+                      title="Apaga dados em cache e raspa tudo de novo"
+                    >
+                      {comparing ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                      )}
+                      Actualizar dados
+                    </Button>
+                    <Button onClick={handleExport} disabled={exporting} data-testid="export-btn">
+                      {exporting ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="mr-2 h-4 w-4" />
+                      )}
+                      Exportar Excel
+                    </Button>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -340,6 +357,7 @@ const Comparar = () => {
                       <TableHead>Modelo</TableHead>
                       <TableHead>Índice</TableHead>
                       <TableHead>Modelo Encontrado</TableHead>
+                      <TableHead>Índice Encontrado</TableHead>
                       <TableHead className="text-right">Meu Preço</TableHead>
                       <TableHead className="text-right">Melhor Preço</TableHead>
                       <TableHead>Fornecedor</TableHead>
@@ -394,6 +412,9 @@ const Comparar = () => {
                           </TableCell>
                           <TableCell className="max-w-[150px] truncate font-medium" title={item.modelo_encontrado}>
                             {item.modelo_encontrado || '-'}
+                          </TableCell>
+                          <TableCell className="font-mono text-slate-500 text-xs">
+                            {item.indice_encontrado || '-'}
                           </TableCell>
                           <TableCell className="text-right font-medium">
                             {item.meu_preco ? `€${item.meu_preco.toFixed(2)}` : '-'}

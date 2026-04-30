@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS job_items (
     melhor_fornecedor  TEXT,
     melhor_marca       TEXT,
     modelo_encontrado  TEXT,
+    indice_encontrado  TEXT,
     match_type         TEXT,
     economia_euro      FLOAT,
     economia_percent   FLOAT,
