@@ -1482,7 +1482,8 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                              'model', 'nome', 'designation', 'denominacion', 'referencia')
         # IC = Índice de Carga (load number, e.g. 91), CV = Categoría Velocidad (letter, e.g. H)
         # Combined they form the load/speed index like "91H", "94V", "95W XL"
-        _IC_SUBSTRINGS  = ('ic', 'indcarga', 'indice_carga', 'loadindex', 'load_index',
+        # Soledad API uses AR_CARGA (load) and AR_VELOCIDAD (speed) — matched via endswith('_carga')
+        _IC_SUBSTRINGS  = ('ic', 'carga', 'indcarga', 'indice_carga', 'loadindex', 'load_index',
                            'load_rating', 'cargaindice', 'indicecarga', 'li')
         _CV_SUBSTRINGS  = ('cv', 'velocidad', 'speedindex', 'speed_index', 'speed_rating',
                            'indvel', 'indice_velocidad', 'categoriaveloc', 'si')
@@ -1536,7 +1537,7 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         brand_val = ''
                         for lk, (orig_k, v) in item_lc.items():
                             if any(sub in lk for sub in _BRAND_SUBSTRINGS) and v:
-                                brand_val = str(v).upper()
+                                brand_val = str(v).strip().upper()  # strip fixed-width padding
                                 break
 
                         if not brand_val:
@@ -1547,7 +1548,7 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         model_val = ''
                         for lk, (orig_k, v) in item_lc.items():
                             if any(sub in lk for sub in _MODEL_SUBSTRINGS) and v:
-                                model_val = str(v)
+                                model_val = str(v).strip()  # strip fixed-width padding
                                 break
 
                         # Extract load/speed index — try IC+CV separately, then combined field,
@@ -1555,13 +1556,19 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         ic_val = cv_val = ''
                         for lk, (orig_k, v) in item_lc.items():
                             if any(lk == sub or lk.endswith('_' + sub) or lk.startswith(sub + '_')
+                                   or sub in lk  # substring fallback for AR_CARGA etc.
                                    for sub in _IC_SUBSTRINGS) and v:
-                                ic_val = str(v).strip()
+                                _ic_str = str(v).strip()
+                                if _ic_str.isdigit():  # only accept pure numeric load index
+                                    ic_val = _ic_str
                                 break
                         for lk, (orig_k, v) in item_lc.items():
                             if any(lk == sub or lk.endswith('_' + sub) or lk.startswith(sub + '_')
+                                   or sub in lk  # substring fallback for AR_VELOCIDAD etc.
                                    for sub in _CV_SUBSTRINGS) and v:
-                                cv_val = str(v).strip().upper()
+                                _cv_str = str(v).strip().upper()
+                                if len(_cv_str) == 1 and _cv_str.isalpha():  # single speed letter
+                                    cv_val = _cv_str
                                 break
                         indice_val = (ic_val + cv_val).strip()
                         if not indice_val:
@@ -1735,6 +1742,13 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                 p['brand'] = b
             if m:
                 p['model'] = m
+
+        # Discard DOM-extracted products with no model — these come from promotions/stock
+        # widgets (e.g. "20,00 € SOL€S" near a brand mention), not real product listings.
+        before_filter = len(products)
+        products = [p for p in products if p.get('model', '').strip()]
+        if len(products) < before_filter:
+            print(f"  [Soledad] Dropped {before_filter - len(products)} products with empty model")
 
         if products:
             print(f"  [Soledad] {len(products)} products after brand expansion")

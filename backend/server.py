@@ -736,7 +736,8 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
 
         if medida_prices:
             if marca_norm and modelo_norm:
-                marca_prices = [p for p in medida_prices if (p.get('marca') or '').upper() == marca_norm]
+                # .strip() handles legacy fixed-width padding from Soledad API (e.g. 'MICHELIN      ')
+                marca_prices = [p for p in medida_prices if (p.get('marca') or '').strip().upper() == marca_norm]
                 if marca_prices:
                     # Level 1: exact match
                     pat_exact = re.compile(f"^{re.escape(modelo_norm)}$", re.IGNORECASE)
@@ -781,7 +782,7 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                         match_type = None
 
             if not scraped and marca_norm:
-                marca_prices = [p for p in medida_prices if (p.get('marca') or '').upper() == marca_norm]
+                marca_prices = [p for p in medida_prices if (p.get('marca') or '').strip().upper() == marca_norm]
                 if marca_prices:
                     # Try to filter by index at brand level too
                     if indice_norm:
