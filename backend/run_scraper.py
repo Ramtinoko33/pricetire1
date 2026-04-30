@@ -1178,7 +1178,17 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             await page.wait_for_load_state("load", timeout=8000)
         except Exception:
             pass
-        await asyncio.sleep(2)  # Angular render
+        # Aguardar que o Angular renderize o formulário de pesquisa (typeahead input).
+        # Para medidas com skip_login=True a página é nova e o Angular precisa de mais tempo
+        # do que o simples wait_for_load_state("load").
+        _ta_sel = '#typeahead-basic-busqueda, input[placeholder*="Medida" i], input[id*="busqueda" i]'
+        try:
+            await page.wait_for_selector(_ta_sel, state='visible', timeout=12000)
+            print(f"  [Soledad] Typeahead input visible")
+        except Exception:
+            # Não encontrou em 12s — esperar mais 3s e continuar na mesma
+            await asyncio.sleep(3)
+            print(f"  [Soledad] Typeahead input timeout — continuing anyway")
 
         _save_debug('/tmp/soledad_search_page.html', await page.content())
         search_page_url = page.url
@@ -3027,6 +3037,15 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         except Exception:
                             pass
                 await _sol_browser.close()
+            # Sumário compacto de todos os resultados Soledad (visível no fim dos logs)
+            _sol_summary = []
+            for _r in results:
+                if _r.get('supplier', '').lower().startswith('grupo'):
+                    _m = _r.get('medida', '?')
+                    _np = len(_r.get('products', []))
+                    _err = _r.get('error') or ''
+                    _sol_summary.append(f"{_m}:{_np}p{'(ERR)' if _err else ''}")
+            print(f"  [Soledad] RESUMO: {' | '.join(_sol_summary)}")
             continue  # Skip the generic per-medida loop below
 
         for medida, marca, modelo in targets:
