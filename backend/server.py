@@ -701,6 +701,7 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
         medida_norm = item['medida'].replace('/', '').replace('R', '').replace('r', '')
         marca_norm  = (item.get('marca')  or '').strip().upper()
         modelo_norm = (item.get('modelo') or '').strip().upper()
+        indice_norm = (item.get('indice') or '').strip().upper()
 
         scraped = []
         match_type = None
