@@ -1480,8 +1480,15 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         _BRAND_SUBSTRINGS = ('marca', 'brand', 'manufacturer', 'fabricante', 'marque')
         _MODEL_SUBSTRINGS = ('descripcion', 'descricao', 'description', 'modelo',
                              'model', 'nome', 'designation', 'denominacion', 'referencia')
+        # Soledad API uses AR_CARGA (load number e.g. 91) and AR_VELOCIDAD (speed letter e.g. H)
+        # Use endswith matching to avoid false positives from field names containing 'ic' etc.
+        _IC_FIELD_SUFFIXES = ('_carga', '_ic', '_li', '_loadindex', '_load_index',
+                              '_indcarga', '_indicecarga')
+        _CV_FIELD_SUFFIXES = ('_velocidad', '_cv', '_si', '_velocidade', '_speedindex',
+                              '_speed_index', '_indvel')
 
         _logged_keys: set = set()  # avoid printing the same key set twice
+        import re as _re_idx
 
         def _parse_api_json(data, depth=0):
             """Recursively search JSON for objects that look like tire products."""
@@ -1527,7 +1534,7 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         brand_val = ''
                         for lk, (orig_k, v) in item_lc.items():
                             if any(sub in lk for sub in _BRAND_SUBSTRINGS) and v:
-                                brand_val = str(v).upper()
+                                brand_val = str(v).strip().upper()  # strip fixed-width padding
                                 break
 
                         if not brand_val:
@@ -1538,12 +1545,39 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         model_val = ''
                         for lk, (orig_k, v) in item_lc.items():
                             if any(sub in lk for sub in _MODEL_SUBSTRINGS) and v:
-                                model_val = str(v)
+                                model_val = str(v).strip()  # strip fixed-width padding
                                 break
 
+                        # Extract load/speed index using suffix matching only (avoids false positives
+                        # from field names like 'clasificacion_orden' that contain 'ic' as substring)
+                        # AR_CARGA='91' + AR_VELOCIDAD='V' → indice='91V'
+                        ic_val = cv_val = ''
+                        for lk, (orig_k, v) in item_lc.items():
+                            if any(lk == suf.lstrip('_') or lk.endswith(suf)
+                                   for suf in _IC_FIELD_SUFFIXES) and v is not None:
+                                _s = str(v).strip()
+                                if _s.isdigit():
+                                    ic_val = _s
+                                break
+                        for lk, (orig_k, v) in item_lc.items():
+                            if any(lk == suf.lstrip('_') or lk.endswith(suf)
+                                   for suf in _CV_FIELD_SUFFIXES) and v is not None:
+                                _s = str(v).strip().upper()
+                                if len(_s) == 1 and _s.isalpha():
+                                    cv_val = _s
+                                break
+                        indice_val = (ic_val + cv_val).strip()
+                        # Fallback: regex on model text e.g. "PRIMACY 4 91H XL"
+                        if not indice_val and model_val:
+                            _m = _re_idx.search(r'\b(\d{2,3}[A-Z])(?:\s+XL)?\b', model_val.upper())
+                            if _m:
+                                indice_val = _m.group(0).strip()
+
                         print(f"  [Soledad] API product: brand={brand_val!r} "
-                              f"model={model_val[:40]!r} price={price_val} (field={used_pk})")
-                        products.append({'brand': brand_val, 'model': model_val, 'price': price_val})
+                              f"model={model_val[:40]!r} price={price_val} "
+                              f"indice={indice_val!r} (field={used_pk})")
+                        products.append({'brand': brand_val, 'model': model_val,
+                                         'price': price_val, 'indice': indice_val})
                     else:
                         _parse_api_json(item, depth + 1)
             elif isinstance(data, dict):
@@ -1667,6 +1701,12 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                 p['brand'] = b
             if m:
                 p['model'] = m
+
+        # Discard products with empty model — DOM sometimes picks up brand near a stock/promo number
+        before_filter = len(products)
+        products = [p for p in products if p.get('model', '').strip()]
+        if len(products) < before_filter:
+            print(f"  [Soledad] Dropped {before_filter - len(products)} no-model products")
 
         if products:
             print(f"  [Soledad] {len(products)} products after brand expansion")
