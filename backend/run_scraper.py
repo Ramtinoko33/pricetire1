@@ -2958,11 +2958,17 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                 # Isto evita que um timeout/cancel numa medida corrompa o estado do browser.
                 _sol_first = True
                 _sol_relogin = False  # set True when session expires mid-scrape
+                _sol_medida_count = 0  # contador para re-login preventivo
                 for medida, marca, modelo in targets:
                     _sol_page = await _sol_ctx.new_page()
                     await _sol_page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
                     try:
-                        _is_first = _sol_first or _sol_relogin
+                        _sol_medida_count += 1
+                        # Re-login preventivo a cada 3 medidas para evitar expiração de sessão
+                        _preventive_relogin = (_sol_medida_count % 3 == 0) and not _sol_first
+                        _is_first = _sol_first or _sol_relogin or _preventive_relogin
+                        if _preventive_relogin:
+                            print(f"  [Soledad] Re-login preventivo (medida #{_sol_medida_count})")
                         _sol_first = False
                         _sol_relogin = False
                         _t0 = datetime.now()
@@ -2984,10 +2990,33 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         _dt = (datetime.now() - _t0).total_seconds()
                         print(f"  [Soledad] Fim medida {medida}: {_dt:.0f}s, price={result.get('price')}, products={len(result.get('products',[]))}")
 
-                        # Detect session expiry — next medida must re-login via b2b.current
+                        # Detect session expiry — retry CURRENT medida immediately with re-login
                         if 'session issue' in (result.get('error') or ''):
+                            print(f"  [Soledad] Sessão expirou em {medida} — retentando imediatamente com re-login")
+                            _sol_retry_page = await _sol_ctx.new_page()
+                            await _sol_retry_page.add_init_script(
+                                "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
+                            try:
+                                result = await asyncio.wait_for(
+                                    scrape_grupo_soledad(
+                                        _sol_retry_page,
+                                        supplier['username'], supplier['password'], medida,
+                                        _sol_url_login, _sol_url_search,
+                                        skip_login=False,  # forçar re-login
+                                    ),
+                                    timeout=180,  # mais tempo para login + pesquisa
+                                )
+                                _dt2 = (datetime.now() - _t0).total_seconds()
+                                print(f"  [Soledad] Retry medida {medida}: {_dt2:.0f}s, products={len(result.get('products',[]))}")
+                            except Exception as _retry_e:
+                                print(f"  [Soledad] Retry falhou ({medida}): {_retry_e}")
+                            finally:
+                                try:
+                                    await _sol_retry_page.close()
+                                except Exception:
+                                    pass
+                            # Próxima medida também deve re-autenticar (sessão pode ainda estar inválida)
                             _sol_relogin = True
-                            print(f"  [Soledad] Sessão expirou em {medida} — próxima medida irá re-autenticar")
 
                         result["medida"] = medida
                         results.append(result)
