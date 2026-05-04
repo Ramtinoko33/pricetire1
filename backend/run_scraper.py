@@ -211,16 +211,20 @@ async def scrape_mp24_with_session(page, username: str, password: str, medida: s
             
             if captured_tyres:
                 # Group products by brand+model and keep minimum price
-                product_map = {}  # key: "BRAND|MODEL" -> min price
-                
+                product_map = {}  # key: "BRAND|MODEL" -> {'price': float, 'indice': str}
+
                 for tyre in captured_tyres:
                     brand = tyre.get('manufacturer', '').upper()
                     model = tyre.get('profile', '')
-                    
+                    # Índice carga+velocidade: loadIndex (int) + speedIndex/speedCategory (str)
+                    li = str(tyre.get('loadIndex') or '').strip()
+                    si = str(tyre.get('speedIndex') or tyre.get('speedCategory') or '').strip().upper()
+                    indice = (li + si) if (li and si) else ''
+
                     # Get minimum price from all sources
                     best_prices = tyre.get('bestPricesBySource', {})
                     price = None
-                    
+
                     # Try all price sources and get the minimum
                     for source in ['supplier', 'loadAll', 'central_warehouse', 'my_stock']:
                         source_data = best_prices.get(source, {})
@@ -229,20 +233,21 @@ async def scrape_mp24_with_session(page, username: str, password: str, medida: s
                             source_price = best_price['purchasePrice']
                             if price is None or source_price < price:
                                 price = source_price
-                    
+
                     if brand and model and price and price > 15 and price < 500:
                         key = f"{brand}|{model}"
-                        if key not in product_map or price < product_map[key]:
-                            product_map[key] = price
-                
+                        if key not in product_map or price < product_map[key]['price']:
+                            product_map[key] = {'price': price, 'indice': indice}
+
                 # Convert map back to list
                 products = []
-                for key, price in product_map.items():
+                for key, val in product_map.items():
                     brand, model = key.split('|', 1)
                     products.append({
                         'brand': brand,
                         'model': model,
-                        'price': price
+                        'price': val['price'],
+                        'indice': val['indice']
                     })
                 
                 if products:
@@ -337,15 +342,20 @@ async def scrape_prismanil(page, username: str, password: str, medida: str) -> d
                         // Parse produto string: "BRIDGESTONE 205/55R16 EP150 91V"
                         const parts = produtoStr.trim().split(' ');
                         const brand = parts[0] || '';
-                        const model = parts.slice(2).join(' ') || '';
-                        
+                        const allModel = parts.slice(2);
+                        // último token tipo "91V" ou "94W" é o índice carga+velocidade
+                        const lastToken = allModel[allModel.length - 1] || '';
+                        const indice = /^\d+[A-Z]+$/i.test(lastToken) ? lastToken.toUpperCase() : '';
+                        const model = (indice ? allModel.slice(0, -1) : allModel).join(' ');
+
                         const price = parseFloat(precoStr.replace(',', '.'));
-                        
+
                         if (brand && price > 15 && price < 500) {
                             products.push({
                                 brand: brand.toUpperCase(),
                                 model: model,
-                                price: price
+                                price: price,
+                                indice: indice
                             });
                         }
                     }
