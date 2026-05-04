@@ -729,41 +729,37 @@ async def _do_compare(job_id: str, force: bool):
         medida_prices = prices_by_medida.get(medida_norm, [])
 
         def _index_matches(scraped_idx: str, want_idx: str) -> bool:
-            """True se o índice raspado corresponde ao índice pedido (para ordenação/preferência).
+            """True se o índice raspado corresponde ao índice pedido.
             '94W' ↔ '94W XL' → True (prefixo).
-            '91V' ↔ '92V'   → False (índices diferentes).
-            Índice vazio (desconhecido) → False (não sabemos se corresponde).
-            Usado apenas para dar preferência, NUNCA para filtrar.
+            '91V' ↔ '92V'   → False.
+            Índice vazio (desconhecido) → False.
             """
             if not want_idx:
                 return True
             s = (scraped_idx or '').strip().upper()
             w = want_idx.strip().upper()
             if not s:
-                return False  # desconhecido — não preferir, mas também não excluir
+                return False
             return s == w or s.startswith(w) or w.startswith(s)
 
-        # Helper: filtra produtos sem load_index (índice desconhecido).
-        # Usado apenas em pesquisas GENÉRICAS (marca ou medida) onde não há modelo
-        # identificador — nesses casos, um produto sem índice pode ser o errado.
-        # Nas correspondências por MODELO (exato/parcial), o modelo já identifica o
-        # produto e o filtro NÃO se aplica — MP24/Prismanil nunca guardam o índice
-        # mas isso não significa que o produto esteja errado.
-        def _with_index_generic(candidates):
-            """Só aplica filtro de índice em pesquisas genéricas (marca/medida)."""
+        def _require_index(candidates):
+            """Filtra candidatos para manter APENAS os com índice CORRECTO.
+            Se o utilizador não especificou índice, devolve todos.
+            Exclui tanto índice errado como índice desconhecido (vazio).
+            Aplicado em TODOS os níveis — o MP24 e Prismanil já extraem o índice.
+            """
             if not indice_norm:
                 return candidates
-            return [p for p in candidates if (p.get('load_index') or '').strip()]
+            return [p for p in candidates if _index_matches((p.get('load_index') or '').strip(), indice_norm)]
 
         if medida_prices:
             if marca_norm and modelo_norm:
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').strip().upper() == marca_norm]
                 if marca_prices:
                     # Nível 1a: modelo exato (descrição = modelo pedido)
-                    # Sem filtro de índice — o modelo já identifica o produto exacto
                     pat_exact = re.compile(f"^{re.escape(modelo_norm)}$", re.IGNORECASE)
                     candidates = [p for p in marca_prices if pat_exact.match(p.get('modelo') or '')]
-                    scraped = candidates  # sem _with_index_generic aqui
+                    scraped = _require_index(candidates)
                     if scraped:
                         match_type = "modelo_exato"
 
@@ -774,7 +770,7 @@ async def _do_compare(job_id: str, force: bool):
                             re.IGNORECASE
                         )
                         candidates = [p for p in marca_prices if pat_end.search(p.get('modelo') or '')]
-                        scraped = candidates
+                        scraped = _require_index(candidates)
                         if scraped:
                             match_type = "modelo_exato"
 
@@ -782,7 +778,7 @@ async def _do_compare(job_id: str, force: bool):
                         # Nível 1c: modelo parcial — nome no início da descrição
                         pat_start = re.compile(f"^{re.escape(modelo_norm)}(\\s|$)", re.IGNORECASE)
                         candidates = [p for p in marca_prices if pat_start.match(p.get('modelo') or '')]
-                        scraped = candidates
+                        scraped = _require_index(candidates)
                         if scraped:
                             match_type = "modelo_parcial"
 
@@ -790,16 +786,14 @@ async def _do_compare(job_id: str, force: bool):
                         # Nível 1d: modelo parcial — nome em qualquer parte da descrição
                         pat_contains = re.compile(re.escape(modelo_norm), re.IGNORECASE)
                         candidates = [p for p in marca_prices if pat_contains.search(p.get('modelo') or '')]
-                        scraped = candidates
+                        scraped = _require_index(candidates)
                         if scraped:
                             match_type = "modelo_parcial"
 
-            # Nível 2: sem modelo — qualquer produto da mesma marca com o índice certo
-            # Aqui aplica-se o filtro de índice: sem modelo identificador, não mostrar
-            # produtos onde não sabemos se o índice é o correcto.
+            # Nível 2: sem modelo — qualquer produto da mesma marca com o índice CORRECTO
             if not scraped and marca_norm:
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').strip().upper() == marca_norm]
-                scraped = _with_index_generic(marca_prices)
+                scraped = _require_index(marca_prices)
                 if scraped:
                     match_type = "marca"
 
@@ -807,13 +801,13 @@ async def _do_compare(job_id: str, force: bool):
                 # Nível 2b: marca parcial (ex: "MICH" → "MICHELIN")
                 pat_marca = re.compile(f"^{marca_norm.replace(' ', '.*')}$", re.IGNORECASE)
                 marca_parcial = [p for p in medida_prices if pat_marca.match(p.get('marca') or '')]
-                scraped = _with_index_generic(marca_parcial)
+                scraped = _require_index(marca_parcial)
                 if scraped:
                     match_type = "marca_parcial"
 
-            # Nível 3: sem marca nem modelo — o mais barato com o índice certo
+            # Nível 3: sem marca nem modelo — o mais barato com o índice CORRECTO
             if not scraped:
-                scraped = _with_index_generic(medida_prices)
+                scraped = _require_index(medida_prices)
                 if scraped:
                     match_type = "medida"
 
