@@ -715,28 +715,25 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
         match_type = None
         medida_prices = prices_by_medida.get(medida_norm, [])
 
-        def _index_ok(scraped_idx: str, want_idx: str) -> bool:
-            """True se o índice raspado corresponde ao índice pedido.
-            '94W' ↔ '94W XL' → aceite (prefixo).
-            '91V' ↔ '92V'   → rejeitado (índices de carga diferentes).
-            Índice raspado vazio → índice desconhecido → aceite (melhor mostrar do que esconder).
+        def _index_matches(scraped_idx: str, want_idx: str) -> bool:
+            """True se o índice raspado corresponde ao índice pedido (para ordenação/preferência).
+            '94W' ↔ '94W XL' → True (prefixo).
+            '91V' ↔ '92V'   → False (índices diferentes).
+            Índice vazio (desconhecido) → False (não sabemos se corresponde).
+            Usado apenas para dar preferência, NUNCA para filtrar.
             """
             if not want_idx:
                 return True
             s = (scraped_idx or '').strip().upper()
             w = want_idx.strip().upper()
             if not s:
-                return True  # índice não guardado na BD → tratado como desconhecido, não filtrar
-            # Exact match, ou um é prefixo do outro (trata '94W' vs '94W XL')
+                return False  # desconhecido — não preferir, mas também não excluir
             return s == w or s.startswith(w) or w.startswith(s)
 
-        # Helper: aplica filtro de índice a uma lista de candidatos.
-        # Se indice_norm não foi especificado, devolve os candidatos sem filtrar.
-        # Se indice_norm foi especificado, devolve só os que têm o índice certo.
+        # Helper: devolve os candidatos sem filtrar por índice.
+        # O índice é usado apenas na ordenação final (produtos com índice certo ficam à frente).
         def _with_index(candidates):
-            if not indice_norm:
-                return candidates
-            return [p for p in candidates if _index_ok(p.get('load_index') or '', indice_norm)]
+            return candidates  # índice não é filtro obrigatório — apenas preferência
 
         if medida_prices:
             if marca_norm and modelo_norm:
@@ -800,10 +797,17 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
         if scraped:
             # Ordenar: preferir produtos com índice guardado na BD (0) sobre índice desconhecido (1),
             # depois pelo preço mais baixo dentro de cada grupo.
-            scraped = sorted(scraped, key=lambda x: (
-                0 if (x.get('load_index') or '').strip() else 1,
-                x.get('price', 999999),
-            ))
+            # Ordenação: 1º produtos com índice correto, 2º índice desconhecido, 3º índice diferente;
+            # dentro de cada grupo, pelo preço mais baixo.
+            def _sort_priority(x):
+                li = (x.get('load_index') or '').strip()
+                if _index_matches(li, indice_norm):
+                    return (0, x.get('price', 999999))  # índice correto → melhor
+                elif not li:
+                    return (1, x.get('price', 999999))  # índice desconhecido → intermédio
+                else:
+                    return (2, x.get('price', 999999))  # índice diferente → pior
+            scraped = sorted(scraped, key=_sort_priority)
             best = scraped[0]
             best_price    = best['price']
             best_supplier = best['supplier_name']
