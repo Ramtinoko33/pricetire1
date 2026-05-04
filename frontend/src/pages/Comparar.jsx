@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { jobsAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -17,6 +17,17 @@ const Comparar = () => {
   const [job, setJob] = useState(null);
   const [results, setResults] = useState([]);
   const [stats, setStats] = useState(null);
+  const pollingTimerRef = useRef(null);
+
+  // Limpar timer ao desmontar componente
+  useEffect(() => {
+    return () => {
+      if (pollingTimerRef.current) {
+        clearTimeout(pollingTimerRef.current);
+        pollingTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Load job results if we have a job
   useEffect(() => {
@@ -92,42 +103,56 @@ const Comparar = () => {
     }
   };
 
-  const _pollUntilDone = async (jobId) => {
-    const INTERVAL_MS = 6000;   // verificar de 6 em 6 segundos
+  const _pollUntilDone = (jobId) => {
+    const INTERVAL_MS = 8000;   // verificar de 8 em 8 segundos
     const MAX_WAIT_MS = 30 * 60 * 1000; // máx 30 min
     const started = Date.now();
 
+    // Cancelar qualquer polling anterior antes de iniciar um novo
+    if (pollingTimerRef.current) {
+      clearTimeout(pollingTimerRef.current);
+      pollingTimerRef.current = null;
+    }
+
     return new Promise((resolve) => {
-      const timer = setInterval(async () => {
+      const tick = async () => {
         try {
           const { data: progress } = await jobsAPI.getProgress(jobId);
           const status = progress?.status;
 
           if (status === 'completed') {
-            clearInterval(timer);
+            pollingTimerRef.current = null;
             await loadResults();
             setStep(3);
             const found = progress.found_items ?? 0;
             toast.success(`Comparação concluída! ${found} itens com preço melhor.`);
             setComparing(false);
             resolve();
+            return;
           } else if (status === 'failed') {
-            clearInterval(timer);
+            pollingTimerRef.current = null;
             toast.error('Erro na comparação de preços. Tente novamente.');
             setComparing(false);
             resolve();
+            return;
           } else if (Date.now() - started > MAX_WAIT_MS) {
-            clearInterval(timer);
+            pollingTimerRef.current = null;
             toast.error('Timeout: a comparação demorou demasiado. Tente novamente.');
             setComparing(false);
             resolve();
+            return;
           }
-          // status === 'running' → continuar a esperar
+          // status === 'running' → agendar próxima verificação
+          pollingTimerRef.current = setTimeout(tick, INTERVAL_MS);
         } catch (err) {
           console.error('Polling error:', err);
-          // não parar o polling por erros de rede temporários
+          // erro de rede temporário → tentar novamente
+          pollingTimerRef.current = setTimeout(tick, INTERVAL_MS);
         }
-      }, INTERVAL_MS);
+      };
+
+      // Primeira verificação após INTERVAL_MS
+      pollingTimerRef.current = setTimeout(tick, INTERVAL_MS);
     });
   };
 
@@ -178,11 +203,16 @@ const Comparar = () => {
   };
 
   const resetFlow = () => {
+    if (pollingTimerRef.current) {
+      clearTimeout(pollingTimerRef.current);
+      pollingTimerRef.current = null;
+    }
     setStep(1);
     setFile(null);
     setJob(null);
     setResults([]);
     setStats(null);
+    setComparing(false);
   };
 
   return (
