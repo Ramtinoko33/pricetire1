@@ -509,28 +509,41 @@ async def get_job_results(job_id: str):
     return rs
 
 
-@api_router.post("/jobs/{job_id}/compare")
-async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
+async def _compare_background(job_id: str, force: bool):
     """
-    Compara itens do job com preços raspados — matching hierárquico 3 níveis:
-    Nível 1: medida + marca + modelo
-    Nível 2: medida + marca
-    Nível 3: medida apenas
+    Tarefa em background: scrape + compare.
+    Atualiza o status do job na BD quando termina (completed/failed).
+    """
+    import re
+    try:
+        await _do_compare(job_id, force)
+    except Exception as e:
+        logger.error(f"Compare background falhou para job {job_id}: {e}", exc_info=True)
+        try:
+            pool = await get_db()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE jobs SET status='failed', error_message=$2, completed_at=$3 WHERE id=$1",
+                    job_id, str(e), datetime.now(timezone.utc),
+                )
+        except Exception:
+            pass
 
-    force=true → apaga cache e re-scrape todas as medidas (verifica stock/preço actual)
-    """
+
+async def _do_compare(job_id: str, force: bool):
+    """Lógica principal de scrape + compare (chamada em background ou directamente)."""
     import re
 
     pool = await get_db()
     async with pool.acquire() as conn:
         job = row(await conn.fetchrow("SELECT * FROM jobs WHERE id = $1", job_id))
         if not job:
-            raise HTTPException(status_code=404, detail="Job not found")
+            raise ValueError(f"Job {job_id} não encontrado")
         items = rows(await conn.fetch(
             "SELECT * FROM job_items WHERE job_id = $1", job_id
         ))
         if not items:
-            raise HTTPException(status_code=400, detail="No items found in job")
+            raise ValueError("Sem itens no job")
 
         def _norm_medida(m: str) -> str:
             return m.replace('/', '').replace('R', '').replace('r', '')
@@ -893,6 +906,42 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
         "items_with_savings": found_count,
         "total_savings": round(total_savings, 2),
         "scraper_timeout": scraper_timed_out,
+    }
+
+
+@api_router.post("/jobs/{job_id}/compare")
+async def compare_job_with_scraped_prices(
+    job_id: str, force: bool = False,
+    background_tasks: BackgroundTasks = None,
+):
+    """
+    Inicia comparação de preços em background.
+    Retorna imediatamente com status='running'; o frontend faz polling em /progress.
+    force=true → apaga cache e re-scrape todas as medidas.
+    """
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        job = row(await conn.fetchrow("SELECT * FROM jobs WHERE id = $1", job_id))
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        items_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM job_items WHERE job_id = $1", job_id
+        )
+        if not items_count:
+            raise HTTPException(status_code=400, detail="No items found in job")
+
+        # Marcar job como a correr imediatamente (antes de retornar ao cliente)
+        await conn.execute(
+            "UPDATE jobs SET status='running', started_at=$2 WHERE id=$1",
+            job_id, datetime.now(timezone.utc),
+        )
+
+    background_tasks.add_task(_compare_background, job_id, force)
+    logger.info(f"Compare job {job_id} iniciado em background (force={force}, items={items_count})")
+    return {
+        "status": "running",
+        "async": True,
+        "message": f"A pesquisar preços para {items_count} itens...",
     }
 
 

@@ -65,23 +65,70 @@ const Comparar = () => {
 
     setComparing(true);
     try {
+      // Iniciar compare (retorna imediatamente com status='running')
       const { data } = force
         ? await jobsAPI.forceCompare(job.id)
         : await jobsAPI.compare(job.id);
-      setStats({
-        total: data.items_processed,
-        found: data.items_with_savings,
-        savings: data.total_savings
-      });
-      setStep(3);
-      toast.success(`Comparação concluída! ${data.items_with_savings} itens com preço melhor.`);
-      await loadResults();
+
+      if (data?.async) {
+        // Backend a processar em background — fazer polling até terminar
+        toast.info('A pesquisar preços nos fornecedores... pode demorar alguns minutos.');
+        await _pollUntilDone(job.id);
+      } else {
+        // Resposta síncrona (compatibilidade)
+        setStats({
+          total: data.items_processed,
+          found: data.items_with_savings,
+          savings: data.total_savings,
+        });
+        setStep(3);
+        toast.success(`Comparação concluída! ${data.items_with_savings} itens com preço melhor.`);
+        await loadResults();
+      }
     } catch (error) {
       console.error('Compare error:', error);
       toast.error(error.response?.data?.detail || 'Erro ao comparar preços');
-    } finally {
       setComparing(false);
     }
+  };
+
+  const _pollUntilDone = async (jobId) => {
+    const INTERVAL_MS = 6000;   // verificar de 6 em 6 segundos
+    const MAX_WAIT_MS = 30 * 60 * 1000; // máx 30 min
+    const started = Date.now();
+
+    return new Promise((resolve) => {
+      const timer = setInterval(async () => {
+        try {
+          const { data: progress } = await jobsAPI.getProgress(jobId);
+          const status = progress?.status;
+
+          if (status === 'completed') {
+            clearInterval(timer);
+            await loadResults();
+            setStep(3);
+            const found = progress.found_items ?? 0;
+            toast.success(`Comparação concluída! ${found} itens com preço melhor.`);
+            setComparing(false);
+            resolve();
+          } else if (status === 'failed') {
+            clearInterval(timer);
+            toast.error('Erro na comparação de preços. Tente novamente.');
+            setComparing(false);
+            resolve();
+          } else if (Date.now() - started > MAX_WAIT_MS) {
+            clearInterval(timer);
+            toast.error('Timeout: a comparação demorou demasiado. Tente novamente.');
+            setComparing(false);
+            resolve();
+          }
+          // status === 'running' → continuar a esperar
+        } catch (err) {
+          console.error('Polling error:', err);
+          // não parar o polling por erros de rede temporários
+        }
+      }, INTERVAL_MS);
+    });
   };
 
   const loadResults = async () => {
