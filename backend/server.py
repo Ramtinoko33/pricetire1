@@ -730,10 +730,12 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                 return False  # desconhecido — não preferir, mas também não excluir
             return s == w or s.startswith(w) or w.startswith(s)
 
-        # Helper: devolve os candidatos sem filtrar por índice.
-        # O índice é usado apenas na ordenação final (produtos com índice certo ficam à frente).
+        # Helper: se o índice foi especificado, remove produtos sem load_index guardado na BD
+        # (índice desconhecido). Produtos com índice conhecido (mesmo que diferente) ficam.
         def _with_index(candidates):
-            return candidates  # índice não é filtro obrigatório — apenas preferência
+            if not indice_norm:
+                return candidates
+            return [p for p in candidates if (p.get('load_index') or '').strip()]
 
         if medida_prices:
             if marca_norm and modelo_norm:
