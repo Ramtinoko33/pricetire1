@@ -617,12 +617,14 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
         print(f"  [S. José] Results page loaded (content length: {len(content)})")
 
         # ── Extracção de produtos da tabela GridView ──────────────────────────
-        # Os resultados estão em #ContentPlaceHolder1_UpdatePanelResults
-        # A tabela ASP.NET GridView tem headers e rows com brand/model/price
+        # O S. José tem UMA coluna "Descrição" com formato:
+        #   "MICHELIN 195/65R15 91H PRIMACY 4"
+        #   "MICHELIN 195/65R15 95H PRIMACY 4 XL"
+        # Estrutura: MARCA  MEDIDA  ÍNDICE  MODELO
+        # A coluna de preço chama-se "PR. COMPRA" (contém "compra")
         products = await page.evaluate('''() => {
             const products = [];
 
-            // Focar no UpdatePanel de resultados confirmado
             const panel = document.getElementById('ContentPlaceHolder1_UpdatePanelResults');
             const root = panel || document;
 
@@ -631,13 +633,12 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                 if (rows.length < 2) continue;
 
                 // Detectar colunas pelo cabeçalho
-                let brandCol = -1, modelCol = -1, priceCol = -1;
+                let descCol = -1, priceCol = -1;
                 const headerCells = rows[0].querySelectorAll("th, td");
                 headerCells.forEach((h, i) => {
                     const t = h.textContent.trim().toLowerCase();
-                    if (/marca|brand|fabricante/.test(t))                  brandCol = i;
-                    else if (/modelo|descri|perfil|artigo|denom/.test(t))  modelCol = i;
-                    else if (/pre[çc]o|valor|pvp|unit/.test(t))            priceCol = i;
+                    if (/descri/.test(t))                              descCol = i;
+                    else if (/compra|pre[çc]o|valor|pvp|unit/.test(t)) priceCol = i;
                 });
 
                 for (let i = 1; i < rows.length; i++) {
@@ -646,12 +647,23 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
 
                     let brand = "", model = "", price = null;
 
-                    if (brandCol >= 0 && brandCol < cells.length)
-                        brand = cells[brandCol].textContent.trim().toUpperCase();
-                    if (modelCol >= 0 && modelCol < cells.length)
-                        model = cells[modelCol].textContent.trim();
+                    // Parsear coluna Descrição: "MICHELIN 195/65R15 91H PRIMACY 4"
+                    if (descCol >= 0 && descCol < cells.length) {
+                        const parts = cells[descCol].textContent.trim().split(/\s+/);
+                        // parts[0] = MARCA, parts[1] = MEDIDA, parts[2+] = ÍNDICE + MODELO
+                        brand = parts[0] ? parts[0].toUpperCase() : '';
+                        // Saltar parts[1] (medida) e encontrar onde começa o modelo
+                        // Índice = token que corresponde a /^\d+[A-Z]+$/  (ex: "91H", "94W")
+                        let modelStart = 2;
+                        if (parts.length > 2 && /^\d+[A-Z]+$/i.test(parts[2])) {
+                            modelStart = 3; // saltar o índice
+                            // "XL" pode aparecer após o índice
+                            if (parts.length > 3 && parts[3] === 'XL') modelStart = 4;
+                        }
+                        model = parts.slice(modelStart).join(' ');
+                    }
 
-                    // Preço da coluna detectada
+                    // Preço da coluna PR. COMPRA
                     if (priceCol >= 0 && priceCol < cells.length) {
                         const m = cells[priceCol].textContent.match(/(\d+[,\.]\d{2})/);
                         if (m) price = parseFloat(m[1].replace(",", "."));
@@ -660,7 +672,7 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                     // Fallback preço: varrer todas as células
                     if (!price) {
                         for (const cell of cells) {
-                            const m = cell.textContent.trim().match(/^€?\s*(\d+[,\.]\d{2})\s*€?$/);
+                            const m = cell.textContent.replace(/\s/g,'').match(/^€?(\d+[,\.]\d{2})€?$/);
                             if (m) {
                                 const p = parseFloat(m[1].replace(",", "."));
                                 if (p > 15 && p < 500) { price = p; break; }
@@ -668,20 +680,11 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                         }
                     }
 
-                    // Fallback marca: procurar marcas conhecidas no texto da linha
-                    if (!brand) {
-                        const rowText = Array.from(cells).map(c => c.textContent).join(" ").toUpperCase();
-                        const bm = rowText.match(
-                            /\b(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL|SEMPERIT|BARUM|SAVA|KLEBER|FULDA|MABOR|KORMORAN|COOPER|NANKANG|LINGLONG|GOODRIDE)\b/
-                        );
-                        if (bm) brand = bm[1];
-                    }
-
-                    if (price && price > 15 && price < 500)
+                    if (brand && price && price > 15 && price < 500)
                         products.push({ brand, model, price });
                 }
 
-                if (products.length > 0) break; // parar na primeira tabela com resultados
+                if (products.length > 0) break;
             }
             return products;
         }''')
