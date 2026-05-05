@@ -790,17 +790,14 @@ async def _do_compare(job_id: str, force: bool):
                         if scraped:
                             match_type = "modelo_parcial"
 
-            # Nível 2: só activa quando o utilizador NÃO especificou modelo.
-            # Se especificou modelo e não encontrou nos níveis 1a-1d → sem dados.
-            # (Evita mostrar produto completamente diferente como "Cinturato Winter"
-            # quando o utilizador pediu "Cinturato P7", ou "Winterhawk" quando pediu "Roadhawk".)
-            if not scraped and marca_norm and not modelo_norm:
+            # Nível 2: fallback para marca (activa quando modelo não foi encontrado nos níveis 1a-1d)
+            if not scraped and marca_norm:
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').strip().upper() == marca_norm]
                 scraped = _require_index(marca_prices)
                 if scraped:
                     match_type = "marca"
 
-            if not scraped and marca_norm and not modelo_norm:
+            if not scraped and marca_norm:
                 # Nível 2b: marca parcial (ex: "MICH" → "MICHELIN")
                 pat_marca = re.compile(f"^{marca_norm.replace(' ', '.*')}$", re.IGNORECASE)
                 marca_parcial = [p for p in medida_prices if pat_marca.match(p.get('marca') or '')]
@@ -808,8 +805,8 @@ async def _do_compare(job_id: str, force: bool):
                 if scraped:
                     match_type = "marca_parcial"
 
-            # Nível 3: só activa quando nem marca nem modelo foram especificados
-            if not scraped and not modelo_norm and not marca_norm:
+            # Nível 3: último recurso — qualquer produto com a medida certa (outra marca)
+            if not scraped:
                 scraped = _require_index(medida_prices)
                 if scraped:
                     match_type = "medida"
