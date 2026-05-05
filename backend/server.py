@@ -729,31 +729,12 @@ async def _do_compare(job_id: str, force: bool):
         medida_prices = prices_by_medida.get(medida_norm, [])
 
         def _index_matches(scraped_idx: str, want_idx: str) -> bool:
-            """True se o índice raspado corresponde ao índice pedido (para ordenação/preferência).
-            '94W' ↔ '94W XL' → True (prefixo).
-            '91V' ↔ '92V'   → False (índices diferentes).
-            Índice vazio (desconhecido) → False (não sabemos se corresponde).
-            Usado apenas para dar preferência, NUNCA para filtrar.
-            """
-            if not want_idx:
-                return True
-            s = (scraped_idx or '').strip().upper()
-            w = want_idx.strip().upper()
-            if not s:
-                return False  # desconhecido — não preferir, mas também não excluir
-            return s == w or s.startswith(w) or w.startswith(s)
+            # indiceneg: índice irrelevante — sempre verdadeiro
+            return True
 
-        # Helper: filtra produtos sem load_index (índice desconhecido).
-        # Usado apenas em pesquisas GENÉRICAS (marca ou medida) onde não há modelo
-        # identificador — nesses casos, um produto sem índice pode ser o errado.
-        # Nas correspondências por MODELO (exato/parcial), o modelo já identifica o
-        # produto e o filtro NÃO se aplica — MP24/Prismanil nunca guardam o índice
-        # mas isso não significa que o produto esteja errado.
         def _with_index_generic(candidates):
-            """Só aplica filtro de índice em pesquisas genéricas (marca/medida)."""
-            if not indice_norm:
-                return candidates
-            return [p for p in candidates if (p.get('load_index') or '').strip()]
+            # indiceneg: sem filtro de índice
+            return candidates
 
         if medida_prices:
             if marca_norm and modelo_norm:
@@ -818,18 +799,9 @@ async def _do_compare(job_id: str, force: bool):
                     match_type = "medida"
 
         if scraped:
-            # Ordenar: preferir produtos com índice guardado na BD (0) sobre índice desconhecido (1),
-            # depois pelo preço mais baixo dentro de cada grupo.
-            # Ordenação: 1º produtos com índice correto, 2º índice desconhecido, 3º índice diferente;
-            # dentro de cada grupo, pelo preço mais baixo.
+            # indiceneg: ordenar apenas pelo preço mais baixo
             def _sort_priority(x):
-                li = (x.get('load_index') or '').strip()
-                if _index_matches(li, indice_norm):
-                    return (0, x.get('price', 999999))  # índice correto → melhor
-                elif not li:
-                    return (1, x.get('price', 999999))  # índice desconhecido → intermédio
-                else:
-                    return (2, x.get('price', 999999))  # índice diferente → pior
+                return x.get('price', 999999)
             scraped = sorted(scraped, key=_sort_priority)
             best = scraped[0]
             best_price    = best['price']
