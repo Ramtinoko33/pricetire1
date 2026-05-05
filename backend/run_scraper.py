@@ -500,11 +500,11 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                        url_search: str = "https://b2b.sjosepneus.com/articles/articles.aspx") -> dict:
     """Scrape S. José Pneus (ASP.NET B2B portal).
 
-    url_login  — login page URL (stored in suppliers.url_login)
-    url_search — product search URL (stored in suppliers.url_search)
-
-    On first run the page HTML is saved to /tmp/sjose_after_login.html and
-    /tmp/sjose_results.html so selectors can be verified if anything goes wrong.
+    Selectores confirmados via HTML real (2026-05):
+      - Campo medida : #ContentPlaceHolder1_txtSize  (formato "1955015" sem barras)
+      - Botão pesquisa: #lkbtnSearch  (<a> com __doPostBack — NÃO é input[type=submit])
+      - Resultados    : #ContentPlaceHolder1_UpdatePanelResults  (UpdatePanel AJAX)
+      - Campo descrição: #ContentPlaceHolder1_txtDescription  (filtro extra opcional)
     """
     result = {
         "supplier": "S. José Pneus",
@@ -514,7 +514,6 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-    # Use sensible defaults if empty strings were passed
     if not url_login:
         url_login = "https://b2b.sjosepneus.com/default.aspx"
     if not url_search:
@@ -532,273 +531,113 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
         print(f"  [S. José] Navigating to login: {url_login}")
         await page.goto(url_login, wait_until="networkidle", timeout=60000)
         await asyncio.sleep(2)
-
-        current_url = page.url
-        print(f"  [S. José] URL after navigation: {current_url}")
-
-        # Save the page BEFORE login attempt so we can inspect the form structure
         _save_debug('/tmp/sjose_pre_login.html', await page.content())
 
-        # Log ALL input IDs (visible and hidden) to diagnose selector issues
-        input_ids = await page.evaluate(
-            "() => Array.from(document.querySelectorAll('input')).map(i => "
-            "({id: i.id, name: i.name, type: i.type, visible: i.offsetParent !== null}))"
-        )
-        visible_inputs = [x for x in input_ids if x.get('type') not in ('hidden',)]
-        print(f"  [S. José] ALL visible inputs on page: {visible_inputs}")
+        # Detectar se o formulário de login está presente (utilizador não autenticado)
+        # O campo de username confirmado via HTML real: #ContentPlaceHolder1_ctrlLogin_Login_UserName
+        login_field = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_UserName').first
+        if await login_field.count() > 0:
+            print(f"  [S. José] Login form found — filling credentials")
+            await login_field.fill(username)
 
-        # Login form present if we're still on a login/default page (not yet authenticated)
-        if 'login' in current_url.lower() or 'default' in current_url.lower():
-
-            # ASP.NET Login control — try several known ID patterns
-            user_selectors = [
-                '#ContentPlaceHolder1_ctrlLogin_Login_UserName',
-                '#ContentPlaceHolder1_Login1_UserName',
-                '#ctl00_ContentPlaceHolder1_Login1_UserName',
-                'input[id$="_UserName"]',
-                'input[name$="UserName"]',
-                'input[autocomplete="username"]',
-            ]
-            filled_user = False
-            for sel in user_selectors:
-                loc = page.locator(sel).first
-                if await loc.count() > 0:
-                    await loc.fill(username)
-                    print(f"  [S. José] Filled username via: {sel}")
-                    filled_user = True
-                    break
-            if not filled_user:
-                await page.locator('input[type="text"]').first.fill(username)
-                print("  [S. José] Used generic username selector")
-
-            pass_selectors = [
-                '#ContentPlaceHolder1_ctrlLogin_Login_Password',
-                '#ContentPlaceHolder1_Login1_Password',
-                '#ctl00_ContentPlaceHolder1_Login1_Password',
-                'input[id$="_Password"]',
-                'input[name$="Password"]',
-                'input[autocomplete="current-password"]',
-            ]
-            filled_pass = False
-            for sel in pass_selectors:
-                loc = page.locator(sel).first
-                if await loc.count() > 0:
-                    await loc.fill(password)
-                    print(f"  [S. José] Filled password via: {sel}")
-                    filled_pass = True
-                    break
-            if not filled_pass:
+            pwd_field = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_Password').first
+            if await pwd_field.count() > 0:
+                await pwd_field.fill(password)
+            else:
                 await page.locator('input[type="password"]').first.fill(password)
-                print("  [S. José] Used generic password selector")
 
-            # Login button — try specific ID first, then any submit
-            btn_selectors = [
-                '#ContentPlaceHolder1_ctrlLogin_Login_btnLogin',   # S. José real ID
-                '#ContentPlaceHolder1_ctrlLogin_Login_LoginButton', # fallback variant
-                '#ContentPlaceHolder1_Login1_LoginButton',
-                '#ctl00_ContentPlaceHolder1_Login1_LoginButton',
-                'input[id$="_btnLogin"]',
-                'input[id$="_LoginButton"]',
-                'input[type="submit"]',
-                'button[type="submit"]',
-            ]
-            for btn_sel in btn_selectors:
-                btn_loc = page.locator(btn_sel).first
-                if await btn_loc.count() > 0:
-                    print(f"  [S. José] Clicking login button via: {btn_sel}")
-                    await btn_loc.click()
-                    break
+            # Botão de login confirmado: #ContentPlaceHolder1_ctrlLogin_Login_btnLogin
+            btn = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_btnLogin').first
+            if await btn.count() > 0:
+                await btn.click()
+            else:
+                # Fallback para outros padrões ASP.NET
+                for sel in ['input[id$="_LoginButton"]', 'input[type="submit"]', 'button[type="submit"]']:
+                    b = page.locator(sel).first
+                    if await b.count() > 0:
+                        await b.click()
+                        break
 
             await asyncio.sleep(5)
             await page.wait_for_load_state("networkidle")
+        else:
+            print(f"  [S. José] No login form found — assuming already authenticated")
 
-        url_after_login = page.url
-        print(f"  [S. José] URL after login: {url_after_login}")
-        after_login_html = await page.content()
-        _save_debug('/tmp/sjose_after_login.html', after_login_html)
+        url_after = page.url
+        print(f"  [S. José] URL after login step: {url_after}")
+        _save_debug('/tmp/sjose_after_login.html', await page.content())
 
-        # Check if login succeeded:
-        # - Success: URL is default.aspx (home) or any other non-login page
-        # - Failure: still on login.aspx, OR login form still visible in DOM
-        still_on_login = 'login' in url_after_login.lower()
-        login_form_still_visible = await page.locator(
-            '#ContentPlaceHolder1_ctrlLogin_Login_UserName'
-        ).count() > 0
-
-        if still_on_login or login_form_still_visible:
-            result["error"] = (
-                f"Login failed — still on login page ({url_after_login}). "
-                "Check credentials or use /scraper/debug-html?file=after_login"
-            )
-            print(f"  [S. José] Login FAILED: {result['error']}")
+        # Verificar falha de login: formulário ainda visível
+        if await page.locator('#ContentPlaceHolder1_ctrlLogin_Login_UserName').count() > 0:
+            result["error"] = f"Login failed — credentials rejected ({url_after})"
+            print(f"  [S. José] {result['error']}")
             return result
 
-        print(f"  [S. José] Login successful — now on: {url_after_login}")
-
-        # ── Navigate to search page ───────────────────────────────────────────
+        # ── Pesquisa ─────────────────────────────────────────────────────────
+        # O campo aceita formato normalizado: "1956515" (sem barras, sem R)
         medida_norm = normalize_medida(medida)
-        medida_orig = medida.strip()
+        print(f"  [S. José] Navigating to search: {url_search}")
+        await page.goto(url_search, wait_until="networkidle", timeout=60000)
+        await asyncio.sleep(2)
 
-        # Reconstruct the slashed format from a normalized medida
-        # e.g. "1956515" → "195/65R15"  (3-digit width + 2-digit ratio + 2-digit rim)
-        import re as _re
-        _m = _re.match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
-        medida_slashed = f"{_m.group(1)}/{_m.group(2)}R{_m.group(3)}" if _m else medida_orig
+        search_page_url = page.url
+        print(f"  [S. José] Search page URL: {search_page_url}")
 
-        # All formats to try for form filling (deduplicated, slashed first)
-        all_search_terms = list(dict.fromkeys([medida_slashed, medida_orig, medida_norm]))
+        if 'login' in search_page_url.lower():
+            result["error"] = f"Session expired — redirected to login from articles page"
+            return result
 
-        def _size_in_content(content: str, mnorm: str, mslashed: str) -> bool:
-            """Check that the page actually contains the searched tire size."""
-            cl = content.lower()
-            # Check normalized form (e.g. "1956515")
-            if mnorm.lower() in cl:
-                return True
-            # Check slashed form (e.g. "195/65r15")
-            if mslashed.lower() in cl:
-                return True
-            # Check without R (e.g. "195/65/15")
-            if mslashed.lower().replace('r', '/') in cl:
-                return True
-            # Check with space (e.g. "195 65 15")
-            if mslashed.lower().replace('/', ' ').replace('r', ' ') in cl:
-                return True
-            return False
-
-        print(f"  [S. José] Navigating to search page: {url_search}")
-        print(f"  [S. José] Searching for: {medida_norm} → slashed: {medida_slashed}")
-
-        # Strategy 1: try URL query parameters with BOTH normalized and original format
-        # Only accept the page if the searched medida actually appears in the response
-        search_url_tried = False
-        for param in ['q', 'pesquisa', 'search', 'medida', 'codigo', 'ref']:
-            for search_term in all_search_terms:
-                try_url = f"{url_search}?{param}={search_term}"
-                await page.goto(try_url, wait_until="networkidle", timeout=30000)
-                await asyncio.sleep(2)
-                content_check = await page.content()
-                # Accept only if the page has prices AND references the searched size
-                has_prices = any(c in content_check for c in ['€', 'preco', 'Preco', 'PVP', 'pvp'])
-                has_size   = _size_in_content(content_check, medida_norm, medida_slashed)
-                if has_prices and has_size:
-                    print(f"  [S. José] URL param '{param}'={search_term!r} has matching results")
-                    search_url_tried = True
-                    break
-                elif has_prices:
-                    print(f"  [S. José] Param '{param}'={search_term!r} has prices but NOT the searched size — ignoring")
-                else:
-                    print(f"  [S. José] Param '{param}'={search_term!r} — no prices")
-            if search_url_tried:
-                break
-
-        # Strategy 2: navigate to search page and fill form
-        if not search_url_tried:
-            await page.goto(url_search, wait_until="networkidle", timeout=60000)
-            await asyncio.sleep(2)
-            search_page_url = page.url
-            print(f"  [S. José] Search page actual URL: {search_page_url}")
+        # Campo medida confirmado: #ContentPlaceHolder1_txtSize
+        size_field = page.locator('#ContentPlaceHolder1_txtSize').first
+        if await size_field.count() == 0:
+            result["error"] = "Campo #ContentPlaceHolder1_txtSize não encontrado na página de pesquisa"
             _save_debug('/tmp/sjose_search_page.html', await page.content())
-            # Guard: if navigating to the search page redirected back to LOGIN page,
-            # don't fill the search box (we'd be filling into the username field)
-            # Note: default.aspx is the HOME page after login, NOT a login page
-            if 'login' in search_page_url.lower():
-                result["error"] = (
-                    f"Navigating to {url_search} redirected to login page ({search_page_url}). "
-                    "Session may have expired — check /tmp/sjose_after_login.html"
-                )
-                return result
+            return result
 
-        # Ordered list of selectors seen in ASP.NET B2B tire portals
-        search_selectors = [
-            '#ContentPlaceHolder1_txtPesquisa',
-            '#ContentPlaceHolder1_txtMedida',
-            '#ContentPlaceHolder1_txtSearch',
-            '#ContentPlaceHolder1_TextBox1',
-            'input[id*="Pesquisa"]',
-            'input[id*="Medida"]',
-            'input[id*="txtP"]',
-            'input[id*="Search"]',
-            'input[id*="search"]',
-            'input[name*="pesq"]',
-            'input[name*="Pesq"]',
-            'input[type="text"]',   # last-resort generic (EXCLUDE if on login page)
-        ]
+        await size_field.fill(medida_norm)
+        print(f"  [S. José] Filled size field with: {medida_norm!r}")
 
-        submit_selectors = [
-            '#ContentPlaceHolder1_btnPesquisar',
-            '#ContentPlaceHolder1_btnSearch',
-            '#ContentPlaceHolder1_ImageButton1',  # ASP.NET ImageButton
-            'input[type="submit"]',
-            'input[type="image"]',
-            'button[type="submit"]',
-        ]
+        # Botão pesquisar confirmado: #lkbtnSearch (âncora com __doPostBack — NÃO é input[submit])
+        search_btn = page.locator('#lkbtnSearch').first
+        if await search_btn.count() > 0:
+            await search_btn.click()
+            print(f"  [S. José] Clicked #lkbtnSearch")
+        else:
+            # Fallback: pressionar Enter no campo
+            await size_field.press('Enter')
+            print(f"  [S. José] Submitted via Enter (lkbtnSearch not found)")
 
-        search_found = search_url_tried  # already searched via URL params
-        if not search_found:
-            # Try slashed format first (e.g. "195/65R15"), then original, then normalized
-            search_terms_to_try = all_search_terms
-            for sel in search_selectors:
-                el = page.locator(sel).first
-                if await el.count() > 0:
-                    for term in search_terms_to_try:
-                        await el.fill(term)
-                        print(f"  [S. José] Filled search field via {sel!r} with {term!r}")
-                        submitted = False
-                        for btn_sel in submit_selectors:
-                            btn = page.locator(btn_sel).first
-                            if await btn.count() > 0:
-                                await btn.click()
-                                submitted = True
-                                print(f"  [S. José] Clicked submit via: {btn_sel}")
-                                break
-                        if not submitted:
-                            await el.press('Enter')
-                            print("  [S. José] Submitted via Enter key")
-                        await asyncio.sleep(5)
-                        await page.wait_for_load_state("networkidle")
-                        # Check if results page references the searched size
-                        after_submit = await page.content()
-                        if _size_in_content(after_submit, medida_norm, medida_slashed):
-                            print(f"  [S. José] Search with term {term!r} returned relevant content")
-                            search_found = True
-                            break
-                        print(f"  [S. José] Search with {term!r} didn't return size-specific content, trying next term")
-                        # Navigate back to search page for next attempt
-                        if term != search_terms_to_try[-1]:
-                            await page.goto(url_search, wait_until="networkidle", timeout=30000)
-                            await asyncio.sleep(2)
-                            el = page.locator(sel).first  # re-find after navigation
-                    if search_found:
-                        break
-                    # If no term produced relevant results, still mark as searched (best effort)
-                    if not search_found:
-                        print(f"  [S. José] No search term produced size-specific results, using last attempt")
-                        search_found = True
-                    break
+        # Aguardar o UpdatePanel AJAX atualizar
+        await asyncio.sleep(4)
+        await page.wait_for_load_state("networkidle")
+        await asyncio.sleep(2)
 
         content = await page.content()
         _save_debug('/tmp/sjose_results.html', content)
+        print(f"  [S. José] Results page loaded (content length: {len(content)})")
 
-        if not search_found:
-            result["error"] = "Search field not found — HTML saved to /tmp/sjose_search_page.html"
-            return result
-
-        # ── Extract products from ASP.NET GridView table ─────────────────────
+        # ── Extracção de produtos da tabela GridView ──────────────────────────
+        # Os resultados estão em #ContentPlaceHolder1_UpdatePanelResults
+        # A tabela ASP.NET GridView tem headers e rows com brand/model/price
         products = await page.evaluate('''() => {
             const products = [];
 
-            for (const table of document.querySelectorAll("table")) {
+            // Focar no UpdatePanel de resultados confirmado
+            const panel = document.getElementById('ContentPlaceHolder1_UpdatePanelResults');
+            const root = panel || document;
+
+            for (const table of root.querySelectorAll("table")) {
                 const rows = table.querySelectorAll("tr");
                 if (rows.length < 2) continue;
 
-                // Detect column positions from header row
+                // Detectar colunas pelo cabeçalho
                 let brandCol = -1, modelCol = -1, priceCol = -1;
                 const headerCells = rows[0].querySelectorAll("th, td");
                 headerCells.forEach((h, i) => {
                     const t = h.textContent.trim().toLowerCase();
-                    if (/marca|brand|fabricante/.test(t))         brandCol = i;
-                    else if (/modelo|descri|perfil|artigo|denom/.test(t)) modelCol = i;
-                    else if (/pre[çc]o|valor|pvp|unit/.test(t))   priceCol = i;
+                    if (/marca|brand|fabricante/.test(t))                  brandCol = i;
+                    else if (/modelo|descri|perfil|artigo|denom/.test(t))  modelCol = i;
+                    else if (/pre[çc]o|valor|pvp|unit/.test(t))            priceCol = i;
                 });
 
                 for (let i = 1; i < rows.length; i++) {
@@ -812,16 +651,16 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                     if (modelCol >= 0 && modelCol < cells.length)
                         model = cells[modelCol].textContent.trim();
 
-                    // Price from detected column
+                    // Preço da coluna detectada
                     if (priceCol >= 0 && priceCol < cells.length) {
-                        const m = cells[priceCol].textContent.match(/(\d+[,\\.]\d{2})/);
+                        const m = cells[priceCol].textContent.match(/(\d+[,\.]\d{2})/);
                         if (m) price = parseFloat(m[1].replace(",", "."));
                     }
 
-                    // Price fallback: scan each cell for standalone currency value
+                    // Fallback preço: varrer todas as células
                     if (!price) {
                         for (const cell of cells) {
-                            const m = cell.textContent.trim().match(/^€?\\s*(\d+[,\\.]\d{2})\\s*€?$/);
+                            const m = cell.textContent.trim().match(/^€?\s*(\d+[,\.]\d{2})\s*€?$/);
                             if (m) {
                                 const p = parseFloat(m[1].replace(",", "."));
                                 if (p > 15 && p < 500) { price = p; break; }
@@ -829,11 +668,11 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                         }
                     }
 
-                    // Brand fallback: scan full row text for known brand names
+                    // Fallback marca: procurar marcas conhecidas no texto da linha
                     if (!brand) {
                         const rowText = Array.from(cells).map(c => c.textContent).join(" ").toUpperCase();
                         const bm = rowText.match(
-                            /(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL|SEMPERIT|BARUM|LASSA|SAVA|KLEBER|FULDA|GISLAVED|MATADOR|DEBICA|KELLY)/
+                            /\b(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL|SEMPERIT|BARUM|SAVA|KLEBER|FULDA|MABOR|KORMORAN|COOPER|NANKANG|LINGLONG|GOODRIDE)\b/
                         );
                         if (bm) brand = bm[1];
                     }
@@ -842,13 +681,15 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                         products.push({ brand, model, price });
                 }
 
-                if (products.length > 0) break; // stop at first table with results
+                if (products.length > 0) break; // parar na primeira tabela com resultados
             }
             return products;
         }''')
 
+        print(f"  [S. José] Raw products extracted: {len(products)}")
+
         if products:
-            # Deduplicate by brand+model keeping lowest price
+            # Deduplicar por marca+modelo mantendo preço mais baixo
             seen = {}
             for p in products:
                 key = f"{p.get('brand','')}|{p.get('model','')}"
@@ -860,18 +701,19 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
             prices_list = [p['price'] for p in products]
             result["price"] = min(prices_list)
             result["all_prices"] = sorted(prices_list)[:10]
-            print(f"  [S. José] {len(products)} products found. Best: €{result['price']}")
-            for p in sorted(products, key=lambda x: x['price'])[:3]:
+            print(f"  [S. José] {len(products)} produtos. Melhor: €{result['price']}")
+            for p in sorted(products, key=lambda x: x['price'])[:5]:
                 print(f"    - {p.get('brand','-')} {p.get('model','-')}: €{p['price']}")
         else:
-            # Final fallback: regex price extraction from raw HTML
+            # Fallback: regex de preços no HTML bruto
             prices_list = extract_prices(content)
             if prices_list:
                 result["price"] = min(prices_list)
                 result["all_prices"] = sorted(prices_list)[:10]
-                print(f"  [S. José] Fallback regex: {len(prices_list)} prices, best: €{result['price']}")
+                print(f"  [S. José] Fallback regex: {len(prices_list)} preços, melhor: €{result['price']}")
             else:
-                result["error"] = "No products found — check /tmp/sjose_results.html"
+                result["error"] = "Nenhum produto encontrado — ver /tmp/sjose_results.html"
+                print(f"  [S. José] {result['error']}")
 
     except Exception as e:
         result["error"] = str(e)
