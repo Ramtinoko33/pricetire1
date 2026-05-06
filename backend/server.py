@@ -654,38 +654,53 @@ async def _do_compare(job_id: str, force: bool):
                     stale_cutoff,
                 )
         items_json = json.dumps([{"medida": m, "marca": b} for m, b in pairs_sem_dados])
-        logger.info(f"A correr scraper para {len(pairs_sem_dados)} pares medida+marca...")
         env = os.environ.copy()
         env['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
         medidas_str = ','.join(medidas_sem_dados)
-        proc = await asyncio.create_subprocess_exec(
-            'python3', '/app/backend/run_scraper.py',
-            '--medidas', medidas_str,
-            '--items-json', items_json,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            env=env,
-            cwd='/app/backend',
-        )
-        try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=1800)
-            out_str = stdout.decode()
-            head = out_str[:4000]
-            tail = out_str[-4000:] if len(out_str) > 4000 else ""
-            logger.info(f"Scraper concluído. Output início:\n{head}")
-            if tail:
-                logger.info(f"Scraper concluído. Output fim:\n{tail}")
-        except asyncio.TimeoutError:
-            proc.kill()
+
+        # Obter lista de fornecedores activos para lançar um processo por fornecedor em paralelo
+        pool_sup = await get_db()
+        async with pool_sup.acquire() as conn_sup:
+            active_suppliers = rows(await conn_sup.fetch(
+                "SELECT name FROM suppliers WHERE is_active = TRUE ORDER BY name"
+            ))
+        supplier_names = [s['name'] for s in active_suppliers]
+        logger.info(f"A correr scraper em paralelo para {len(supplier_names)} fornecedores, "
+                    f"{len(medidas_sem_dados)} medidas...")
+
+        async def _run_supplier_proc(sup_name: str):
+            """Lança run_scraper.py filtrado para um único fornecedor e aguarda conclusão."""
+            proc = await asyncio.create_subprocess_exec(
+                'python3', '/app/backend/run_scraper.py',
+                '--supplier', sup_name,
+                '--medidas', medidas_str,
+                '--items-json', items_json,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env=env,
+                cwd='/app/backend',
+            )
             try:
-                out, _ = await proc.communicate()
-                out_str = out.decode()
-                logger.warning(f"Scraper timeout. Output início:\n{out_str[:4000]}")
-                if len(out_str) > 4000:
-                    logger.warning(f"Scraper timeout. Output fim:\n{out_str[-4000:]}")
-            except Exception:
-                logger.warning("Scraper timeout após 30 minutos (sem output)")
-            scraper_timed_out = True
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=1200)
+                out_str = stdout.decode()
+                head = out_str[:2000]
+                tail = out_str[-1000:] if len(out_str) > 2000 else ""
+                logger.info(f"[{sup_name}] Scraper concluído.\n{head}")
+                if tail:
+                    logger.info(f"[{sup_name}] ...fim:\n{tail}")
+                return False  # não houve timeout
+            except asyncio.TimeoutError:
+                proc.kill()
+                try:
+                    out, _ = await proc.communicate()
+                    logger.warning(f"[{sup_name}] Scraper timeout. Output:\n{out.decode()[:2000]}")
+                except Exception:
+                    logger.warning(f"[{sup_name}] Scraper timeout (sem output)")
+                return True  # houve timeout
+
+        # Correr todos os fornecedores em simultâneo; aguardar que todos terminem
+        timeout_flags = await asyncio.gather(*[_run_supplier_proc(n) for n in supplier_names])
+        scraper_timed_out = any(timeout_flags)
 
     pool = await get_db()
     async with pool.acquire() as conn:
@@ -857,18 +872,18 @@ async def _do_compare(job_id: str, force: bool):
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            for u in bulk_updates:
-                await conn.execute(
-                    """
-                    UPDATE job_items SET
-                        melhor_preco=$2, melhor_fornecedor=$3, melhor_marca=$4,
-                        modelo_encontrado=$5, indice_encontrado=$6, match_type=$7,
-                        economia_euro=$8, economia_percent=$9,
-                        supplier_prices=$10, status=$11
-                    WHERE id=$1
-                    """,
-                    *u,
-                )
+            # executemany envia todos os UPDATEs num único batch — muito mais rápido que loop
+            await conn.executemany(
+                """
+                UPDATE job_items SET
+                    melhor_preco=$2, melhor_fornecedor=$3, melhor_marca=$4,
+                    modelo_encontrado=$5, indice_encontrado=$6, match_type=$7,
+                    economia_euro=$8, economia_percent=$9,
+                    supplier_prices=$10::jsonb, status=$11
+                WHERE id=$1
+                """,
+                bulk_updates,
+            )
             await conn.execute(
                 """
                 UPDATE jobs SET
