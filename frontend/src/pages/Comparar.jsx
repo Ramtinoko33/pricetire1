@@ -498,9 +498,16 @@ const Comparar = () => {
                           </TableCell>
                           <TableCell className="text-right font-medium">
                             {item.melhor_preco ? (
-                              <span className={hasSavings ? 'text-emerald-600' : ''}>
-                                €{item.melhor_preco.toFixed(2)}
-                              </span>
+                              <div className="flex flex-col items-end">
+                                <span className={hasSavings ? 'text-emerald-600' : isOtherBrand ? 'text-amber-700' : ''}>
+                                  €{item.melhor_preco.toFixed(2)}
+                                </span>
+                                {isOtherBrand && item.melhor_marca && (
+                                  <span className="text-xs text-amber-500 font-normal">
+                                    ({item.melhor_marca})
+                                  </span>
+                                )}
+                              </div>
                             ) : '-'}
                           </TableCell>
                           <TableCell>
@@ -515,7 +522,7 @@ const Comparar = () => {
                                 €{item.economia_euro.toFixed(2)}
                               </span>
                             ) : isOtherBrand ? (
-                              <span className="text-xs text-amber-600">outra marca</span>
+                              <span className="text-xs text-amber-600 italic">outra marca</span>
                             ) : '-'}
                           </TableCell>
                           <TableCell className="text-right">
