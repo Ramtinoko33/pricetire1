@@ -2605,105 +2605,221 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
     return products
 
 
-async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str) -> dict:
-    """Scrape Pneus Cruzeiro"""
+async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
+                               url_login: str = "https://www.pneuscruzeiro.pt/pt/login",
+                               url_search: str = "https://www.pneuscruzeiro.pt/pt/privatearea",
+                               skip_login: bool = False) -> dict:
+    """Scrape Pneus Cruzeiro B2B portal (pneuscruzeiro.pt).
+
+    Login: POST https://www.pneuscruzeiro.pt/pt/login
+      - input[name="username"] (email), input[name="password"]
+      - reCAPTCHA invisible v2: o JS interceta o submit, resolve o captcha
+        e chama form.submit(). Basta clicar o botão e aguardar navegação.
+    Pesquisa: HTMX GET https://www.pneuscruzeiro.pt/pt/produtos-tabela-ajax
+      - campo: #campo_de_texto_para_pesquisar_os_produtos (name=prodssrchtxt)
+      - botão: #botao_iniciador_pesquisa_produtos
+      - resultados: tbody#contentor_linhas_tabela_produtos
+    Colunas da tabela:
+      0=Imagem  1=Fabricante  2=Produto  3=DOT  4=Stock  5=Etq  6=Qtd  7=Preço  8=PVP
+    Formato da coluna Produto: "PNEU MARCA MEDIDA MODELO ÍNDICE"
+      ex.: "PNEU MICHELIN 205/55R16 PRIMACY 5 91V"
+           → marca=MICHELIN, modelo=PRIMACY 5, índice=91V
+    """
     result = {
         "supplier": "Pneus Cruzeiro",
         "price": None,
         "error": None,
         "products": [],
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "medida": medida,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    
+
+    if not url_login:
+        url_login = "https://www.pneuscruzeiro.pt/pt/login"
+    if not url_search:
+        url_search = "https://www.pneuscruzeiro.pt/pt/privatearea"
+
+    medida_norm = normalize_medida(medida)  # ex: "2055516"
+
+    def _save_debug(path: str, content: str):
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(content)
+        except Exception:
+            pass
+
     try:
-        print("  [Pneus Cruzeiro] Logging in...")
-        await page.goto("https://www.pneuscruzeiro.pt/", wait_until="networkidle", timeout=60000)
-        await asyncio.sleep(2)
-        
-        # Look for login button/link
-        login_link = page.locator('a:has-text("Login"), a:has-text("Entrar"), button:has-text("Login"), .login-link').first
-        if await login_link.count() > 0:
-            await login_link.click()
+        # ── LOGIN ────────────────────────────────────────────────────────────
+        if not skip_login:
+            print(f"  [Cruzeiro] A fazer login: {url_login}")
+            await page.goto(url_login, wait_until="networkidle", timeout=60000)
             await asyncio.sleep(2)
-        
-        # Fill login form
-        email_input = page.locator('input[type="email"], input[name="email"], input[name="username"]').first
-        if await email_input.count() > 0:
-            await email_input.fill(username)
-        
-        password_input = page.locator('input[type="password"]').first
-        if await password_input.count() > 0:
-            await password_input.fill(password)
-        
-        # Submit login
-        submit_btn = page.locator('button[type="submit"], input[type="submit"]').first
-        if await submit_btn.count() > 0:
-            await submit_btn.click()
-        await asyncio.sleep(5)
-        
-        # Search for tires
-        medida_norm = normalize_medida(medida)
-        print(f"  [Pneus Cruzeiro] Searching for: {medida_norm}")
-        
-        # Navigate to tires section
-        tyres_link = page.locator('a:has-text("Pneus"), a:has-text("Catálogo")').first
-        if await tyres_link.count() > 0:
-            await tyres_link.click()
-            await asyncio.sleep(3)
-        
-        search_input = page.locator('input[type="search"], input[placeholder*="pesq"], input[name*="search"], #search').first
-        if await search_input.count() > 0:
-            await search_input.fill(medida_norm)
-            await search_input.press('Enter')
-            await asyncio.sleep(5)
-        
-        # Extract products
-        products = await page.evaluate('''() => {
+            _save_debug('/tmp/cruzeiro_pre_login.html', await page.content())
+
+            # Verificar se já autenticado (sessão activa)
+            if 'privatearea' not in page.url:
+                # Preencher email e password
+                await page.fill('input[name="username"]', username)
+                await page.fill('input[name="password"]', password)
+
+                # Clicar o botão submit — o JS resolve o reCAPTCHA invisible
+                # e chama form.submit() automaticamente após obter o token.
+                await page.click('button[type="submit"]')
+                print(f"  [Cruzeiro] Botão de login clicado; aguardar reCAPTCHA + navegação...")
+
+                # Aguardar até 30s para o reCAPTCHA resolver e a navegação ocorrer
+                try:
+                    await page.wait_for_url(
+                        lambda url: 'privatearea' in url,
+                        timeout=30000,
+                    )
+                except Exception:
+                    # Pode ter navegado mas não para privatearea — verificar abaixo
+                    await page.wait_for_load_state("networkidle", timeout=15000)
+
+                await asyncio.sleep(2)
+                current_url = page.url
+                print(f"  [Cruzeiro] URL após login: {current_url}")
+                _save_debug('/tmp/cruzeiro_after_login.html', await page.content())
+
+                if 'privatearea' not in current_url.lower():
+                    result["error"] = "Login falhou — verificar credenciais ou reCAPTCHA"
+                    return result
+            else:
+                print(f"  [Cruzeiro] Já autenticado, a ignorar login.")
+
+        # ── PESQUISA ─────────────────────────────────────────────────────────
+        search_tab_url = url_search.rstrip('?&') + '?tab=produtos'
+        print(f"  [Cruzeiro] Navegando para pesquisa: {search_tab_url}")
+        await page.goto(search_tab_url, wait_until="networkidle", timeout=60000)
+        await asyncio.sleep(3)
+
+        # Verificar redireccção para login (sessão expirada)
+        if 'login' in page.url.lower():
+            result["error"] = "Sessão expirada — redireccionado para login"
+            return result
+
+        # Verificar campo de pesquisa
+        search_field = page.locator('#campo_de_texto_para_pesquisar_os_produtos')
+        if await search_field.count() == 0:
+            result["error"] = "Campo de pesquisa não encontrado (#campo_de_texto_para_pesquisar_os_produtos)"
+            _save_debug('/tmp/cruzeiro_search_page.html', await page.content())
+            return result
+
+        await search_field.fill(medida_norm)
+        print(f"  [Cruzeiro] Pesquisar: {medida_norm!r}")
+
+        # Clicar no botão de pesquisa → dispara HTMX para produtos-tabela-ajax
+        search_btn = page.locator('#botao_iniciador_pesquisa_produtos')
+        if await search_btn.count() > 0:
+            try:
+                async with page.expect_response(
+                    lambda r: 'produtos-tabela-ajax' in r.url,
+                    timeout=20000,
+                ) as resp_info:
+                    await search_btn.click()
+                await resp_info.value  # garantir que a resposta foi totalmente recebida
+                await asyncio.sleep(2)
+            except Exception as e_htmx:
+                print(f"  [Cruzeiro] HTMX wait falhou ({e_htmx}); aguardar networkidle...")
+                await page.wait_for_load_state("networkidle", timeout=15000)
+                await asyncio.sleep(2)
+        else:
+            await search_field.press('Enter')
+            await page.wait_for_load_state("networkidle", timeout=15000)
+            await asyncio.sleep(2)
+
+        content = await page.content()
+        _save_debug('/tmp/cruzeiro_results.html', content)
+        print(f"  [Cruzeiro] Resultados carregados (content length: {len(content)})")
+
+        # ── EXTRACÇÃO DE PRODUTOS ─────────────────────────────────────────────
+        # Tabela com colunas:
+        #   0=Imagem  1=Fabricante  2=Produto  3=DOT  4=Stock  5=Etq  6=Qtd  7=Preço  8=PVP
+        # Formato Produto: "PNEU MICHELIN 205/55R16 PRIMACY 5 91V"
+        products = await page.evaluate(r'''() => {
+            const rows = document.querySelectorAll('#contentor_linhas_tabela_produtos tr');
             const products = [];
-            const items = document.querySelectorAll('.product, .item, [class*="product"], [class*="item"]');
-            
-            items.forEach(item => {
-                const text = item.textContent || '';
-                const priceMatch = text.match(/(\d+[,\.]\d{2})\s*€|€\s*(\d+[,\.]\d{2})/);
-                
-                if (priceMatch) {
-                    const priceStr = priceMatch[1] || priceMatch[2];
-                    const price = parseFloat(priceStr.replace(',', '.'));
-                    
-                    const brandMatch = text.match(/(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS)/i);
-                    
-                    if (price > 15 && price < 500) {
-                        products.push({
-                            brand: brandMatch ? brandMatch[1].toUpperCase() : 'UNKNOWN',
-                            model: '',
-                            price: price
-                        });
+
+            for (const row of rows) {
+                const cells = row.querySelectorAll('td');
+                if (cells.length < 8) continue;
+
+                let brand = '', model = '', price = null;
+
+                // ── Coluna Produto (índice 2) ──────────────────────────────
+                // Formato: "PNEU MARCA MEDIDA MODELO ÍNDICE"
+                // ex.: "PNEU MICHELIN 205/55R16 PRIMACY 5 91V"
+                const produtoTxt = cells[2].textContent.trim().replace(/\s+/g, ' ');
+                let txt = produtoTxt.replace(/^PNEU\s+/i, '');
+                const parts = txt.split(' ');
+                if (parts.length >= 2) {
+                    brand = parts[0].toUpperCase();
+                    // parts[1] = medida (ex: "205/55R16") → saltar
+                    const remaining = parts.slice(2);
+
+                    if (remaining.length > 0) {
+                        const last  = remaining[remaining.length - 1];
+                        const prev  = remaining.length > 1 ? remaining[remaining.length - 2] : '';
+
+                        if (/^\d+[A-Z]+$/.test(last)) {
+                            // Último token é o índice carga+velocidade → modelo = tudo antes
+                            model = remaining.slice(0, -1).join(' ');
+                        } else if (last === 'XL' && /^\d+[A-Z]+$/.test(prev)) {
+                            // "… 91H XL" → índice + XL no final
+                            model = remaining.slice(0, -2).join(' ');
+                        } else {
+                            model = remaining.join(' ');
+                        }
                     }
                 }
-            });
-            
+
+                // ── Coluna Preço (índice 7) ───────────────────────────────
+                // Formato: "67,00€" ou "67.00 €"
+                const precoTxt = cells[7].textContent.trim();
+                const m = precoTxt.match(/(\d+[,.]\d{2})/);
+                if (m) price = parseFloat(m[1].replace(',', '.'));
+
+                if (brand && price && price > 5 && price < 2000)
+                    products.push({ brand, model, price });
+            }
             return products;
         }''')
-        
-        if products and len(products) > 0:
+
+        print(f"  [Cruzeiro] Produtos extraídos: {len(products)}")
+
+        if products:
+            # Deduplicar por marca+modelo, manter preço mais baixo
+            seen = {}
+            for p in products:
+                key = f"{p.get('brand','')}|{p.get('model','')}"
+                if key not in seen or p['price'] < seen[key]['price']:
+                    seen[key] = p
+            products = list(seen.values())
+
             result["products"] = products
-            prices = [p['price'] for p in products]
-            result["price"] = min(prices)
-            result["all_prices"] = sorted(prices)[:10]
-            print(f"  [Pneus Cruzeiro] Found {len(products)} products")
+            prices_list = [p['price'] for p in products]
+            result["price"] = min(prices_list)
+            result["all_prices"] = sorted(prices_list)[:10]
+            print(f"  [Cruzeiro] {len(products)} produtos únicos. Melhor: €{result['price']}")
+            for p in sorted(products, key=lambda x: x['price'])[:5]:
+                print(f"    - {p.get('brand','-')} {p.get('model','-')}: €{p['price']}")
         else:
-            content = await page.content()
-            prices = extract_prices(content)
-            if prices:
-                result["price"] = min(prices)
-                result["all_prices"] = sorted(prices)[:10]
+            # Fallback: regex de preços no HTML bruto
+            prices_list = extract_prices(content)
+            if prices_list:
+                result["price"] = min(prices_list)
+                result["all_prices"] = sorted(prices_list)[:10]
+                print(f"  [Cruzeiro] Fallback regex: {len(prices_list)} preços, melhor: €{result['price']}")
             else:
-                result["error"] = "No products found"
-                
+                result["error"] = "Nenhum produto encontrado — ver /tmp/cruzeiro_results.html"
+                print(f"  [Cruzeiro] {result['error']}")
+
     except Exception as e:
         result["error"] = str(e)
-        print(f"  [Pneus Cruzeiro] Error: {e}")
-    
+        print(f"  [Cruzeiro] ERRO: {e}")
+        import traceback; traceback.print_exc()
+
     return result
 
 # ============================================================
@@ -2942,6 +3058,107 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
             print(f"  [Soledad] RESUMO: {' | '.join(_sol_summary)}")
             continue  # Skip the generic per-medida loop below
 
+        # ── Pneus Cruzeiro: sessão única para todas as medidas ──────────────
+        # Login só uma vez (reCAPTCHA invisible resolve automaticamente);
+        # cada medida usa uma página nova no mesmo contexto autenticado.
+        if 'cruzeiro' in supplier_name:
+            _crz_ctx_kwargs = dict(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1920, 'height': 1080},
+                locale='pt-PT',
+            )
+            _crz_url_login  = supplier.get('url_login')  or 'https://www.pneuscruzeiro.pt/pt/login'
+            _crz_url_search = supplier.get('url_search') or 'https://www.pneuscruzeiro.pt/pt/privatearea'
+            async with async_playwright() as _p_crz:
+                _crz_browser = await _p_crz.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox',
+                          '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                )
+                _crz_ctx   = await _crz_browser.new_context(**_crz_ctx_kwargs)
+                _crz_first = True
+                _crz_summary = []
+
+                for medida, marca, modelo in targets:
+                    _crz_page = await _crz_ctx.new_page()
+                    await _crz_page.add_init_script(
+                        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+                    )
+                    try:
+                        result = await asyncio.wait_for(
+                            scrape_pneus_cruzeiro(
+                                _crz_page,
+                                supplier['username'], supplier['password'],
+                                medida,
+                                _crz_url_login, _crz_url_search,
+                                skip_login=(not _crz_first),
+                            ),
+                            timeout=150,
+                        )
+                        _crz_first = False
+                        result["medida"] = medida
+                        results.append(result)
+
+                        # ── Guardar na BD ──────────────────────────────────
+                        products = result.get('products', [])
+                        now = datetime.now(timezone.utc)
+                        conn_save = await _pg_connect()
+                        try:
+                            if products:
+                                marcas_enc = {p.get('brand', '').upper() for p in products}
+                                for m_brand in marcas_enc:
+                                    await conn_save.execute(
+                                        """DELETE FROM scraped_prices
+                                           WHERE supplier_name=$1 AND medida=$2
+                                             AND COALESCE(marca,'')=$3""",
+                                        supplier['name'], medida, m_brand,
+                                    )
+                                for prod in products:
+                                    await conn_save.execute(
+                                        """INSERT INTO scraped_prices
+                                               (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
+                                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        prod.get('brand', '').upper(),
+                                        prod.get('model', ''),
+                                        prod.get('price'), '', now,
+                                    )
+                                print(f"  [Cruzeiro] {medida}: guardados {len(products)} produtos")
+                            else:
+                                await conn_save.execute(
+                                    "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2 AND marca IS NULL",
+                                    supplier['name'], medida,
+                                )
+                                if result.get('price') is not None:
+                                    await conn_save.execute(
+                                        """INSERT INTO scraped_prices
+                                               (id, supplier_name, medida, price, scraped_at)
+                                           VALUES ($1,$2,$3,$4,$5)""",
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        result['price'], now,
+                                    )
+                                print(f"  [Cruzeiro] {medida}: €{result.get('price')} (sem dados marca)")
+                        finally:
+                            await conn_save.close()
+
+                        _err = result.get('error') or ''
+                        _np  = len(result.get('products', []))
+                        _crz_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+
+                    except asyncio.TimeoutError:
+                        print(f"  [Cruzeiro] Timeout em {medida}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                        _crz_summary.append(f"{medida}:TIMEOUT")
+                    except Exception as e:
+                        print(f"  [Cruzeiro] Erro em {medida}: {e}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(e)})
+                        _crz_summary.append(f"{medida}:ERR")
+                    finally:
+                        await _crz_page.close()
+
+                print(f"  [Cruzeiro] RESUMO: {' | '.join(_crz_summary)}")
+            continue  # Skip the generic per-medida loop below
+
         for medida, marca, modelo in targets:
             # Create completely fresh browser for each medida
             async with async_playwright() as p:
@@ -2987,7 +3204,10 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     elif 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:
                         result = await scrape_inter_sprint(page, supplier['username'], supplier['password'], medida, marca, modelo)
                     elif 'cruzeiro' in supplier_name:
-                        result = await scrape_pneus_cruzeiro(page, supplier['username'], supplier['password'], medida)
+                        result = await scrape_pneus_cruzeiro(
+                            page, supplier['username'], supplier['password'], medida,
+                            supplier.get('url_login', ''), supplier.get('url_search', ''),
+                        )
                     else:
                         result = {"supplier": supplier['name'], "price": None, "error": "Adapter not implemented"}
                     
