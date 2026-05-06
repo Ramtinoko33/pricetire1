@@ -2658,24 +2658,37 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
 
             # Verificar se já autenticado (sessão activa)
             if 'privatearea' not in page.url:
-                # Preencher email e password
-                await page.fill('input[name="username"]', username)
-                await page.fill('input[name="password"]', password)
+                # Preencher email e password com digitação lenta (ajuda reCAPTCHA)
+                await page.focus('input[name="username"]')
+                await asyncio.sleep(0.5)
+                await page.type('input[name="username"]', username, delay=80)
+                await asyncio.sleep(0.3)
+                await page.focus('input[name="password"]')
+                await asyncio.sleep(0.3)
+                await page.type('input[name="password"]', password, delay=80)
+                await asyncio.sleep(0.5)
 
-                # Clicar o botão submit — o JS resolve o reCAPTCHA invisible
-                # e chama form.submit() automaticamente após obter o token.
-                await page.click('button[type="submit"]')
+                # ATENÇÃO: A página tem 2 botões button[type="submit"]:
+                #   1. "Área Reservada" no cabeçalho (GET form → /pt/privatearea)
+                #   2. "Login" no formulário #ew_form_logincliente (POST → /pt/login)
+                # Selector específico para o botão correcto — dentro do formulário de login.
+                login_btn = page.locator('#ew_form_logincliente button[type="submit"]').first
+                await login_btn.click()
                 print(f"  [Cruzeiro] Botão de login clicado; aguardar reCAPTCHA + navegação...")
 
-                # Aguardar até 30s para o reCAPTCHA resolver e a navegação ocorrer
+                # Aguardar até 45s para o reCAPTCHA invisible resolver e a navegação ocorrer
+                # O reCAPTCHA invisible v2 pode demorar até ~10s em headless
                 try:
                     await page.wait_for_url(
                         lambda url: 'privatearea' in url,
-                        timeout=30000,
+                        timeout=45000,
                     )
                 except Exception:
                     # Pode ter navegado mas não para privatearea — verificar abaixo
-                    await page.wait_for_load_state("networkidle", timeout=15000)
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=15000)
+                    except Exception:
+                        pass
 
                 await asyncio.sleep(2)
                 current_url = page.url
@@ -2683,7 +2696,10 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                 _save_debug('/tmp/cruzeiro_after_login.html', await page.content())
 
                 if 'privatearea' not in current_url.lower():
-                    result["error"] = "Login falhou — verificar credenciais ou reCAPTCHA"
+                    result["error"] = (
+                        f"Login falhou — URL após submit: {current_url}. "
+                        "Possível bloqueio de reCAPTCHA em modo headless."
+                    )
                     return result
             else:
                 print(f"  [Cruzeiro] Já autenticado, a ignorar login.")
