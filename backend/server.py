@@ -812,8 +812,8 @@ async def _do_compare(job_id: str, force: bool):
                 if scraped:
                     match_type = "marca_parcial"
 
-            # Nível 3: sem marca nem modelo — o mais barato com o índice certo
-            if not scraped:
+            # Nível 3: sem marca nem modelo — só se o utilizador NÃO especificou marca
+            if not scraped and not marca_norm:
                 scraped = _with_index_generic(medida_prices)
                 if scraped:
                     match_type = "medida"
