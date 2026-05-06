@@ -641,14 +641,17 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                     else if (/compra|pre[çc]o|valor|pvp|unit/.test(t)) priceCol = i;
                 });
 
+                // Marcas conhecidas para fallback quando cabeçalho não é encontrado
+                const KNOWN_BRANDS = /^(MICHELIN|CONTINENTAL|PIRELLI|BRIDGESTONE|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FALKEN|TOYO|KUMHO|NOKIAN|UNIROYAL|KLEBER|SAVA|BARUM|MAXXIS|NEXEN|COOPER|NANKANG|SEMPERIT|FIRESTONE|BFGOODRICH|LAUFENN|ATLAS|ARIVO|IMPERIAL|SUNWIDE|LANVIGATOR|ROTALLA|INFINITY|SAILUN|WINDFORCE|GOODRIDE|DOUBLESTAR|WANLI|HIFLY|COMFORSER|TRIANGLE|SPORTIVA|RIKEN|RADAR|EVENT|AMTEL|AUTOGREEN)$/i;
+
                 for (let i = 1; i < rows.length; i++) {
                     const cells = rows[i].querySelectorAll("td");
                     if (cells.length < 2) continue;
 
                     let brand = "", model = "", price = null;
 
-                    // Parsear coluna Descrição: "MICHELIN 195/65R15 91H PRIMACY 4"
                     if (descCol >= 0 && descCol < cells.length) {
+                        // Parsear coluna Descrição: "MICHELIN 195/65R15 91H PRIMACY 4"
                         const parts = cells[descCol].textContent.trim().split(/\s+/);
                         // parts[0] = MARCA, parts[1] = MEDIDA, parts[2+] = ÍNDICE + MODELO
                         brand = parts[0] ? parts[0].toUpperCase() : '';
@@ -661,6 +664,23 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                             if (parts.length > 3 && parts[3] === 'XL') modelStart = 4;
                         }
                         model = parts.slice(modelStart).join(' ');
+                    } else {
+                        // Fallback: cabeçalho "Descrição" não encontrado —
+                        // varrer todas as células à procura de texto com marca conhecida
+                        for (const cell of cells) {
+                            const txt = cell.textContent.trim();
+                            const parts = txt.split(/\s+/);
+                            if (parts.length >= 2 && KNOWN_BRANDS.test(parts[0])) {
+                                brand = parts[0].toUpperCase();
+                                let modelStart = 2;
+                                if (parts.length > 2 && /^\d+[A-Z]+$/i.test(parts[2])) {
+                                    modelStart = 3;
+                                    if (parts.length > 3 && parts[3] === 'XL') modelStart = 4;
+                                }
+                                model = parts.slice(modelStart).join(' ');
+                                break;
+                            }
+                        }
                     }
 
                     // Preço da coluna PR. COMPRA

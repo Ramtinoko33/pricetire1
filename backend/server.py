@@ -714,6 +714,19 @@ async def _do_compare(job_id: str, force: bool):
             _idx_counts[_li if _li else '(vazio)'] = _idx_counts.get(_li if _li else '(vazio)', 0) + 1
         logger.info(f"[compare diag] medida={_m} total={len(_ps)} índices={_idx_counts}")
 
+    # indiceneg: funções de índice definidas uma vez fora do loop
+    def _index_matches(scraped_idx: str, want_idx: str) -> bool:
+        # indiceneg: índice irrelevante — sempre verdadeiro
+        return True
+
+    def _with_index_generic(candidates):
+        # indiceneg: sem filtro de índice
+        return candidates
+
+    def _sort_priority(x):
+        # indiceneg: ordenar apenas pelo preço mais baixo
+        return x.get('price', 999999)
+
     updated_count = found_count = matched_count = 0
     total_savings = 0.0
     bulk_updates = []
@@ -727,14 +740,6 @@ async def _do_compare(job_id: str, force: bool):
         scraped = []
         match_type = None
         medida_prices = prices_by_medida.get(medida_norm, [])
-
-        def _index_matches(scraped_idx: str, want_idx: str) -> bool:
-            # indiceneg: índice irrelevante — sempre verdadeiro
-            return True
-
-        def _with_index_generic(candidates):
-            # indiceneg: sem filtro de índice
-            return candidates
 
         if medida_prices:
             if marca_norm and modelo_norm:
@@ -799,9 +804,6 @@ async def _do_compare(job_id: str, force: bool):
                     match_type = "medida"
 
         if scraped:
-            # indiceneg: ordenar apenas pelo preço mais baixo
-            def _sort_priority(x):
-                return x.get('price', 999999)
             scraped = sorted(scraped, key=_sort_priority)
             best = scraped[0]
             best_price    = best['price']
