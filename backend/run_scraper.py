@@ -2788,32 +2788,19 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                     parts.shift();
                 }
 
-                // Saltar token que parece medida (ex: "205/55R16" ou "2055516")
-                if (parts.length > 0 && /\d{3}[\/\d]\d{2}[Rr\d]\d{2}/.test(parts[0])) {
+                // Saltar token que parece medida (ex: "205/55R16")
+                if (parts.length > 0 && /\d{3}[\/]\d{2}[Rr]\d{2}/.test(parts[0])) {
                     parts.shift();
-                } else if (parts.length > 0 && parts[0].toUpperCase() === brand) {
-                    // Marca repetida no início do Produto → saltar
-                    parts.shift();
-                    if (parts.length > 0 && /\d{3}[\/\d]\d{2}[Rr\d]\d{2}/.test(parts[0])) {
-                        parts.shift();
-                    }
                 }
 
-                // Remover índice do fim: "91V", "94H XL", "91W XL FR", etc.
-                while (parts.length > 0) {
-                    const last = parts[parts.length - 1];
-                    const prev = parts.length > 1 ? parts[parts.length - 2] : '';
-                    if (/^[A-Z]{2,4}$/.test(last) && !/^[A-Z]{4,}$/.test(last)) {
-                        // sufixos como XL, FR, FP, EVC, DOT → remover
-                        parts.pop();
-                    } else if (/^\d{2,3}[A-Z]{1,2}$/.test(last)) {
-                        // índice carga+velocidade ex: "91V", "94W" → remover
-                        parts.pop();
-                    } else {
-                        break;
-                    }
-                }
-                model = parts.join(' ').trim();
+                // Modelo = tudo antes do primeiro índice de velocidade (ex: "91V", "94W XL")
+                // Estratégia: juntar os parts e cortar na primeira ocorrência de \d{2,3}[A-Z]
+                // ex: "RPX-800 91V (COM PROT JANTE)" → "RPX-800"
+                // ex: "DIMAX TOURING 94V XL FP (EVC)" → "DIMAX TOURING"
+                // ex: "PRIMACY 5 91V" → "PRIMACY 5"
+                const remainingStr = parts.join(' ');
+                const idxMatch = remainingStr.match(/\b\d{2,3}[A-Z]{1,2}\b/);
+                model = (idxMatch ? remainingStr.slice(0, idxMatch.index) : remainingStr).trim();
 
                 // ── Coluna Preço (índice 7) ───────────────────────────────
                 const precoTxt = cells[7].textContent.trim();
