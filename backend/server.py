@@ -706,6 +706,9 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
         match_type = None
         medida_prices = prices_by_medida.get(medida_norm, [])
 
+        print(f"[CRZ-CASCADE] medida={medida_norm} marca_pedida={marca_norm}")
+        print(f"[CRZ-CASCADE] marcas na BD: {list(set((p.get('marca') or '').upper() for p in medida_prices))}")
+
         if medida_prices:
             if marca_norm and modelo_norm:
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').upper() == marca_norm]
@@ -741,6 +744,7 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
 
             if not scraped and marca_norm:
                 marca_prices = [p for p in medida_prices if (p.get('marca') or '').upper() == marca_norm]
+                print(f"[CRZ-CASCADE] após filtro marca: {len(marca_prices)} resultados")
                 if marca_prices:
                     scraped = marca_prices
                     match_type = "marca"
