@@ -278,7 +278,16 @@ const Results = () => {
                         <TableCell className="max-w-xs truncate">{item.modelo}</TableCell>
                         <TableCell className="font-mono">{item.meu_preco != null ? `€${item.meu_preco.toFixed(2)}` : '-'}</TableCell>
                         <TableCell className="font-mono font-bold">
-                          {item.melhor_preco ? `€${item.melhor_preco.toFixed(2)}` : '-'}
+                          {item.melhor_preco ? (
+                            <div className="flex flex-col">
+                              <span className={item.status === 'no_brand_match' ? 'text-amber-700' : ''}>
+                                €{item.melhor_preco.toFixed(2)}
+                              </span>
+                              {item.status === 'no_brand_match' && item.melhor_marca && (
+                                <span className="text-xs text-amber-500 font-normal">({item.melhor_marca})</span>
+                              )}
+                            </div>
+                          ) : '-'}
                         </TableCell>
                         <TableCell>{item.melhor_fornecedor || '-'}</TableCell>
                         <TableCell>
@@ -289,7 +298,7 @@ const Results = () => {
                               <span className="text-xs">({item.economia_percent?.toFixed(1)}%)</span>
                             </div>
                           ) : item.status === 'no_brand_match' ? (
-                            <span className="text-xs text-amber-600">outra marca disponível</span>
+                            <span className="text-xs text-amber-600 italic">outra marca disponível</span>
                           ) : (
                             '-'
                           )}

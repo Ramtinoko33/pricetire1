@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { jobsAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
-import { Upload as UploadIcon, FileSpreadsheet, Loader2, Scale, Download, TrendingDown, CheckCircle, ArrowRight } from 'lucide-react';
+import { Upload as UploadIcon, FileSpreadsheet, Loader2, Scale, Download, TrendingDown, CheckCircle, ArrowRight, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 const Comparar = () => {
@@ -17,6 +17,17 @@ const Comparar = () => {
   const [job, setJob] = useState(null);
   const [results, setResults] = useState([]);
   const [stats, setStats] = useState(null);
+  const pollingTimerRef = useRef(null);
+
+  // Limpar timer ao desmontar componente
+  useEffect(() => {
+    return () => {
+      if (pollingTimerRef.current) {
+        clearTimeout(pollingTimerRef.current);
+        pollingTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Load job results if we have a job
   useEffect(() => {
@@ -60,26 +71,89 @@ const Comparar = () => {
     }
   };
 
-  const handleCompare = async () => {
+  const handleCompare = async (force = false) => {
     if (!job?.id) return;
 
     setComparing(true);
     try {
-      const { data } = await jobsAPI.compare(job.id);
-      setStats({
-        total: data.items_processed,
-        found: data.items_with_savings,
-        savings: data.total_savings
-      });
-      setStep(3);
-      toast.success(`Comparação concluída! ${data.items_with_savings} itens com preço melhor.`);
-      await loadResults();
+      // Iniciar compare (retorna imediatamente com status='running')
+      const { data } = force
+        ? await jobsAPI.forceCompare(job.id)
+        : await jobsAPI.compare(job.id);
+
+      if (data?.async) {
+        // Backend a processar em background — fazer polling até terminar
+        toast.info('A pesquisar preços nos fornecedores... pode demorar alguns minutos.');
+        await _pollUntilDone(job.id);
+      } else {
+        // Resposta síncrona (compatibilidade)
+        setStats({
+          total: data.items_processed,
+          found: data.items_with_savings,
+          savings: data.total_savings,
+        });
+        setStep(3);
+        toast.success(`Comparação concluída! ${data.items_with_savings} itens com preço melhor.`);
+        await loadResults();
+      }
     } catch (error) {
       console.error('Compare error:', error);
       toast.error(error.response?.data?.detail || 'Erro ao comparar preços');
-    } finally {
       setComparing(false);
     }
+  };
+
+  const _pollUntilDone = (jobId) => {
+    const INTERVAL_MS = 8000;   // verificar de 8 em 8 segundos
+    const MAX_WAIT_MS = 30 * 60 * 1000; // máx 30 min
+    const started = Date.now();
+
+    // Cancelar qualquer polling anterior antes de iniciar um novo
+    if (pollingTimerRef.current) {
+      clearTimeout(pollingTimerRef.current);
+      pollingTimerRef.current = null;
+    }
+
+    return new Promise((resolve) => {
+      const tick = async () => {
+        try {
+          const { data: progress } = await jobsAPI.getProgress(jobId);
+          const status = progress?.status;
+
+          if (status === 'completed') {
+            pollingTimerRef.current = null;
+            await loadResults();
+            setStep(3);
+            const found = progress.found_items ?? 0;
+            toast.success(`Comparação concluída! ${found} itens com preço melhor.`);
+            setComparing(false);
+            resolve();
+            return;
+          } else if (status === 'failed') {
+            pollingTimerRef.current = null;
+            toast.error('Erro na comparação de preços. Tente novamente.');
+            setComparing(false);
+            resolve();
+            return;
+          } else if (Date.now() - started > MAX_WAIT_MS) {
+            pollingTimerRef.current = null;
+            toast.error('Timeout: a comparação demorou demasiado. Tente novamente.');
+            setComparing(false);
+            resolve();
+            return;
+          }
+          // status === 'running' → agendar próxima verificação
+          pollingTimerRef.current = setTimeout(tick, INTERVAL_MS);
+        } catch (err) {
+          console.error('Polling error:', err);
+          // erro de rede temporário → tentar novamente
+          pollingTimerRef.current = setTimeout(tick, INTERVAL_MS);
+        }
+      };
+
+      // Primeira verificação após INTERVAL_MS
+      pollingTimerRef.current = setTimeout(tick, INTERVAL_MS);
+    });
   };
 
   const loadResults = async () => {
@@ -129,11 +203,16 @@ const Comparar = () => {
   };
 
   const resetFlow = () => {
+    if (pollingTimerRef.current) {
+      clearTimeout(pollingTimerRef.current);
+      pollingTimerRef.current = null;
+    }
     setStep(1);
     setFile(null);
     setJob(null);
     setResults([]);
     setStats(null);
+    setComparing(false);
   };
 
   return (
@@ -312,14 +391,29 @@ const Comparar = () => {
                       <p className="text-3xl font-bold text-emerald-600">€{stats.savings?.toFixed(2)}</p>
                     </div>
                   </div>
-                  <Button onClick={handleExport} disabled={exporting} data-testid="export-btn">
-                    {exporting ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Download className="mr-2 h-4 w-4" />
-                    )}
-                    Exportar Excel
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => handleCompare(true)}
+                      disabled={comparing}
+                      title="Apaga dados em cache e raspa tudo de novo"
+                    >
+                      {comparing ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                      )}
+                      Actualizar dados
+                    </Button>
+                    <Button onClick={handleExport} disabled={exporting} data-testid="export-btn">
+                      {exporting ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="mr-2 h-4 w-4" />
+                      )}
+                      Exportar Excel
+                    </Button>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -340,6 +434,7 @@ const Comparar = () => {
                       <TableHead>Modelo</TableHead>
                       <TableHead>Índice</TableHead>
                       <TableHead>Modelo Encontrado</TableHead>
+                      <TableHead>Índice Encontrado</TableHead>
                       <TableHead className="text-right">Meu Preço</TableHead>
                       <TableHead className="text-right">Melhor Preço</TableHead>
                       <TableHead>Fornecedor</TableHead>
@@ -395,14 +490,24 @@ const Comparar = () => {
                           <TableCell className="max-w-[150px] truncate font-medium" title={item.modelo_encontrado}>
                             {item.modelo_encontrado || '-'}
                           </TableCell>
+                          <TableCell className="font-mono text-slate-500 text-xs">
+                            {item.indice_encontrado || '-'}
+                          </TableCell>
                           <TableCell className="text-right font-medium">
                             {item.meu_preco ? `€${item.meu_preco.toFixed(2)}` : '-'}
                           </TableCell>
                           <TableCell className="text-right font-medium">
                             {item.melhor_preco ? (
-                              <span className={hasSavings ? 'text-emerald-600' : ''}>
-                                €{item.melhor_preco.toFixed(2)}
-                              </span>
+                              <div className="flex flex-col items-end">
+                                <span className={hasSavings ? 'text-emerald-600' : isOtherBrand ? 'text-amber-700' : ''}>
+                                  €{item.melhor_preco.toFixed(2)}
+                                </span>
+                                {isOtherBrand && item.melhor_marca && (
+                                  <span className="text-xs text-amber-500 font-normal">
+                                    ({item.melhor_marca})
+                                  </span>
+                                )}
+                              </div>
                             ) : '-'}
                           </TableCell>
                           <TableCell>
@@ -417,7 +522,7 @@ const Comparar = () => {
                                 €{item.economia_euro.toFixed(2)}
                               </span>
                             ) : isOtherBrand ? (
-                              <span className="text-xs text-amber-600">outra marca</span>
+                              <span className="text-xs text-amber-600 italic">outra marca</span>
                             ) : '-'}
                           </TableCell>
                           <TableCell className="text-right">
