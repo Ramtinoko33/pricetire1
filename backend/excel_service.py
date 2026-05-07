@@ -60,7 +60,7 @@ class ExcelService:
                         'medida': str(row['medida']).strip(),
                         'marca': str(row['marca']).strip(),
                         'modelo': str(row['modelo']).strip(),
-                        'indice': str(row['indice']).strip(),
+                        'indice': str(row['indice']).strip() if pd.notna(row.get('indice')) else '',
                         'meu_preco': float(row['meu_preco']),
                     }
                     items.append(item)

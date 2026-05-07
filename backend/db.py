@@ -67,6 +67,10 @@ async def init_schema():
     pool = await get_db()
     async with pool.acquire() as conn:
         await conn.execute(schema_sql)
+        # Migrations incrementais — ADD COLUMN IF NOT EXISTS é idempotente
+        await conn.execute(
+            "ALTER TABLE job_items ADD COLUMN IF NOT EXISTS indice_encontrado TEXT"
+        )
     logger.info("Schema PostgreSQL inicializado.")
 
 

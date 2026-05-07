@@ -500,11 +500,11 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                        url_search: str = "https://b2b.sjosepneus.com/articles/articles.aspx") -> dict:
     """Scrape S. José Pneus (ASP.NET B2B portal).
 
-    url_login  — login page URL (stored in suppliers.url_login)
-    url_search — product search URL (stored in suppliers.url_search)
-
-    On first run the page HTML is saved to /tmp/sjose_after_login.html and
-    /tmp/sjose_results.html so selectors can be verified if anything goes wrong.
+    Selectores confirmados via HTML real (2026-05):
+      - Campo medida : #ContentPlaceHolder1_txtSize  (formato "1955015" sem barras)
+      - Botão pesquisa: #lkbtnSearch  (<a> com __doPostBack — NÃO é input[type=submit])
+      - Resultados    : #ContentPlaceHolder1_UpdatePanelResults  (UpdatePanel AJAX)
+      - Campo descrição: #ContentPlaceHolder1_txtDescription  (filtro extra opcional)
     """
     result = {
         "supplier": "S. José Pneus",
@@ -514,7 +514,6 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-    # Use sensible defaults if empty strings were passed
     if not url_login:
         url_login = "https://b2b.sjosepneus.com/default.aspx"
     if not url_search:
@@ -532,274 +531,118 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
         print(f"  [S. José] Navigating to login: {url_login}")
         await page.goto(url_login, wait_until="networkidle", timeout=60000)
         await asyncio.sleep(2)
-
-        current_url = page.url
-        print(f"  [S. José] URL after navigation: {current_url}")
-
-        # Save the page BEFORE login attempt so we can inspect the form structure
         _save_debug('/tmp/sjose_pre_login.html', await page.content())
 
-        # Log ALL input IDs (visible and hidden) to diagnose selector issues
-        input_ids = await page.evaluate(
-            "() => Array.from(document.querySelectorAll('input')).map(i => "
-            "({id: i.id, name: i.name, type: i.type, visible: i.offsetParent !== null}))"
-        )
-        visible_inputs = [x for x in input_ids if x.get('type') not in ('hidden',)]
-        print(f"  [S. José] ALL visible inputs on page: {visible_inputs}")
+        # Detectar se o formulário de login está presente (utilizador não autenticado)
+        # O campo de username confirmado via HTML real: #ContentPlaceHolder1_ctrlLogin_Login_UserName
+        login_field = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_UserName').first
+        if await login_field.count() > 0:
+            print(f"  [S. José] Login form found — filling credentials")
+            await login_field.fill(username)
 
-        # Login form present if we're still on a login/default page (not yet authenticated)
-        if 'login' in current_url.lower() or 'default' in current_url.lower():
-
-            # ASP.NET Login control — try several known ID patterns
-            user_selectors = [
-                '#ContentPlaceHolder1_ctrlLogin_Login_UserName',
-                '#ContentPlaceHolder1_Login1_UserName',
-                '#ctl00_ContentPlaceHolder1_Login1_UserName',
-                'input[id$="_UserName"]',
-                'input[name$="UserName"]',
-                'input[autocomplete="username"]',
-            ]
-            filled_user = False
-            for sel in user_selectors:
-                loc = page.locator(sel).first
-                if await loc.count() > 0:
-                    await loc.fill(username)
-                    print(f"  [S. José] Filled username via: {sel}")
-                    filled_user = True
-                    break
-            if not filled_user:
-                await page.locator('input[type="text"]').first.fill(username)
-                print("  [S. José] Used generic username selector")
-
-            pass_selectors = [
-                '#ContentPlaceHolder1_ctrlLogin_Login_Password',
-                '#ContentPlaceHolder1_Login1_Password',
-                '#ctl00_ContentPlaceHolder1_Login1_Password',
-                'input[id$="_Password"]',
-                'input[name$="Password"]',
-                'input[autocomplete="current-password"]',
-            ]
-            filled_pass = False
-            for sel in pass_selectors:
-                loc = page.locator(sel).first
-                if await loc.count() > 0:
-                    await loc.fill(password)
-                    print(f"  [S. José] Filled password via: {sel}")
-                    filled_pass = True
-                    break
-            if not filled_pass:
+            pwd_field = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_Password').first
+            if await pwd_field.count() > 0:
+                await pwd_field.fill(password)
+            else:
                 await page.locator('input[type="password"]').first.fill(password)
-                print("  [S. José] Used generic password selector")
 
-            # Login button — try specific ID first, then any submit
-            btn_selectors = [
-                '#ContentPlaceHolder1_ctrlLogin_Login_btnLogin',   # S. José real ID
-                '#ContentPlaceHolder1_ctrlLogin_Login_LoginButton', # fallback variant
-                '#ContentPlaceHolder1_Login1_LoginButton',
-                '#ctl00_ContentPlaceHolder1_Login1_LoginButton',
-                'input[id$="_btnLogin"]',
-                'input[id$="_LoginButton"]',
-                'input[type="submit"]',
-                'button[type="submit"]',
-            ]
-            for btn_sel in btn_selectors:
-                btn_loc = page.locator(btn_sel).first
-                if await btn_loc.count() > 0:
-                    print(f"  [S. José] Clicking login button via: {btn_sel}")
-                    await btn_loc.click()
-                    break
+            # Botão de login confirmado: #ContentPlaceHolder1_ctrlLogin_Login_btnLogin
+            btn = page.locator('#ContentPlaceHolder1_ctrlLogin_Login_btnLogin').first
+            if await btn.count() > 0:
+                await btn.click()
+            else:
+                # Fallback para outros padrões ASP.NET
+                for sel in ['input[id$="_LoginButton"]', 'input[type="submit"]', 'button[type="submit"]']:
+                    b = page.locator(sel).first
+                    if await b.count() > 0:
+                        await b.click()
+                        break
 
             await asyncio.sleep(5)
             await page.wait_for_load_state("networkidle")
+        else:
+            print(f"  [S. José] No login form found — assuming already authenticated")
 
-        url_after_login = page.url
-        print(f"  [S. José] URL after login: {url_after_login}")
-        after_login_html = await page.content()
-        _save_debug('/tmp/sjose_after_login.html', after_login_html)
+        url_after = page.url
+        print(f"  [S. José] URL after login step: {url_after}")
+        _save_debug('/tmp/sjose_after_login.html', await page.content())
 
-        # Check if login succeeded:
-        # - Success: URL is default.aspx (home) or any other non-login page
-        # - Failure: still on login.aspx, OR login form still visible in DOM
-        still_on_login = 'login' in url_after_login.lower()
-        login_form_still_visible = await page.locator(
-            '#ContentPlaceHolder1_ctrlLogin_Login_UserName'
-        ).count() > 0
-
-        if still_on_login or login_form_still_visible:
-            result["error"] = (
-                f"Login failed — still on login page ({url_after_login}). "
-                "Check credentials or use /scraper/debug-html?file=after_login"
-            )
-            print(f"  [S. José] Login FAILED: {result['error']}")
+        # Verificar falha de login: formulário ainda visível
+        if await page.locator('#ContentPlaceHolder1_ctrlLogin_Login_UserName').count() > 0:
+            result["error"] = f"Login failed — credentials rejected ({url_after})"
+            print(f"  [S. José] {result['error']}")
             return result
 
-        print(f"  [S. José] Login successful — now on: {url_after_login}")
-
-        # ── Navigate to search page ───────────────────────────────────────────
+        # ── Pesquisa ─────────────────────────────────────────────────────────
+        # O campo aceita formato normalizado: "1956515" (sem barras, sem R)
         medida_norm = normalize_medida(medida)
-        medida_orig = medida.strip()
+        print(f"  [S. José] Navigating to search: {url_search}")
+        await page.goto(url_search, wait_until="networkidle", timeout=60000)
+        await asyncio.sleep(2)
 
-        # Reconstruct the slashed format from a normalized medida
-        # e.g. "1956515" → "195/65R15"  (3-digit width + 2-digit ratio + 2-digit rim)
-        import re as _re
-        _m = _re.match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
-        medida_slashed = f"{_m.group(1)}/{_m.group(2)}R{_m.group(3)}" if _m else medida_orig
+        search_page_url = page.url
+        print(f"  [S. José] Search page URL: {search_page_url}")
 
-        # All formats to try for form filling (deduplicated, slashed first)
-        all_search_terms = list(dict.fromkeys([medida_slashed, medida_orig, medida_norm]))
+        if 'login' in search_page_url.lower():
+            result["error"] = f"Session expired — redirected to login from articles page"
+            return result
 
-        def _size_in_content(content: str, mnorm: str, mslashed: str) -> bool:
-            """Check that the page actually contains the searched tire size."""
-            cl = content.lower()
-            # Check normalized form (e.g. "1956515")
-            if mnorm.lower() in cl:
-                return True
-            # Check slashed form (e.g. "195/65r15")
-            if mslashed.lower() in cl:
-                return True
-            # Check without R (e.g. "195/65/15")
-            if mslashed.lower().replace('r', '/') in cl:
-                return True
-            # Check with space (e.g. "195 65 15")
-            if mslashed.lower().replace('/', ' ').replace('r', ' ') in cl:
-                return True
-            return False
-
-        print(f"  [S. José] Navigating to search page: {url_search}")
-        print(f"  [S. José] Searching for: {medida_norm} → slashed: {medida_slashed}")
-
-        # Strategy 1: try URL query parameters with BOTH normalized and original format
-        # Only accept the page if the searched medida actually appears in the response
-        search_url_tried = False
-        for param in ['q', 'pesquisa', 'search', 'medida', 'codigo', 'ref']:
-            for search_term in all_search_terms:
-                try_url = f"{url_search}?{param}={search_term}"
-                await page.goto(try_url, wait_until="networkidle", timeout=30000)
-                await asyncio.sleep(2)
-                content_check = await page.content()
-                # Accept only if the page has prices AND references the searched size
-                has_prices = any(c in content_check for c in ['€', 'preco', 'Preco', 'PVP', 'pvp'])
-                has_size   = _size_in_content(content_check, medida_norm, medida_slashed)
-                if has_prices and has_size:
-                    print(f"  [S. José] URL param '{param}'={search_term!r} has matching results")
-                    search_url_tried = True
-                    break
-                elif has_prices:
-                    print(f"  [S. José] Param '{param}'={search_term!r} has prices but NOT the searched size — ignoring")
-                else:
-                    print(f"  [S. José] Param '{param}'={search_term!r} — no prices")
-            if search_url_tried:
-                break
-
-        # Strategy 2: navigate to search page and fill form
-        if not search_url_tried:
-            await page.goto(url_search, wait_until="networkidle", timeout=60000)
-            await asyncio.sleep(2)
-            search_page_url = page.url
-            print(f"  [S. José] Search page actual URL: {search_page_url}")
+        # Campo medida confirmado: #ContentPlaceHolder1_txtSize
+        size_field = page.locator('#ContentPlaceHolder1_txtSize').first
+        if await size_field.count() == 0:
+            result["error"] = "Campo #ContentPlaceHolder1_txtSize não encontrado na página de pesquisa"
             _save_debug('/tmp/sjose_search_page.html', await page.content())
-            # Guard: if navigating to the search page redirected back to LOGIN page,
-            # don't fill the search box (we'd be filling into the username field)
-            # Note: default.aspx is the HOME page after login, NOT a login page
-            if 'login' in search_page_url.lower():
-                result["error"] = (
-                    f"Navigating to {url_search} redirected to login page ({search_page_url}). "
-                    "Session may have expired — check /tmp/sjose_after_login.html"
-                )
-                return result
+            return result
 
-        # Ordered list of selectors seen in ASP.NET B2B tire portals
-        search_selectors = [
-            '#ContentPlaceHolder1_txtPesquisa',
-            '#ContentPlaceHolder1_txtMedida',
-            '#ContentPlaceHolder1_txtSearch',
-            '#ContentPlaceHolder1_TextBox1',
-            'input[id*="Pesquisa"]',
-            'input[id*="Medida"]',
-            'input[id*="txtP"]',
-            'input[id*="Search"]',
-            'input[id*="search"]',
-            'input[name*="pesq"]',
-            'input[name*="Pesq"]',
-            'input[type="text"]',   # last-resort generic (EXCLUDE if on login page)
-        ]
+        await size_field.fill(medida_norm)
+        print(f"  [S. José] Filled size field with: {medida_norm!r}")
 
-        submit_selectors = [
-            '#ContentPlaceHolder1_btnPesquisar',
-            '#ContentPlaceHolder1_btnSearch',
-            '#ContentPlaceHolder1_ImageButton1',  # ASP.NET ImageButton
-            'input[type="submit"]',
-            'input[type="image"]',
-            'button[type="submit"]',
-        ]
+        # Botão pesquisar confirmado: #lkbtnSearch (âncora com __doPostBack — NÃO é input[submit])
+        search_btn = page.locator('#lkbtnSearch').first
+        if await search_btn.count() > 0:
+            await search_btn.click()
+            print(f"  [S. José] Clicked #lkbtnSearch")
+        else:
+            # Fallback: pressionar Enter no campo
+            await size_field.press('Enter')
+            print(f"  [S. José] Submitted via Enter (lkbtnSearch not found)")
 
-        search_found = search_url_tried  # already searched via URL params
-        if not search_found:
-            # Try slashed format first (e.g. "195/65R15"), then original, then normalized
-            search_terms_to_try = all_search_terms
-            for sel in search_selectors:
-                el = page.locator(sel).first
-                if await el.count() > 0:
-                    for term in search_terms_to_try:
-                        await el.fill(term)
-                        print(f"  [S. José] Filled search field via {sel!r} with {term!r}")
-                        submitted = False
-                        for btn_sel in submit_selectors:
-                            btn = page.locator(btn_sel).first
-                            if await btn.count() > 0:
-                                await btn.click()
-                                submitted = True
-                                print(f"  [S. José] Clicked submit via: {btn_sel}")
-                                break
-                        if not submitted:
-                            await el.press('Enter')
-                            print("  [S. José] Submitted via Enter key")
-                        await asyncio.sleep(5)
-                        await page.wait_for_load_state("networkidle")
-                        # Check if results page references the searched size
-                        after_submit = await page.content()
-                        if _size_in_content(after_submit, medida_norm, medida_slashed):
-                            print(f"  [S. José] Search with term {term!r} returned relevant content")
-                            search_found = True
-                            break
-                        print(f"  [S. José] Search with {term!r} didn't return size-specific content, trying next term")
-                        # Navigate back to search page for next attempt
-                        if term != search_terms_to_try[-1]:
-                            await page.goto(url_search, wait_until="networkidle", timeout=30000)
-                            await asyncio.sleep(2)
-                            el = page.locator(sel).first  # re-find after navigation
-                    if search_found:
-                        break
-                    # If no term produced relevant results, still mark as searched (best effort)
-                    if not search_found:
-                        print(f"  [S. José] No search term produced size-specific results, using last attempt")
-                        search_found = True
-                    break
+        # Aguardar o UpdatePanel AJAX atualizar
+        await asyncio.sleep(4)
+        await page.wait_for_load_state("networkidle")
+        await asyncio.sleep(2)
 
         content = await page.content()
         _save_debug('/tmp/sjose_results.html', content)
+        print(f"  [S. José] Results page loaded (content length: {len(content)})")
 
-        if not search_found:
-            result["error"] = "Search field not found — HTML saved to /tmp/sjose_search_page.html"
-            return result
-
-        # ── Extract products from ASP.NET GridView table ─────────────────────
+        # ── Extracção de produtos da tabela GridView ──────────────────────────
+        # O S. José tem UMA coluna "Descrição" com formato:
+        #   "MICHELIN 195/65R15 91H PRIMACY 4"
+        #   "MICHELIN 195/65R15 95H PRIMACY 4 XL"
+        # Estrutura: MARCA  MEDIDA  ÍNDICE  MODELO
+        # A coluna de preço chama-se "PR. COMPRA" (contém "compra")
         products = await page.evaluate('''() => {
             const products = [];
 
-            for (const table of document.querySelectorAll("table")) {
+            const panel = document.getElementById('ContentPlaceHolder1_UpdatePanelResults');
+            const root = panel || document;
+
+            for (const table of root.querySelectorAll("table")) {
                 const rows = table.querySelectorAll("tr");
                 if (rows.length < 2) continue;
 
-                // Detect column positions from header row
-                let brandCol = -1, modelCol = -1, priceCol = -1;
+                // Detectar colunas pelo cabeçalho
+                let descCol = -1, priceCol = -1;
                 const headerCells = rows[0].querySelectorAll("th, td");
                 headerCells.forEach((h, i) => {
                     const t = h.textContent.trim().toLowerCase();
-                    if (/marca|brand|fabricante/.test(t))         brandCol = i;
-                    else if (/modelo|descri|perfil|artigo|denom/.test(t)) modelCol = i;
-                    else if (/pre[çc]o|valor|pvp|unit/.test(t))   priceCol = i;
+                    if (/descri/.test(t))                              descCol = i;
+                    else if (/compra|pre[çc]o|valor|pvp|unit/.test(t)) priceCol = i;
                 });
+
+                // Marcas conhecidas para fallback quando cabeçalho não é encontrado
+                const KNOWN_BRANDS = /^(MICHELIN|CONTINENTAL|PIRELLI|BRIDGESTONE|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FALKEN|TOYO|KUMHO|NOKIAN|UNIROYAL|KLEBER|SAVA|BARUM|MAXXIS|NEXEN|COOPER|NANKANG|SEMPERIT|FIRESTONE|BFGOODRICH|LAUFENN|ATLAS|ARIVO|IMPERIAL|SUNWIDE|LANVIGATOR|ROTALLA|INFINITY|SAILUN|WINDFORCE|GOODRIDE|DOUBLESTAR|WANLI|HIFLY|COMFORSER|TRIANGLE|SPORTIVA|RIKEN|RADAR|EVENT|AMTEL|AUTOGREEN)$/i;
 
                 for (let i = 1; i < rows.length; i++) {
                     const cells = rows[i].querySelectorAll("td");
@@ -807,21 +650,49 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
 
                     let brand = "", model = "", price = null;
 
-                    if (brandCol >= 0 && brandCol < cells.length)
-                        brand = cells[brandCol].textContent.trim().toUpperCase();
-                    if (modelCol >= 0 && modelCol < cells.length)
-                        model = cells[modelCol].textContent.trim();
+                    if (descCol >= 0 && descCol < cells.length) {
+                        // Parsear coluna Descrição: "MICHELIN 195/65R15 91H PRIMACY 4"
+                        const parts = cells[descCol].textContent.trim().split(/\s+/);
+                        // parts[0] = MARCA, parts[1] = MEDIDA, parts[2+] = ÍNDICE + MODELO
+                        brand = parts[0] ? parts[0].toUpperCase() : '';
+                        // Saltar parts[1] (medida) e encontrar onde começa o modelo
+                        // Índice = token que corresponde a /^\d+[A-Z]+$/  (ex: "91H", "94W")
+                        let modelStart = 2;
+                        if (parts.length > 2 && /^\d+[A-Z]+$/i.test(parts[2])) {
+                            modelStart = 3; // saltar o índice
+                            // "XL" pode aparecer após o índice
+                            if (parts.length > 3 && parts[3] === 'XL') modelStart = 4;
+                        }
+                        model = parts.slice(modelStart).join(' ');
+                    } else {
+                        // Fallback: cabeçalho "Descrição" não encontrado —
+                        // varrer todas as células à procura de texto com marca conhecida
+                        for (const cell of cells) {
+                            const txt = cell.textContent.trim();
+                            const parts = txt.split(/\s+/);
+                            if (parts.length >= 2 && KNOWN_BRANDS.test(parts[0])) {
+                                brand = parts[0].toUpperCase();
+                                let modelStart = 2;
+                                if (parts.length > 2 && /^\d+[A-Z]+$/i.test(parts[2])) {
+                                    modelStart = 3;
+                                    if (parts.length > 3 && parts[3] === 'XL') modelStart = 4;
+                                }
+                                model = parts.slice(modelStart).join(' ');
+                                break;
+                            }
+                        }
+                    }
 
-                    // Price from detected column
+                    // Preço da coluna PR. COMPRA
                     if (priceCol >= 0 && priceCol < cells.length) {
-                        const m = cells[priceCol].textContent.match(/(\d+[,\\.]\d{2})/);
+                        const m = cells[priceCol].textContent.match(/(\d+[,\.]\d{2})/);
                         if (m) price = parseFloat(m[1].replace(",", "."));
                     }
 
-                    // Price fallback: scan each cell for standalone currency value
+                    // Fallback preço: varrer todas as células
                     if (!price) {
                         for (const cell of cells) {
-                            const m = cell.textContent.trim().match(/^€?\\s*(\d+[,\\.]\d{2})\\s*€?$/);
+                            const m = cell.textContent.replace(/\s/g,'').match(/^€?(\d+[,\.]\d{2})€?$/);
                             if (m) {
                                 const p = parseFloat(m[1].replace(",", "."));
                                 if (p > 15 && p < 500) { price = p; break; }
@@ -829,26 +700,19 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                         }
                     }
 
-                    // Brand fallback: scan full row text for known brand names
-                    if (!brand) {
-                        const rowText = Array.from(cells).map(c => c.textContent).join(" ").toUpperCase();
-                        const bm = rowText.match(
-                            /(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL|SEMPERIT|BARUM|LASSA|SAVA|KLEBER|FULDA|GISLAVED|MATADOR|DEBICA|KELLY)/
-                        );
-                        if (bm) brand = bm[1];
-                    }
-
-                    if (price && price > 15 && price < 500)
+                    if (brand && price && price > 15 && price < 500)
                         products.push({ brand, model, price });
                 }
 
-                if (products.length > 0) break; // stop at first table with results
+                if (products.length > 0) break;
             }
             return products;
         }''')
 
+        print(f"  [S. José] Raw products extracted: {len(products)}")
+
         if products:
-            # Deduplicate by brand+model keeping lowest price
+            # Deduplicar por marca+modelo mantendo preço mais baixo
             seen = {}
             for p in products:
                 key = f"{p.get('brand','')}|{p.get('model','')}"
@@ -860,18 +724,19 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
             prices_list = [p['price'] for p in products]
             result["price"] = min(prices_list)
             result["all_prices"] = sorted(prices_list)[:10]
-            print(f"  [S. José] {len(products)} products found. Best: €{result['price']}")
-            for p in sorted(products, key=lambda x: x['price'])[:3]:
+            print(f"  [S. José] {len(products)} produtos. Melhor: €{result['price']}")
+            for p in sorted(products, key=lambda x: x['price'])[:5]:
                 print(f"    - {p.get('brand','-')} {p.get('model','-')}: €{p['price']}")
         else:
-            # Final fallback: regex price extraction from raw HTML
+            # Fallback: regex de preços no HTML bruto
             prices_list = extract_prices(content)
             if prices_list:
                 result["price"] = min(prices_list)
                 result["all_prices"] = sorted(prices_list)[:10]
-                print(f"  [S. José] Fallback regex: {len(prices_list)} prices, best: €{result['price']}")
+                print(f"  [S. José] Fallback regex: {len(prices_list)} preços, melhor: €{result['price']}")
             else:
-                result["error"] = "No products found — check /tmp/sjose_results.html"
+                result["error"] = "Nenhum produto encontrado — ver /tmp/sjose_results.html"
+                print(f"  [S. José] {result['error']}")
 
     except Exception as e:
         result["error"] = str(e)
@@ -1114,8 +979,14 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             # After login, b2b.current redirects to b2b.new.gruposoledad.com/login?params=TOKEN
             # This SSO token is processed by b2b.new and creates the session there.
             # We must wait for this redirect to complete before navigating anywhere.
+            #
+            # Three observed cases after login:
+            #  A) URL is b2b.new/login?params=TOKEN — SSO in progress (wait for it)
+            #  B) URL is b2b.new/dashboard/* — SSO already completed during sleep(3)
+            #  C) URL is b2b.current/* — SSO hasn't triggered yet (wait for it)
             _post_login_url = page.url
             if 'params=' in _post_login_url and '/login' in _post_login_url:
+                # Case A: SSO token in URL — wait for b2b.new to process it
                 print(f"  [Soledad] SSO handoff in progress — waiting for dashboard redirect...")
                 for _sso_i in range(30):
                     await asyncio.sleep(1)
@@ -1127,10 +998,35 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         print(f"  [Soledad] SSO wait {_sso_i}s — {_sso_url}")
                 else:
                     print(f"  [Soledad] SSO timeout — still on {page.url}")
-                # Session was established on b2b.new — update search URL accordingly
                 url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
                 url_origin = 'https://b2b.new.gruposoledad.com'
                 print(f"  [Soledad] Search URL updated to b2b.new (SSO domain)")
+            elif 'b2b.new' in _post_login_url and '/login' not in _post_login_url:
+                # Case B: already on b2b.new dashboard — SSO completed during sleep
+                url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
+                url_origin = 'https://b2b.new.gruposoledad.com'
+                print(f"  [Soledad] Already on b2b.new after login — SSO complete: {_post_login_url}")
+            else:
+                # Case C: still on b2b.current — SSO hasn't triggered yet.
+                # Wait up to 25s for the page to navigate to b2b.new.
+                print(f"  [Soledad] Waiting for SSO redirect from {_post_login_url}...")
+                try:
+                    await page.wait_for_url('**/b2b.new/**', timeout=25000)
+                    _url_now = page.url
+                    url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
+                    url_origin = 'https://b2b.new.gruposoledad.com'
+                    print(f"  [Soledad] SSO redirect detected: {_url_now}")
+                    if 'params=' in _url_now and '/login' in _url_now:
+                        for _sso_proc in range(20):
+                            await asyncio.sleep(1)
+                            if '/login' not in page.url:
+                                print(f"  [Soledad] SSO token processed after {_sso_proc+1}s")
+                                break
+                except Exception:
+                    # SSO never happened — proceed anyway, session may still work
+                    url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
+                    url_origin = 'https://b2b.new.gruposoledad.com'
+                    print(f"  [Soledad] No SSO redirect after 25s — proceeding to b2b.new")
 
         # ── Navigate to search page ───────────────────────────────────────────
         # Clear any API responses captured during login — we only want search responses
@@ -1147,7 +1043,17 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             await page.wait_for_load_state("load", timeout=8000)
         except Exception:
             pass
-        await asyncio.sleep(2)  # Angular render
+        # Aguardar que o Angular renderize o formulário de pesquisa (typeahead input).
+        # Para medidas com skip_login=True a página é nova e o Angular precisa de mais tempo
+        # do que o simples wait_for_load_state("load").
+        _ta_sel = '#typeahead-basic-busqueda, input[placeholder*="Medida" i], input[id*="busqueda" i]'
+        try:
+            await page.wait_for_selector(_ta_sel, state='visible', timeout=12000)
+            print(f"  [Soledad] Typeahead input visible")
+        except Exception:
+            # Não encontrou em 12s — esperar mais 3s e continuar na mesma
+            await asyncio.sleep(3)
+            print(f"  [Soledad] Typeahead input timeout — continuing anyway")
 
         _save_debug('/tmp/soledad_search_page.html', await page.content())
         search_page_url = page.url
@@ -1441,13 +1347,23 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
 
         # Price/brand/model field names — case-insensitive search covers Grupo Soledad
         # AR_ prefix pattern (AR_PRECIO, AR_MARCA, AR_DESCRIPCION) used in Spanish B2B systems.
-        _PRICE_SUBSTRINGS = ('pvp', 'preco', 'precio', 'price', 'valor', 'coste',
-                             'tarifa', 'importe', 'unitprice', 'saleprice', 'netprice')
+        # NOTE: 'valor' and 'importe' intentionally excluded — too generic:
+        #   VALOR appears in filter dropdowns, IMPORTE_SIGUIENTE/CONSEGUIDO in promotions.
+        _PRICE_SUBSTRINGS = ('pvp', 'preco', 'precio', 'price', 'coste',
+                             'tarifa', 'unitprice', 'saleprice', 'netprice', 'preciouni',
+                             'precouni', 'pvpfinal', 'pvpnet')
         _BRAND_SUBSTRINGS = ('marca', 'brand', 'manufacturer', 'fabricante', 'marque')
         _MODEL_SUBSTRINGS = ('descripcion', 'descricao', 'description', 'modelo',
                              'model', 'nome', 'designation', 'denominacion', 'referencia')
+        # Soledad API uses AR_CARGA (load number e.g. 91) and AR_VELOCIDAD (speed letter e.g. H)
+        # Use endswith matching to avoid false positives from field names containing 'ic' etc.
+        _IC_FIELD_SUFFIXES = ('_carga', '_ic', '_li', '_loadindex', '_load_index',
+                              '_indcarga', '_indicecarga')
+        _CV_FIELD_SUFFIXES = ('_velocidad', '_cv', '_si', '_velocidade', '_speedindex',
+                              '_speed_index', '_indvel')
 
         _logged_keys: set = set()  # avoid printing the same key set twice
+        import re as _re_idx
 
         def _parse_api_json(data, depth=0):
             """Recursively search JSON for objects that look like tire products."""
@@ -1477,7 +1393,7 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                                 v = v.get('value') or v.get('formattedValue') or v.get('amount') or 0
                             try:
                                 price_val = float(str(v).replace(',', '.').replace('€', '').strip())
-                                if price_val < 10 or price_val > 2000:
+                                if price_val < 15 or price_val > 2000:
                                     price_val = None
                                 else:
                                     used_pk = orig_k
@@ -1493,18 +1409,51 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         brand_val = ''
                         for lk, (orig_k, v) in item_lc.items():
                             if any(sub in lk for sub in _BRAND_SUBSTRINGS) and v:
-                                brand_val = str(v).upper()
+                                brand_val = str(v).strip().upper()  # strip fixed-width padding
                                 break
+
+                        if not brand_val:
+                            # No brand field → not a tire product (promotions, filters, etc.)
+                            _parse_api_json(item, depth + 1)
+                            continue
 
                         model_val = ''
                         for lk, (orig_k, v) in item_lc.items():
                             if any(sub in lk for sub in _MODEL_SUBSTRINGS) and v:
-                                model_val = str(v)
+                                model_val = str(v).strip()  # strip fixed-width padding
                                 break
 
+                        # Extract load/speed index using suffix matching only (avoids false positives
+                        # from field names like 'clasificacion_orden' that contain 'ic' as substring)
+                        # AR_CARGA='91' + AR_VELOCIDAD='V' → indice='91V'
+                        ic_val = cv_val = ''
+                        for lk, (orig_k, v) in item_lc.items():
+                            if any(lk == suf.lstrip('_') or lk.endswith(suf)
+                                   for suf in _IC_FIELD_SUFFIXES) and v is not None:
+                                _s = str(v).strip()
+                                if _s.isdigit():
+                                    ic_val = _s
+                                    break  # only break on success
+                        for lk, (orig_k, v) in item_lc.items():
+                            if any(lk == suf.lstrip('_') or lk.endswith(suf)
+                                   for suf in _CV_FIELD_SUFFIXES) and v is not None:
+                                _s = str(v).strip().upper()
+                                if len(_s) == 1 and _s.isalpha():
+                                    cv_val = _s
+                                    break  # only break on success
+                        indice_val = (ic_val + cv_val).strip()
+                        # Fallback: regex on model text e.g. "PRIMACY 4 91H XL"
+                        if not indice_val and model_val:
+                            _m = _re_idx.search(r'\b(\d{2,3}[A-Z])(?:\s+XL)?\b', model_val.upper())
+                            if _m:
+                                indice_val = _m.group(0).strip()
+
                         print(f"  [Soledad] API product: brand={brand_val!r} "
-                              f"model={model_val[:40]!r} price={price_val} (field={used_pk})")
-                        products.append({'brand': brand_val, 'model': model_val, 'price': price_val})
+                              f"model={model_val[:40]!r} price={price_val} "
+                              f"ic={ic_val!r} cv={cv_val!r} indice={indice_val!r} "
+                              f"(field={used_pk})")
+                        products.append({'brand': brand_val, 'model': model_val,
+                                         'price': price_val, 'indice': indice_val})
                     else:
                         _parse_api_json(item, depth + 1)
             elif isinstance(data, dict):
@@ -1536,6 +1485,35 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
 
         if products:
             print(f"  [Soledad] {len(products)} products from API interception")
+            # Print first 3 products with all fields so we can verify index extraction
+            for _p in products[:3]:
+                print(f"  [Soledad] DIAG product: {_p}")
+
+        # Print first raw item from the largest response — shows ALL field names+values
+        # Placed AFTER products so it appears at the end of the log (visible in Railway)
+        _diag_printed = False
+        for _r in sorted(api_responses, key=lambda x: len(x['body']), reverse=True)[:3]:
+            try:
+                _d = json.loads(_r['body'])
+                def _first_list_item(obj, d=0):
+                    if d > 4: return None
+                    if isinstance(obj, list):
+                        for _x in obj:
+                            if isinstance(_x, dict) and len(_x) > 3:
+                                return _x
+                    if isinstance(obj, dict):
+                        for _v in obj.values():
+                            _r2 = _first_list_item(_v, d+1)
+                            if _r2: return _r2
+                    return None
+                _sample = _first_list_item(_d)
+                if _sample and not _diag_printed:
+                    print(f"  [Soledad] DIAG first item from {_r['url'].split('?')[0][-50:]}:")
+                    for _k, _v in list(_sample.items())[:30]:
+                        print(f"    {_k}={_v!r}")
+                    _diag_printed = True
+            except Exception:
+                pass
         else:
             # Secondary: DOM extraction
             print(f"  [Soledad] No API products — trying DOM extraction")
@@ -1628,6 +1606,12 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                 p['brand'] = b
             if m:
                 p['model'] = m
+
+        # Discard products with empty model — DOM sometimes picks up brand near a stock/promo number
+        before_filter = len(products)
+        products = [p for p in products if p.get('model', '').strip()]
+        if len(products) < before_filter:
+            print(f"  [Soledad] Dropped {before_filter - len(products)} no-model products")
 
         if products:
             print(f"  [Soledad] {len(products)} products after brand expansion")
@@ -2650,105 +2634,341 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
     return products
 
 
-async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str) -> dict:
-    """Scrape Pneus Cruzeiro"""
+async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
+                               url_login: str = "https://www.pneuscruzeiro.pt/pt/login",
+                               url_search: str = "https://www.pneuscruzeiro.pt/pt/privatearea",
+                               skip_login: bool = False,
+                               marca: str = '') -> dict:
+    """Scrape Pneus Cruzeiro B2B portal (pneuscruzeiro.pt).
+
+    Login: POST https://www.pneuscruzeiro.pt/pt/login
+      - input[name="username"] (email), input[name="password"]
+      - reCAPTCHA invisible v2: o JS interceta o submit, resolve o captcha
+        e chama form.submit(). Basta clicar o botão e aguardar navegação.
+    Pesquisa: HTMX GET https://www.pneuscruzeiro.pt/pt/produtos-tabela-ajax
+      - campo: #campo_de_texto_para_pesquisar_os_produtos (name=prodssrchtxt)
+      - botão: #botao_iniciador_pesquisa_produtos
+      - resultados: tbody#contentor_linhas_tabela_produtos
+    Colunas da tabela:
+      0=Imagem  1=Fabricante  2=Produto  3=DOT  4=Stock  5=Etq  6=Qtd  7=Preço  8=PVP
+    Formato da coluna Produto: "PNEU MARCA MEDIDA MODELO ÍNDICE"
+      ex.: "PNEU MICHELIN 205/55R16 PRIMACY 5 91V"
+           → marca=MICHELIN, modelo=PRIMACY 5, índice=91V
+    """
     result = {
         "supplier": "Pneus Cruzeiro",
         "price": None,
         "error": None,
         "products": [],
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "medida": medida,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    
+
+    if not url_login:
+        url_login = "https://www.pneuscruzeiro.pt/pt/login"
+    if not url_search:
+        url_search = "https://www.pneuscruzeiro.pt/pt/privatearea"
+
+    medida_norm = normalize_medida(medida)  # ex: "2055516"
+    # Cruzeiro pesquisa por texto nas descrições ("PNEU MICHELIN 205/55R16 ..."),
+    # por isso precisa do formato "205/55R16" e não "2055516"
+    import re as _re_med
+    _m_fmt = _re_med.match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
+    medida_search = f"{_m_fmt.group(1)}/{_m_fmt.group(2)}R{_m_fmt.group(3)}" if _m_fmt else medida
+
+    def _save_debug(path: str, content: str):
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(content)
+        except Exception:
+            pass
+
     try:
-        print("  [Pneus Cruzeiro] Logging in...")
-        await page.goto("https://www.pneuscruzeiro.pt/", wait_until="networkidle", timeout=60000)
-        await asyncio.sleep(2)
-        
-        # Look for login button/link
-        login_link = page.locator('a:has-text("Login"), a:has-text("Entrar"), button:has-text("Login"), .login-link').first
-        if await login_link.count() > 0:
-            await login_link.click()
+        # ── LOGIN ────────────────────────────────────────────────────────────
+        if not skip_login:
+            print(f"  [Cruzeiro] A fazer login: {url_login}")
+            await page.goto(url_login, wait_until="networkidle", timeout=60000)
             await asyncio.sleep(2)
-        
-        # Fill login form
-        email_input = page.locator('input[type="email"], input[name="email"], input[name="username"]').first
-        if await email_input.count() > 0:
-            await email_input.fill(username)
-        
-        password_input = page.locator('input[type="password"]').first
-        if await password_input.count() > 0:
-            await password_input.fill(password)
-        
-        # Submit login
-        submit_btn = page.locator('button[type="submit"], input[type="submit"]').first
-        if await submit_btn.count() > 0:
-            await submit_btn.click()
-        await asyncio.sleep(5)
-        
-        # Search for tires
-        medida_norm = normalize_medida(medida)
-        print(f"  [Pneus Cruzeiro] Searching for: {medida_norm}")
-        
-        # Navigate to tires section
-        tyres_link = page.locator('a:has-text("Pneus"), a:has-text("Catálogo")').first
-        if await tyres_link.count() > 0:
-            await tyres_link.click()
-            await asyncio.sleep(3)
-        
-        search_input = page.locator('input[type="search"], input[placeholder*="pesq"], input[name*="search"], #search').first
-        if await search_input.count() > 0:
-            await search_input.fill(medida_norm)
-            await search_input.press('Enter')
-            await asyncio.sleep(5)
-        
-        # Extract products
-        products = await page.evaluate('''() => {
-            const products = [];
-            const items = document.querySelectorAll('.product, .item, [class*="product"], [class*="item"]');
-            
-            items.forEach(item => {
-                const text = item.textContent || '';
-                const priceMatch = text.match(/(\d+[,\.]\d{2})\s*€|€\s*(\d+[,\.]\d{2})/);
-                
-                if (priceMatch) {
-                    const priceStr = priceMatch[1] || priceMatch[2];
-                    const price = parseFloat(priceStr.replace(',', '.'));
-                    
-                    const brandMatch = text.match(/(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|KUMHO|TOYO|NEXEN|FALKEN|NOKIAN|VREDESTEIN|MAXXIS)/i);
-                    
-                    if (price > 15 && price < 500) {
-                        products.push({
-                            brand: brandMatch ? brandMatch[1].toUpperCase() : 'UNKNOWN',
-                            model: '',
-                            price: price
-                        });
-                    }
-                }
-            });
-            
-            return products;
-        }''')
-        
-        if products and len(products) > 0:
-            result["products"] = products
-            prices = [p['price'] for p in products]
-            result["price"] = min(prices)
-            result["all_prices"] = sorted(prices)[:10]
-            print(f"  [Pneus Cruzeiro] Found {len(products)} products")
-        else:
-            content = await page.content()
-            prices = extract_prices(content)
-            if prices:
-                result["price"] = min(prices)
-                result["all_prices"] = sorted(prices)[:10]
+            _save_debug('/tmp/cruzeiro_pre_login.html', await page.content())
+
+            # Verificar se já autenticado (sessão activa)
+            if 'privatearea' not in page.url:
+                # Preencher email e password com digitação lenta (ajuda reCAPTCHA)
+                await page.focus('input[name="username"]')
+                await asyncio.sleep(0.5)
+                await page.type('input[name="username"]', username, delay=80)
+                await asyncio.sleep(0.3)
+                await page.focus('input[name="password"]')
+                await asyncio.sleep(0.3)
+                await page.type('input[name="password"]', password, delay=80)
+                await asyncio.sleep(0.5)
+
+                # ATENÇÃO: A página tem 2 botões button[type="submit"]:
+                #   1. "Área Reservada" no cabeçalho (GET form → /pt/privatearea)
+                #   2. "Login" no formulário #ew_form_logincliente (POST → /pt/login)
+                # Selector específico para o botão correcto — dentro do formulário de login.
+                login_btn = page.locator('#ew_form_logincliente button[type="submit"]').first
+                await login_btn.click()
+                print(f"  [Cruzeiro] Botão de login clicado; aguardar reCAPTCHA + navegação...")
+
+                # Aguardar até 45s para o reCAPTCHA invisible resolver e a navegação ocorrer
+                # O reCAPTCHA invisible v2 pode demorar até ~10s em headless
+                try:
+                    await page.wait_for_url(
+                        lambda url: 'privatearea' in url,
+                        timeout=45000,
+                    )
+                except Exception:
+                    # Pode ter navegado mas não para privatearea — verificar abaixo
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=15000)
+                    except Exception:
+                        pass
+
+                await asyncio.sleep(2)
+                current_url = page.url
+                print(f"  [Cruzeiro] URL após login: {current_url}")
+                _save_debug('/tmp/cruzeiro_after_login.html', await page.content())
+
+                if 'privatearea' not in current_url.lower():
+                    result["error"] = (
+                        f"Login falhou — URL após submit: {current_url}. "
+                        "Possível bloqueio de reCAPTCHA em modo headless."
+                    )
+                    return result
             else:
-                result["error"] = "No products found"
-                
+                print(f"  [Cruzeiro] Já autenticado, a ignorar login.")
+
+        # ── PESQUISA ─────────────────────────────────────────────────────────
+        search_tab_url = url_search.rstrip('?&') + '?tab=produtos'
+        print(f"  [Cruzeiro] Navegando para pesquisa: {search_tab_url}")
+        await page.goto(search_tab_url, wait_until="networkidle", timeout=60000)
+        await asyncio.sleep(3)
+
+        # Verificar redireccção para login (sessão expirada)
+        if 'login' in page.url.lower():
+            result["error"] = "Sessão expirada — redireccionado para login"
+            return result
+
+        # Verificar campo de pesquisa
+        search_field = page.locator('#campo_de_texto_para_pesquisar_os_produtos')
+        if await search_field.count() == 0:
+            result["error"] = "Campo de pesquisa não encontrado (#campo_de_texto_para_pesquisar_os_produtos)"
+            _save_debug('/tmp/cruzeiro_search_page.html', await page.content())
+            return result
+
+        await search_field.fill(medida_search)
+        print(f"  [Cruzeiro] Pesquisar: {medida_search!r} (norm={medida_norm})")
+
+        # Selecionar fabricante no dropdown FABRICANTE (se especificado)
+        if marca:
+            try:
+                # O dropdown FABRICANTE está junto ao campo de pesquisa
+                selected = await page.evaluate(f'''() => {{
+                    const selects = document.querySelectorAll('select');
+                    for (const sel of selects) {{
+                        for (const opt of sel.options) {{
+                            if (opt.text.trim().toUpperCase() === {marca.upper()!r}) {{
+                                sel.value = opt.value;
+                                sel.dispatchEvent(new Event('change', {{bubbles: true}}));
+                                return opt.text.trim();
+                            }}
+                        }}
+                    }}
+                    return null;
+                }}''')
+                if selected:
+                    print(f"  [Cruzeiro] Fabricante seleccionado: {selected!r}")
+                else:
+                    print(f"  [Cruzeiro] Fabricante {marca!r} não encontrado no dropdown")
+            except Exception as _e_fab:
+                print(f"  [Cruzeiro] Erro ao seleccionar fabricante: {_e_fab}")
+
+        # Clicar no botão de pesquisa → dispara HTMX para produtos-tabela-ajax
+        search_btn = page.locator('#botao_iniciador_pesquisa_produtos')
+        if await search_btn.count() > 0:
+            try:
+                async with page.expect_response(
+                    lambda r: 'produtos-tabela-ajax' in r.url,
+                    timeout=20000,
+                ) as resp_info:
+                    await search_btn.click()
+                await resp_info.value  # garantir que a resposta foi totalmente recebida
+                await asyncio.sleep(2)
+            except Exception as e_htmx:
+                print(f"  [Cruzeiro] HTMX wait falhou ({e_htmx}); aguardar networkidle...")
+                await page.wait_for_load_state("networkidle", timeout=15000)
+                await asyncio.sleep(2)
+        else:
+            await search_field.press('Enter')
+            await page.wait_for_load_state("networkidle", timeout=15000)
+            await asyncio.sleep(2)
+
+        content = await page.content()
+        _save_debug('/tmp/cruzeiro_results.html', content)
+        print(f"  [Cruzeiro] Resultados carregados (content length: {len(content)})")
+
+        # ── EXTRACÇÃO DE PRODUTOS (com paginação) ────────────────────────────
+        # Tabela com colunas:
+        #   0=Imagem  1=Fabricante  2=Produto  3=DOT  4=Stock  5=Etq  6=Qtd  7=Preço  8=PVP
+        # Formato Produto: "PNEU MICHELIN 205/55R16 PRIMACY 5 91V"
+        _EXTRACT_JS = r'''() => {
+            const rows = document.querySelectorAll('#contentor_linhas_tabela_produtos tr');
+            const products = [];
+
+            for (const row of rows) {
+                const cells = row.querySelectorAll('td');
+                if (cells.length < 8) continue;
+
+                let brand = '', model = '', price = null;
+
+                // ── Coluna Fabricante (índice 1) — fonte primária da marca ──
+                // Contém o nome do fabricante como texto ou alt da imagem
+                const fabTxt = cells[1].textContent.trim().replace(/\s+/g, ' ').toUpperCase();
+                const fabImg = cells[1].querySelector('img');
+                const fabAlt = fabImg ? (fabImg.alt || fabImg.title || '').trim().toUpperCase() : '';
+                brand = fabTxt || fabAlt;
+
+                // ── Coluna Produto (índice 2) — fonte do modelo ────────────
+                // Formato: "PNEU MARCA MEDIDA MODELO ÍNDICE"
+                // ex.: "PNEU MICHELIN 205/55R16 PRIMACY 5 91V"
+                const produtoTxt = cells[2].textContent.trim().replace(/\s+/g, ' ');
+                let txt = produtoTxt.replace(/^PNEU\s+/i, '');
+                const parts = txt.split(' ');
+
+                // Se coluna Fabricante estava vazia, extrair marca do Produto (fallback)
+                if (!brand && parts.length >= 1) {
+                    brand = parts[0].toUpperCase();
+                    parts.shift();
+                }
+
+                // Saltar token que parece medida (ex: "205/55R16")
+                if (parts.length > 0 && /\d{3}[\/]\d{2}[Rr]\d{2}/.test(parts[0])) {
+                    parts.shift();
+                }
+
+                // Modelo = tudo antes do primeiro índice de velocidade (ex: "91V", "94W XL")
+                // Estratégia: juntar os parts e cortar na primeira ocorrência de \d{2,3}[A-Z]
+                // ex: "RPX-800 91V (COM PROT JANTE)" → "RPX-800"
+                // ex: "DIMAX TOURING 94V XL FP (EVC)" → "DIMAX TOURING"
+                // ex: "PRIMACY 5 91V" → "PRIMACY 5"
+                const remainingStr = parts.join(' ');
+                const idxMatch = remainingStr.match(/\b\d{2,3}[A-Z]{1,2}\b/);
+                model = (idxMatch ? remainingStr.slice(0, idxMatch.index) : remainingStr).trim();
+
+                // ── Coluna Preço (índice 7) ───────────────────────────────
+                const precoTxt = cells[7].textContent.trim();
+                const m = precoTxt.match(/(\d+[,.]\d{2})/);
+                if (m) price = parseFloat(m[1].replace(',', '.'));
+
+                // DEBUG: emitir sempre para diagnóstico
+                products.push({
+                    brand, model, price,
+                    _raw_fabricante: fabTxt,
+                    _raw_produto: produtoTxt,
+                    _raw_preco: precoTxt,
+                });
+            }
+            return products;
+        }'''
+
+        products = await page.evaluate(_EXTRACT_JS)
+        print(f"  [Cruzeiro] Página 1: {len(products)} linhas extraídas")
+        for _dbg in products[:20]:
+            print(f"  [Cruzeiro DEBUG] fab={_dbg.get('_raw_fabricante','?')!r:20} | produto={_dbg.get('_raw_produto','?')!r:60} | brand={_dbg.get('brand','?')!r:15} | model={_dbg.get('model','?')!r:30} | price={_dbg.get('price')}")
+
+        # ── Paginação: clicar "próxima página" até não haver mais ────────────
+        _page_num = 1
+        _MAX_PAGES = 10
+        while _page_num < _MAX_PAGES:
+            # Detectar botão de próxima página (seta direita / próximo)
+            _next_sel = (
+                'a[aria-label*="próxima" i], a[aria-label*="next" i], '
+                'a[title*="próxima" i], a[title*="next" i], '
+                'li.next:not(.disabled) a, '
+                '.pagination a[rel="next"], '
+                'a.proxima-pagina, button.proxima-pagina, '
+                '[id*="proxima_pagina"], [id*="next_page"], '
+                'a:has(> i.fa-chevron-right), a:has(> i.fa-angle-right), '
+                'a:has(> span:text-is("›")), a:has(> span:text-is("»")), '
+                'button:has(> i.fa-chevron-right)'
+            )
+            try:
+                _next_btn = page.locator(_next_sel).first
+                _btn_count = await _next_btn.count()
+                if _btn_count == 0:
+                    break
+                _is_disabled = await _next_btn.get_attribute('disabled')
+                _parent_class = await _next_btn.evaluate('el => el.closest("li")?.className || ""')
+                if _is_disabled or 'disabled' in _parent_class:
+                    break
+            except Exception:
+                break
+
+            _page_num += 1
+            try:
+                async with page.expect_response(
+                    lambda r: 'produtos-tabela-ajax' in r.url,
+                    timeout=15000,
+                ) as _resp_pg:
+                    await _next_btn.click()
+                await _resp_pg.value
+                await asyncio.sleep(1)
+            except Exception as _e_pg:
+                # Sem HTMX response — tentar networkidle
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    pass
+
+            _new_prods = await page.evaluate(_EXTRACT_JS)
+            if not _new_prods:
+                break
+            print(f"  [Cruzeiro] Página {_page_num}: {len(_new_prods)} produtos")
+            products.extend(_new_prods)
+
+        print(f"  [Cruzeiro] Produtos extraídos (total {_page_num} pág.): {len(products)}")
+
+        # Limpar campos _raw_* usados apenas para debug
+        for p in products:
+            for k in list(p.keys()):
+                if k.startswith('_raw'):
+                    del p[k]
+
+        if products:
+            # Filtrar linhas sem preço válido
+            products = [p for p in products if p.get('price') and p['price'] > 5]
+            # Deduplicar por marca+modelo, manter preço mais baixo
+            seen = {}
+            for p in products:
+                key = f"{p.get('brand','')}|{p.get('model','')}"
+                if key not in seen or p['price'] < seen[key]['price']:
+                    seen[key] = p
+            products = list(seen.values())
+
+            result["products"] = products
+            prices_list = [p['price'] for p in products]
+            result["price"] = min(prices_list)
+            result["all_prices"] = sorted(prices_list)[:10]
+            print(f"  [Cruzeiro] {len(products)} produtos únicos. Melhor: €{result['price']}")
+            for p in sorted(products, key=lambda x: x['price'])[:5]:
+                print(f"    - {p.get('brand','-')} {p.get('model','-')}: €{p['price']}")
+        else:
+            # Fallback: regex de preços no HTML bruto
+            prices_list = extract_prices(content)
+            if prices_list:
+                result["price"] = min(prices_list)
+                result["all_prices"] = sorted(prices_list)[:10]
+                print(f"  [Cruzeiro] Fallback regex: {len(prices_list)} preços, melhor: €{result['price']}")
+            else:
+                result["error"] = "Nenhum produto encontrado — ver /tmp/cruzeiro_results.html"
+                print(f"  [Cruzeiro] {result['error']}")
+
     except Exception as e:
         result["error"] = str(e)
-        print(f"  [Pneus Cruzeiro] Error: {e}")
-    
+        print(f"  [Cruzeiro] ERRO: {e}")
+        import traceback; traceback.print_exc()
+
     return result
 
 # ============================================================
@@ -2868,11 +3088,17 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                 # Isto evita que um timeout/cancel numa medida corrompa o estado do browser.
                 _sol_first = True
                 _sol_relogin = False  # set True when session expires mid-scrape
+                _sol_medida_count = 0  # contador para re-login preventivo
                 for medida, marca, modelo in targets:
                     _sol_page = await _sol_ctx.new_page()
                     await _sol_page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
                     try:
-                        _is_first = _sol_first or _sol_relogin
+                        _sol_medida_count += 1
+                        # Re-login preventivo a cada 3 medidas para evitar expiração de sessão
+                        _preventive_relogin = (_sol_medida_count % 3 == 0) and not _sol_first
+                        _is_first = _sol_first or _sol_relogin or _preventive_relogin
+                        if _preventive_relogin:
+                            print(f"  [Soledad] Re-login preventivo (medida #{_sol_medida_count})")
                         _sol_first = False
                         _sol_relogin = False
                         _t0 = datetime.now()
@@ -2894,10 +3120,33 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         _dt = (datetime.now() - _t0).total_seconds()
                         print(f"  [Soledad] Fim medida {medida}: {_dt:.0f}s, price={result.get('price')}, products={len(result.get('products',[]))}")
 
-                        # Detect session expiry — next medida must re-login via b2b.current
+                        # Detect session expiry — retry CURRENT medida immediately with re-login
                         if 'session issue' in (result.get('error') or ''):
+                            print(f"  [Soledad] Sessão expirou em {medida} — retentando imediatamente com re-login")
+                            _sol_retry_page = await _sol_ctx.new_page()
+                            await _sol_retry_page.add_init_script(
+                                "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
+                            try:
+                                result = await asyncio.wait_for(
+                                    scrape_grupo_soledad(
+                                        _sol_retry_page,
+                                        supplier['username'], supplier['password'], medida,
+                                        _sol_url_login, _sol_url_search,
+                                        skip_login=False,  # forçar re-login
+                                    ),
+                                    timeout=180,  # mais tempo para login + pesquisa
+                                )
+                                _dt2 = (datetime.now() - _t0).total_seconds()
+                                print(f"  [Soledad] Retry medida {medida}: {_dt2:.0f}s, products={len(result.get('products',[]))}")
+                            except Exception as _retry_e:
+                                print(f"  [Soledad] Retry falhou ({medida}): {_retry_e}")
+                            finally:
+                                try:
+                                    await _sol_retry_page.close()
+                                except Exception:
+                                    pass
+                            # Próxima medida também deve re-autenticar (sessão pode ainda estar inválida)
                             _sol_relogin = True
-                            print(f"  [Soledad] Sessão expirou em {medida} — próxima medida irá re-autenticar")
 
                         result["medida"] = medida
                         results.append(result)
@@ -2947,6 +3196,135 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         except Exception:
                             pass
                 await _sol_browser.close()
+            # Sumário compacto de todos os resultados Soledad (visível no fim dos logs)
+            _sol_summary = []
+            for _r in results:
+                if _r.get('supplier', '').lower().startswith('grupo'):
+                    _m = _r.get('medida', '?')
+                    _np = len(_r.get('products', []))
+                    _err = _r.get('error') or ''
+                    _sol_summary.append(f"{_m}:{_np}p{'(ERR)' if _err else ''}")
+            print(f"  [Soledad] RESUMO: {' | '.join(_sol_summary)}")
+            continue  # Skip the generic per-medida loop below
+
+        # ── Pneus Cruzeiro: sessão única para todas as medidas ──────────────
+        # Login só uma vez (reCAPTCHA invisible resolve automaticamente);
+        # cada medida usa uma página nova no mesmo contexto autenticado.
+        if 'cruzeiro' in supplier_name:
+            _crz_ctx_kwargs = dict(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1920, 'height': 1080},
+                locale='pt-PT',
+            )
+            _crz_url_login  = supplier.get('url_login')  or 'https://www.pneuscruzeiro.pt/pt/login'
+            _crz_url_search = supplier.get('url_search') or 'https://www.pneuscruzeiro.pt/pt/privatearea'
+
+            # Targets Cruzeiro: um por (medida, marca) — dedupados
+            # O site tem dropdown FABRICANTE, por isso pesquisamos por marca separadamente
+            _crz_pairs: list = []
+            _crz_seen_pairs: set = set()
+            for _m in medidas:
+                _brands = {bi['marca'].upper() for bi in medida_items.get(_m, []) if bi.get('marca')}
+                if _brands:
+                    for _b in sorted(_brands):
+                        if (_m, _b) not in _crz_seen_pairs:
+                            _crz_seen_pairs.add((_m, _b))
+                            _crz_pairs.append((_m, _b))
+                else:
+                    if (_m, '') not in _crz_seen_pairs:
+                        _crz_seen_pairs.add((_m, ''))
+                        _crz_pairs.append((_m, ''))
+            print(f"  [Cruzeiro] {len(_crz_pairs)} pesquisas (medida+fabricante): {_crz_pairs[:8]}")
+
+            async with async_playwright() as _p_crz:
+                _crz_browser = await _p_crz.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox',
+                          '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                )
+                _crz_ctx   = await _crz_browser.new_context(**_crz_ctx_kwargs)
+                _crz_first = True
+                _crz_summary = []
+
+                for medida, marca in _crz_pairs:
+                    _crz_page = await _crz_ctx.new_page()
+                    await _crz_page.add_init_script(
+                        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+                    )
+                    try:
+                        result = await asyncio.wait_for(
+                            scrape_pneus_cruzeiro(
+                                _crz_page,
+                                supplier['username'], supplier['password'],
+                                medida,
+                                _crz_url_login, _crz_url_search,
+                                skip_login=(not _crz_first),
+                                marca=marca,
+                            ),
+                            timeout=150,
+                        )
+                        _crz_first = False
+                        result["medida"] = medida
+                        results.append(result)
+
+                        # ── Guardar na BD ──────────────────────────────────
+                        products = result.get('products', [])
+                        now = datetime.now(timezone.utc)
+                        conn_save = await _pg_connect()
+                        try:
+                            if products:
+                                marcas_enc = {p.get('brand', '').upper() for p in products}
+                                for m_brand in marcas_enc:
+                                    await conn_save.execute(
+                                        """DELETE FROM scraped_prices
+                                           WHERE supplier_name=$1 AND medida=$2
+                                             AND COALESCE(marca,'')=$3""",
+                                        supplier['name'], medida, m_brand,
+                                    )
+                                for prod in products:
+                                    await conn_save.execute(
+                                        """INSERT INTO scraped_prices
+                                               (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
+                                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        prod.get('brand', '').upper(),
+                                        prod.get('model', ''),
+                                        prod.get('price'), '', now,
+                                    )
+                                print(f"  [Cruzeiro] {medida}: guardados {len(products)} produtos")
+                            else:
+                                await conn_save.execute(
+                                    "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2 AND marca IS NULL",
+                                    supplier['name'], medida,
+                                )
+                                if result.get('price') is not None:
+                                    await conn_save.execute(
+                                        """INSERT INTO scraped_prices
+                                               (id, supplier_name, medida, price, scraped_at)
+                                           VALUES ($1,$2,$3,$4,$5)""",
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        result['price'], now,
+                                    )
+                                print(f"  [Cruzeiro] {medida}: €{result.get('price')} (sem dados marca)")
+                        finally:
+                            await conn_save.close()
+
+                        _err = result.get('error') or ''
+                        _np  = len(result.get('products', []))
+                        _crz_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+
+                    except asyncio.TimeoutError:
+                        print(f"  [Cruzeiro] Timeout em {medida}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                        _crz_summary.append(f"{medida}:TIMEOUT")
+                    except Exception as e:
+                        print(f"  [Cruzeiro] Erro em {medida}: {e}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(e)})
+                        _crz_summary.append(f"{medida}:ERR")
+                    finally:
+                        await _crz_page.close()
+
+                print(f"  [Cruzeiro] RESUMO: {' | '.join(_crz_summary)}")
             continue  # Skip the generic per-medida loop below
 
         for medida, marca, modelo in targets:
@@ -2994,7 +3372,10 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     elif 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:
                         result = await scrape_inter_sprint(page, supplier['username'], supplier['password'], medida, marca, modelo)
                     elif 'cruzeiro' in supplier_name:
-                        result = await scrape_pneus_cruzeiro(page, supplier['username'], supplier['password'], medida)
+                        result = await scrape_pneus_cruzeiro(
+                            page, supplier['username'], supplier['password'], medida,
+                            supplier.get('url_login', ''), supplier.get('url_search', ''),
+                        )
                     else:
                         result = {"supplier": supplier['name'], "price": None, "error": "Adapter not implemented"}
                     

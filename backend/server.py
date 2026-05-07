@@ -509,28 +509,41 @@ async def get_job_results(job_id: str):
     return rs
 
 
-@api_router.post("/jobs/{job_id}/compare")
-async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
+async def _compare_background(job_id: str, force: bool):
     """
-    Compara itens do job com preços raspados — matching hierárquico 3 níveis:
-    Nível 1: medida + marca + modelo
-    Nível 2: medida + marca
-    Nível 3: medida apenas
+    Tarefa em background: scrape + compare.
+    Atualiza o status do job na BD quando termina (completed/failed).
+    """
+    import re
+    try:
+        await _do_compare(job_id, force)
+    except Exception as e:
+        logger.error(f"Compare background falhou para job {job_id}: {e}", exc_info=True)
+        try:
+            pool = await get_db()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE jobs SET status='failed', error_message=$2, completed_at=$3 WHERE id=$1",
+                    job_id, str(e), datetime.now(timezone.utc),
+                )
+        except Exception:
+            pass
 
-    force=true → apaga cache e re-scrape todas as medidas (verifica stock/preço actual)
-    """
+
+async def _do_compare(job_id: str, force: bool):
+    """Lógica principal de scrape + compare (chamada em background ou directamente)."""
     import re
 
     pool = await get_db()
     async with pool.acquire() as conn:
         job = row(await conn.fetchrow("SELECT * FROM jobs WHERE id = $1", job_id))
         if not job:
-            raise HTTPException(status_code=404, detail="Job not found")
+            raise ValueError(f"Job {job_id} não encontrado")
         items = rows(await conn.fetch(
             "SELECT * FROM job_items WHERE job_id = $1", job_id
         ))
         if not items:
-            raise HTTPException(status_code=400, detail="No items found in job")
+            raise ValueError("Sem itens no job")
 
         def _norm_medida(m: str) -> str:
             return m.replace('/', '').replace('R', '').replace('r', '')
@@ -641,38 +654,53 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                     stale_cutoff,
                 )
         items_json = json.dumps([{"medida": m, "marca": b} for m, b in pairs_sem_dados])
-        logger.info(f"A correr scraper para {len(pairs_sem_dados)} pares medida+marca...")
         env = os.environ.copy()
         env['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
         medidas_str = ','.join(medidas_sem_dados)
-        proc = await asyncio.create_subprocess_exec(
-            'python3', '/app/backend/run_scraper.py',
-            '--medidas', medidas_str,
-            '--items-json', items_json,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            env=env,
-            cwd='/app/backend',
-        )
-        try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=1800)
-            out_str = stdout.decode()
-            head = out_str[:1500]
-            tail = out_str[-1500:] if len(out_str) > 1500 else ""
-            logger.info(f"Scraper concluído. Output início:\n{head}")
-            if tail:
-                logger.info(f"Scraper concluído. Output fim:\n{tail}")
-        except asyncio.TimeoutError:
-            proc.kill()
+
+        # Obter lista de fornecedores activos para lançar um processo por fornecedor em paralelo
+        pool_sup = await get_db()
+        async with pool_sup.acquire() as conn_sup:
+            active_suppliers = rows(await conn_sup.fetch(
+                "SELECT name FROM suppliers WHERE is_active = TRUE ORDER BY name"
+            ))
+        supplier_names = [s['name'] for s in active_suppliers]
+        logger.info(f"A correr scraper em paralelo para {len(supplier_names)} fornecedores, "
+                    f"{len(medidas_sem_dados)} medidas...")
+
+        async def _run_supplier_proc(sup_name: str):
+            """Lança run_scraper.py filtrado para um único fornecedor e aguarda conclusão."""
+            proc = await asyncio.create_subprocess_exec(
+                'python3', '/app/backend/run_scraper.py',
+                '--supplier', sup_name,
+                '--medidas', medidas_str,
+                '--items-json', items_json,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env=env,
+                cwd='/app/backend',
+            )
             try:
-                out, _ = await proc.communicate()
-                out_str = out.decode()
-                logger.warning(f"Scraper timeout. Output início:\n{out_str[:1500]}")
-                if len(out_str) > 1500:
-                    logger.warning(f"Scraper timeout. Output fim:\n{out_str[-1500:]}")
-            except Exception:
-                logger.warning("Scraper timeout após 30 minutos (sem output)")
-            scraper_timed_out = True
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=1200)
+                out_str = stdout.decode()
+                head = out_str[:2000]
+                tail = out_str[-1000:] if len(out_str) > 2000 else ""
+                logger.info(f"[{sup_name}] Scraper concluído.\n{head}")
+                if tail:
+                    logger.info(f"[{sup_name}] ...fim:\n{tail}")
+                return False  # não houve timeout
+            except asyncio.TimeoutError:
+                proc.kill()
+                try:
+                    out, _ = await proc.communicate()
+                    logger.warning(f"[{sup_name}] Scraper timeout. Output:\n{out.decode()[:2000]}")
+                except Exception:
+                    logger.warning(f"[{sup_name}] Scraper timeout (sem output)")
+                return True  # houve timeout
+
+        # Correr todos os fornecedores em simultâneo; aguardar que todos terminem
+        timeout_flags = await asyncio.gather(*[_run_supplier_proc(n) for n in supplier_names])
+        scraper_timed_out = any(timeout_flags)
 
     pool = await get_db()
     async with pool.acquire() as conn:
@@ -693,14 +721,63 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
         m = sp.get('medida', '')
         prices_by_medida.setdefault(m, []).append(sp)
 
+    # Diagnóstico: logar o que está na BD por medida (ajuda a perceber "sem dados")
+    for _m, _ps in prices_by_medida.items():
+        _marca_counts: Dict[str, int] = {}
+        for _p in _ps:
+            _mc = (_p.get('marca') or '').strip().upper() or '(sem marca)'
+            _marca_counts[_mc] = _marca_counts.get(_mc, 0) + 1
+        logger.info(f"[compare diag] medida={_m} total={len(_ps)} marcas={_marca_counts}")
+
+    # indiceneg: funções de índice definidas uma vez fora do loop
+    def _index_matches(scraped_idx: str, want_idx: str) -> bool:
+        # indiceneg: índice irrelevante — sempre verdadeiro
+        return True
+
+    def _with_index_generic(candidates):
+        # indiceneg: sem filtro de índice
+        return candidates
+
+    def _sort_priority(x):
+        # indiceneg: ordenar apenas pelo preço mais baixo
+        return x.get('price', 999999)
+
     updated_count = found_count = matched_count = 0
     total_savings = 0.0
     bulk_updates = []
+
+    def _index_matches(scraped_idx: str, want_idx: str) -> bool:
+        """True if the scraped load/speed index satisfies the requested index.
+
+        The Soledad API only returns the speed category letter (e.g. 'H', 'V', 'W').
+        The Excel has the full combined index (e.g. '94H', '91V', '95W XL').
+        We extract the speed letter from whichever side has the full form and compare.
+        """
+        if not want_idx:
+            return True
+        s = (scraped_idx or '').upper().strip()
+        w = want_idx.upper().strip()
+        if not s:
+            return False
+        # Exact, or scraped starts with wanted ("94H XL" satisfies want "94H")
+        if s == w or s.startswith(w):
+            return True
+        # Scraped has only the speed letter (e.g. 'H') — extract it from wanted ('94H' → 'H')
+        _speed_m = re.match(r'^\d{2,3}([A-Z])', w)
+        if _speed_m and s == _speed_m.group(1):
+            return True
+        # Wanted has only the speed letter ('H') — extract from scraped ('91H' → 'H')
+        if len(w) == 1 and w.isalpha():
+            _speed_m2 = re.match(r'^\d{2,3}([A-Z])', s)
+            if _speed_m2 and _speed_m2.group(1) == w:
+                return True
+        return False
 
     for item in items:
         medida_norm = item['medida'].replace('/', '').replace('R', '').replace('r', '')
         marca_norm  = (item.get('marca')  or '').strip().upper()
         modelo_norm = (item.get('modelo') or '').strip().upper()
+        indice_norm = (item.get('indice') or '').strip().upper()
 
         scraped = []
         match_type = None
@@ -711,60 +788,75 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
 
         if medida_prices:
             if marca_norm and modelo_norm:
-                marca_prices = [p for p in medida_prices if (p.get('marca') or '').upper() == marca_norm]
+                marca_prices = [p for p in medida_prices if (p.get('marca') or '').strip().upper() == marca_norm]
                 if marca_prices:
-                    # Level 1: exact match
+                    # Nível 1a: modelo exato (descrição = modelo pedido)
+                    # Sem filtro de índice — o modelo já identifica o produto exacto
                     pat_exact = re.compile(f"^{re.escape(modelo_norm)}$", re.IGNORECASE)
-                    scraped = [p for p in marca_prices if pat_exact.match(p.get('modelo') or '')]
+                    candidates = [p for p in marca_prices if pat_exact.match(p.get('modelo') or '')]
+                    scraped = candidates  # sem _with_index_generic aqui
                     if scraped:
                         match_type = "modelo_exato"
-                    else:
-                        # Level 2: scraped description ends with the user's model name
-                        # e.g. user="crossclimate 2", scraped="MICHELIN 205/55R16 91W CROSSCLIMATE 2"
-                        # Also handles "CROSSCLIMATE 2 XL" (model + suffix like XL/SUV/etc)
+
+                    if not scraped:
+                        # Nível 1b: descrição termina com o modelo pedido
                         pat_end = re.compile(
                             r'(?:^|\s)' + re.escape(modelo_norm) + r'(\s+\w+)?$',
                             re.IGNORECASE
                         )
-                        scraped = [p for p in marca_prices if pat_end.search(p.get('modelo') or '')]
+                        candidates = [p for p in marca_prices if pat_end.search(p.get('modelo') or '')]
+                        scraped = candidates
                         if scraped:
                             match_type = "modelo_exato"
-                        else:
-                            # Level 3: model name at start of description
-                            pat_start = re.compile(f"^{re.escape(modelo_norm)}(\\s|$)", re.IGNORECASE)
-                            scraped = [p for p in marca_prices if pat_start.match(p.get('modelo') or '')]
-                            if scraped:
-                                match_type = "modelo_parcial"
-                            else:
-                                # Level 4: model name anywhere in description
-                                pat_contains = re.compile(re.escape(modelo_norm), re.IGNORECASE)
-                                scraped = [p for p in marca_prices if pat_contains.search(p.get('modelo') or '')]
-                                if scraped:
-                                    match_type = "modelo_parcial"
+
+                    if not scraped:
+                        # Nível 1c: modelo parcial — nome no início da descrição
+                        pat_start = re.compile(f"^{re.escape(modelo_norm)}(\\s|$)", re.IGNORECASE)
+                        candidates = [p for p in marca_prices if pat_start.match(p.get('modelo') or '')]
+                        scraped = candidates
+                        if scraped:
+                            match_type = "modelo_parcial"
+
+                    if not scraped:
+                        # Nível 1d: modelo parcial — nome em qualquer parte da descrição
+                        pat_contains = re.compile(re.escape(modelo_norm), re.IGNORECASE)
+                        candidates = [p for p in marca_prices if pat_contains.search(p.get('modelo') or '')]
+                        scraped = candidates
+                        if scraped:
+                            match_type = "modelo_parcial"
+
+            # Nível 2: sem modelo — qualquer produto da mesma marca com o índice certo
+            # Aqui aplica-se o filtro de índice: sem modelo identificador, não mostrar
+            # produtos onde não sabemos se o índice é o correcto.
+            if not scraped and marca_norm:
+                marca_prices = [p for p in medida_prices if (p.get('marca') or '').strip().upper() == marca_norm]
+                scraped = _with_index_generic(marca_prices)
+                if scraped:
+                    match_type = "marca"
 
             if not scraped and marca_norm:
-                marca_prices = [p for p in medida_prices if (p.get('marca') or '').upper() == marca_norm]
-                print(f"[CRZ-CASCADE] após filtro marca: {len(marca_prices)} resultados")
-                if marca_prices:
-                    scraped = marca_prices
-                    match_type = "marca"
-                else:
-                    pat_marca = re.compile(f"^{marca_norm.replace(' ', '.*')}$", re.IGNORECASE)
-                    scraped = [p for p in medida_prices if pat_marca.match(p.get('marca') or '')]
-                    if scraped:
-                        match_type = "marca_parcial"
+                # Nível 2b: marca parcial (ex: "MICH" → "MICHELIN")
+                pat_marca = re.compile(f"^{marca_norm.replace(' ', '.*')}$", re.IGNORECASE)
+                marca_parcial = [p for p in medida_prices if pat_marca.match(p.get('marca') or '')]
+                scraped = _with_index_generic(marca_parcial)
+                if scraped:
+                    match_type = "marca_parcial"
 
+            # Nível 3: sem marca correspondente — mostra melhor preço da medida como referência
+            # (match_type="medida" → status="no_brand_match", sem cálculo de poupança)
             if not scraped:
-                scraped = medida_prices
-                match_type = "medida"
+                scraped = _with_index_generic(medida_prices)
+                if scraped:
+                    match_type = "medida"
 
         if scraped:
-            scraped = sorted(scraped, key=lambda x: x.get('price', 999999))
+            scraped = sorted(scraped, key=_sort_priority)
             best = scraped[0]
             best_price    = best['price']
             best_supplier = best['supplier_name']
             best_marca    = best.get('marca', '')
             best_modelo   = best.get('modelo', '')
+            best_indice   = best.get('load_index', '')
             meu_preco     = item.get('meu_preco', 0)
             sup_prices = {}
             for s in scraped:
@@ -791,7 +883,7 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
 
             bulk_updates.append((
                 item['id'], best_price, best_supplier, best_marca, best_modelo,
-                match_type,
+                best_indice, match_type,
                 round(economia_euro, 2) if economia_euro is not None else None,
                 round(economia_percent, 2) if economia_percent is not None else None,
                 sup_prices,
@@ -804,25 +896,25 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
                 total_savings += economia_euro
         else:
             bulk_updates.append((
-                item['id'], None, None, None, None, "sem_dados",
+                item['id'], None, None, None, None, None, "sem_dados",
                 None, None, {}, "no_data",
             ))
             updated_count += 1
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            for u in bulk_updates:
-                await conn.execute(
-                    """
-                    UPDATE job_items SET
-                        melhor_preco=$2, melhor_fornecedor=$3, melhor_marca=$4,
-                        modelo_encontrado=$5, match_type=$6,
-                        economia_euro=$7, economia_percent=$8,
-                        supplier_prices=$9, status=$10
-                    WHERE id=$1
-                    """,
-                    *u,
-                )
+            # executemany envia todos os UPDATEs num único batch — muito mais rápido que loop
+            await conn.executemany(
+                """
+                UPDATE job_items SET
+                    melhor_preco=$2, melhor_fornecedor=$3, melhor_marca=$4,
+                    modelo_encontrado=$5, indice_encontrado=$6, match_type=$7,
+                    economia_euro=$8, economia_percent=$9,
+                    supplier_prices=$10::jsonb, status=$11
+                WHERE id=$1
+                """,
+                bulk_updates,
+            )
             await conn.execute(
                 """
                 UPDATE jobs SET
@@ -842,6 +934,42 @@ async def compare_job_with_scraped_prices(job_id: str, force: bool = False):
         "items_with_savings": found_count,
         "total_savings": round(total_savings, 2),
         "scraper_timeout": scraper_timed_out,
+    }
+
+
+@api_router.post("/jobs/{job_id}/compare")
+async def compare_job_with_scraped_prices(
+    job_id: str, force: bool = False,
+    background_tasks: BackgroundTasks = None,
+):
+    """
+    Inicia comparação de preços em background.
+    Retorna imediatamente com status='running'; o frontend faz polling em /progress.
+    force=true → apaga cache e re-scrape todas as medidas.
+    """
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        job = row(await conn.fetchrow("SELECT * FROM jobs WHERE id = $1", job_id))
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        items_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM job_items WHERE job_id = $1", job_id
+        )
+        if not items_count:
+            raise HTTPException(status_code=400, detail="No items found in job")
+
+        # Marcar job como a correr imediatamente (antes de retornar ao cliente)
+        await conn.execute(
+            "UPDATE jobs SET status='running', started_at=$2 WHERE id=$1",
+            job_id, datetime.now(timezone.utc),
+        )
+
+    background_tasks.add_task(_compare_background, job_id, force)
+    logger.info(f"Compare job {job_id} iniciado em background (force={force}, items={items_count})")
+    return {
+        "status": "running",
+        "async": True,
+        "message": f"A pesquisar preços para {items_count} itens...",
     }
 
 
