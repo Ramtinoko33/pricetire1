@@ -2018,7 +2018,6 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
         print(f"  [TugaPneus] Pesquisa progressiva: {_terms}")
         _found = False
         for i, _term in enumerate(_terms):
-            _fase = ["marca+modelo", "marca", "só medida"][min(i, 2)]
             print(f"  [TugaPneus] Tentativa {i+1}/{len(_terms)}: '{_term}'")
 
             if i > 0:
@@ -2048,44 +2047,22 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
             _url_now = page.url
             print(f"  [TugaPneus] URL após pesquisa: {_url_now}")
 
-            # Verifica se há descrições "PNEU ..." no HTML bruto
+            # Verifica se há linhas de produto no HTML (id="linha_tit_NNN")
             _tit_count = len(re.findall(r'id=["\']linha_tit_\d+["\']', _html, re.IGNORECASE))
-            _tit_re_dbg = re.compile(r'id=["\']linha_tit_(\d+)["\'][^>]*>.*?<strong[^>]*>\s*(.*?)\s*</strong>', re.IGNORECASE | re.DOTALL)
-            _prec_re_dbg = re.compile(r'id=["\']linha_precv_(\d+)["\'][^>]*>[\s\S]{0,300}?(\d+[,.]\d{2})\s*€', re.IGNORECASE)
-            _dbg_titles = {m.group(1): m.group(2).strip() for m in _tit_re_dbg.finditer(_html)}
-            _dbg_prices = {}
-            for _pm in _prec_re_dbg.finditer(_html):
-                try:
-                    _pv = float(_pm.group(2).replace(',', '.'))
-                    if 15 < _pv < 800:
-                        _dbg_prices[_pm.group(1)] = _pv
-                except ValueError:
-                    pass
-            print(f"[TUGA-DEBUG] fase={_fase} query='{_term}' | linha_tit={_tit_count} | títulos={len(_dbg_titles)} | preços={len(_dbg_prices)}")
-            for _dp_id, _dp_desc in list(_dbg_titles.items())[:3]:
-                _dp_price = _dbg_prices.get(_dp_id, '???')
-                print(f"[TUGA-DEBUG]   → pid={_dp_id} desc={_dp_desc!r:.80} price={_dp_price}")
-            if re.search(r'PNEU\s+\w', _html, re.IGNORECASE):
+            print(f"  [TugaPneus] linha_tit encontrados={_tit_count} para '{_term}'")
+            if _tit_count > 0:
                 print(f"  [TugaPneus] Dados encontrados no HTML com '{_term}'")
                 _found = True
                 break
-            print(f"  [TugaPneus] Sem 'PNEU...' no HTML para '{_term}', próximo nível...")
+            print(f"  [TugaPneus] Sem produtos no HTML para '{_term}', próximo nível...")
 
         content = await page.content()
-        _has_pneu = bool(re.search(r'PNEU\s+\w', content, re.IGNORECASE))
-        print(f"  [TugaPneus] HTML size: {len(content)} chars, PNEU encontrado: {_has_pneu}")
-        # Guardar HTML para debug via /api/scraper/debug-html?supplier=tugapneus&file=search_page
+        print(f"  [TugaPneus] HTML size: {len(content)} chars")
         try:
             with open('/tmp/tugapneus_search_page.html', 'w', encoding='utf-8') as _f:
                 _f.write(content)
         except Exception:
             pass
-        # Debug: contexto à volta do primeiro "PNEU"
-        _pneu_m = re.search(r'PNEU\s+\w', content, re.IGNORECASE)
-        if _pneu_m:
-            _start = max(0, _pneu_m.start() - 30)
-            _snippet = content[_start:_pneu_m.start()+200].replace('\n', ' ')
-            print(f"  [TugaPneus] CONTEXTO: {repr(_snippet)}")
 
         if not _found:
             print(f"  [TugaPneus] Nenhuma tentativa retornou resultados, extraindo o que houver...")
@@ -2106,11 +2083,15 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
                 r'id=["\']linha_precv_(\d+)["\'][^>]*>[\s\S]{0,300}?(\d+[,.]\d{2})\s*\u20ac',
                 re.IGNORECASE
             )
-            # 3. Parse da descrição "PNEU MARCA MEDIDA ÍNDICE MODELO"
+            # 3. Parse da descrição "PNEU MARCA MEDIDA <resto>"
+            # O <resto> pode ser "MODELO ÍNDICE" (ex: "PRIMACY 5 91V")
+            # ou "ÍNDICE MODELO" (ex: "98W OTTIMA PLUS XL") — extraímos o índice
+            # pelo padrão e o restante torna-se o modelo.
             desc_re = re.compile(
-                r'PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}/\d{2}R\d{2})\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s*(.*)',
+                r'PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}/\d{2}R\d{2})\s+(.*)',
                 re.IGNORECASE
             )
+            idx_re = re.compile(r'\b(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\b', re.IGNORECASE)
 
             titles = {m.group(1): m.group(2).strip() for m in tit_re.finditer(html)}
             prices: dict = {}
@@ -2127,17 +2108,23 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
             products = []
             for pid, desc in titles.items():
                 if pid not in prices:
-                    print(f"[TUGA-DEBUG] pid={pid} desc={desc!r:.80} → SEM PREÇO")
                     continue
                 dm = desc_re.match(desc)
                 if not dm:
-                    print(f"[TUGA-DEBUG] pid={pid} desc={desc!r:.80} → REGEX NÃO FAZ MATCH")
                     continue
+                rest = dm.group(3).strip()
+                idx_m = idx_re.search(rest)
+                if idx_m:
+                    indice = idx_m.group(1).strip().upper()
+                    model = (rest[:idx_m.start()] + ' ' + rest[idx_m.end():]).strip().upper()
+                else:
+                    indice = ''
+                    model = rest.upper()
                 products.append({
                     'brand':  dm.group(1).strip().upper(),
                     'medida': dm.group(2).strip().upper(),
-                    'indice': dm.group(3).strip().upper(),
-                    'model':  dm.group(4).strip().upper(),
+                    'indice': indice,
+                    'model':  model,
                     'price':  prices[pid]
                 })
 
