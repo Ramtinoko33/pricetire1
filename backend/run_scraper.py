@@ -3402,6 +3402,8 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                     supplier['name'], medida, m_brand,
                                 )
                             for prod in products:
+                                if 'cruzeiro' in supplier_name:
+                                    print(f"[CRZ-DEBUG] brand='{prod.get('brand')}' | model='{prod.get('model')}' | price={prod.get('price')} | medida={medida}")
                                 prod_marca = prod.get('brand', '').upper()
                                 prod_modelo = prod.get('model', '')
                                 prod_indice = prod.get('indice') or ''
