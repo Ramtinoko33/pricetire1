@@ -2050,7 +2050,21 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
 
             # Verifica se há descrições "PNEU ..." no HTML bruto
             _tit_count = len(re.findall(r'id=["\']linha_tit_\d+["\']', _html, re.IGNORECASE))
-            print(f"[TUGA-DEBUG] fase={_fase} query='{_term}' linha_tit encontrados={_tit_count}")
+            _tit_re_dbg = re.compile(r'id=["\']linha_tit_(\d+)["\'][^>]*>.*?<strong[^>]*>\s*(.*?)\s*</strong>', re.IGNORECASE | re.DOTALL)
+            _prec_re_dbg = re.compile(r'id=["\']linha_precv_(\d+)["\'][^>]*>[\s\S]{0,300}?(\d+[,.]\d{2})\s*€', re.IGNORECASE)
+            _dbg_titles = {m.group(1): m.group(2).strip() for m in _tit_re_dbg.finditer(_html)}
+            _dbg_prices = {}
+            for _pm in _prec_re_dbg.finditer(_html):
+                try:
+                    _pv = float(_pm.group(2).replace(',', '.'))
+                    if 15 < _pv < 800:
+                        _dbg_prices[_pm.group(1)] = _pv
+                except ValueError:
+                    pass
+            print(f"[TUGA-DEBUG] fase={_fase} query='{_term}' | linha_tit={_tit_count} | títulos={len(_dbg_titles)} | preços={len(_dbg_prices)}")
+            for _dp_id, _dp_desc in list(_dbg_titles.items())[:3]:
+                _dp_price = _dbg_prices.get(_dp_id, '???')
+                print(f"[TUGA-DEBUG]   → pid={_dp_id} desc={_dp_desc!r:.80} price={_dp_price}")
             if re.search(r'PNEU\s+\w', _html, re.IGNORECASE):
                 print(f"  [TugaPneus] Dados encontrados no HTML com '{_term}'")
                 _found = True
