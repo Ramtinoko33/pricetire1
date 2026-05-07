@@ -746,6 +746,33 @@ async def _do_compare(job_id: str, force: bool):
     total_savings = 0.0
     bulk_updates = []
 
+    def _index_matches(scraped_idx: str, want_idx: str) -> bool:
+        """True if the scraped load/speed index satisfies the requested index.
+
+        The Soledad API only returns the speed category letter (e.g. 'H', 'V', 'W').
+        The Excel has the full combined index (e.g. '94H', '91V', '95W XL').
+        We extract the speed letter from whichever side has the full form and compare.
+        """
+        if not want_idx:
+            return True
+        s = (scraped_idx or '').upper().strip()
+        w = want_idx.upper().strip()
+        if not s:
+            return False
+        # Exact, or scraped starts with wanted ("94H XL" satisfies want "94H")
+        if s == w or s.startswith(w):
+            return True
+        # Scraped has only the speed letter (e.g. 'H') — extract it from wanted ('94H' → 'H')
+        _speed_m = re.match(r'^\d{2,3}([A-Z])', w)
+        if _speed_m and s == _speed_m.group(1):
+            return True
+        # Wanted has only the speed letter ('H') — extract from scraped ('91H' → 'H')
+        if len(w) == 1 and w.isalpha():
+            _speed_m2 = re.match(r'^\d{2,3}([A-Z])', s)
+            if _speed_m2 and _speed_m2.group(1) == w:
+                return True
+        return False
+
     for item in items:
         medida_norm = item['medida'].replace('/', '').replace('R', '').replace('r', '')
         marca_norm  = (item.get('marca')  or '').strip().upper()
