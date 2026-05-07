@@ -2640,6 +2640,11 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
         url_search = "https://www.pneuscruzeiro.pt/pt/privatearea"
 
     medida_norm = normalize_medida(medida)  # ex: "2055516"
+    # Cruzeiro pesquisa por texto nas descrições ("PNEU MICHELIN 205/55R16 ..."),
+    # por isso precisa do formato "205/55R16" e não "2055516"
+    import re as _re_med
+    _m_fmt = _re_med.match(r'^(\d{3})(\d{2})(\d{2})$', medida_norm)
+    medida_search = f"{_m_fmt.group(1)}/{_m_fmt.group(2)}R{_m_fmt.group(3)}" if _m_fmt else medida
 
     def _save_debug(path: str, content: str):
         try:
@@ -2722,8 +2727,8 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
             _save_debug('/tmp/cruzeiro_search_page.html', await page.content())
             return result
 
-        await search_field.fill(medida_norm)
-        print(f"  [Cruzeiro] Pesquisar: {medida_norm!r}")
+        await search_field.fill(medida_search)
+        print(f"  [Cruzeiro] Pesquisar: {medida_search!r} (norm={medida_norm})")
 
         # Clicar no botão de pesquisa → dispara HTMX para produtos-tabela-ajax
         search_btn = page.locator('#botao_iniciador_pesquisa_produtos')
@@ -2749,11 +2754,11 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
         _save_debug('/tmp/cruzeiro_results.html', content)
         print(f"  [Cruzeiro] Resultados carregados (content length: {len(content)})")
 
-        # ── EXTRACÇÃO DE PRODUTOS ─────────────────────────────────────────────
+        # ── EXTRACÇÃO DE PRODUTOS (com paginação) ────────────────────────────
         # Tabela com colunas:
         #   0=Imagem  1=Fabricante  2=Produto  3=DOT  4=Stock  5=Etq  6=Qtd  7=Preço  8=PVP
         # Formato Produto: "PNEU MICHELIN 205/55R16 PRIMACY 5 91V"
-        products = await page.evaluate(r'''() => {
+        _EXTRACT_JS = r'''() => {
             const rows = document.querySelectorAll('#contentor_linhas_tabela_produtos tr');
             const products = [];
 
@@ -2800,9 +2805,62 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                     products.push({ brand, model, price });
             }
             return products;
-        }''')
+        }'''
 
-        print(f"  [Cruzeiro] Produtos extraídos: {len(products)}")
+        products = await page.evaluate(_EXTRACT_JS)
+        print(f"  [Cruzeiro] Página 1: {len(products)} produtos")
+
+        # ── Paginação: clicar "próxima página" até não haver mais ────────────
+        _page_num = 1
+        _MAX_PAGES = 10
+        while _page_num < _MAX_PAGES:
+            # Detectar botão de próxima página (seta direita / próximo)
+            _next_sel = (
+                'a[aria-label*="próxima" i], a[aria-label*="next" i], '
+                'a[title*="próxima" i], a[title*="next" i], '
+                'li.next:not(.disabled) a, '
+                '.pagination a[rel="next"], '
+                'a.proxima-pagina, button.proxima-pagina, '
+                '[id*="proxima_pagina"], [id*="next_page"], '
+                'a:has(> i.fa-chevron-right), a:has(> i.fa-angle-right), '
+                'a:has(> span:text-is("›")), a:has(> span:text-is("»")), '
+                'button:has(> i.fa-chevron-right)'
+            )
+            try:
+                _next_btn = page.locator(_next_sel).first
+                _btn_count = await _next_btn.count()
+                if _btn_count == 0:
+                    break
+                _is_disabled = await _next_btn.get_attribute('disabled')
+                _parent_class = await _next_btn.evaluate('el => el.closest("li")?.className || ""')
+                if _is_disabled or 'disabled' in _parent_class:
+                    break
+            except Exception:
+                break
+
+            _page_num += 1
+            try:
+                async with page.expect_response(
+                    lambda r: 'produtos-tabela-ajax' in r.url,
+                    timeout=15000,
+                ) as _resp_pg:
+                    await _next_btn.click()
+                await _resp_pg.value
+                await asyncio.sleep(1)
+            except Exception as _e_pg:
+                # Sem HTMX response — tentar networkidle
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    pass
+
+            _new_prods = await page.evaluate(_EXTRACT_JS)
+            if not _new_prods:
+                break
+            print(f"  [Cruzeiro] Página {_page_num}: {len(_new_prods)} produtos")
+            products.extend(_new_prods)
+
+        print(f"  [Cruzeiro] Produtos extraídos (total {_page_num} pág.): {len(products)}")
 
         if products:
             # Deduplicar por marca+modelo, manter preço mais baixo

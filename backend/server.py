@@ -723,11 +723,11 @@ async def _do_compare(job_id: str, force: bool):
 
     # Diagnóstico: logar o que está na BD por medida (ajuda a perceber "sem dados")
     for _m, _ps in prices_by_medida.items():
-        _idx_counts: Dict[str, int] = {}
+        _marca_counts: Dict[str, int] = {}
         for _p in _ps:
-            _li = (_p.get('load_index') or '').strip()
-            _idx_counts[_li if _li else '(vazio)'] = _idx_counts.get(_li if _li else '(vazio)', 0) + 1
-        logger.info(f"[compare diag] medida={_m} total={len(_ps)} índices={_idx_counts}")
+            _mc = (_p.get('marca') or '').strip().upper() or '(sem marca)'
+            _marca_counts[_mc] = _marca_counts.get(_mc, 0) + 1
+        logger.info(f"[compare diag] medida={_m} total={len(_ps)} marcas={_marca_counts}")
 
     # indiceneg: funções de índice definidas uma vez fora do loop
     def _index_matches(scraped_idx: str, want_idx: str) -> bool:
