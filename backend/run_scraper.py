@@ -2608,7 +2608,8 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
 async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                                url_login: str = "https://www.pneuscruzeiro.pt/pt/login",
                                url_search: str = "https://www.pneuscruzeiro.pt/pt/privatearea",
-                               skip_login: bool = False) -> dict:
+                               skip_login: bool = False,
+                               marca: str = '') -> dict:
     """Scrape Pneus Cruzeiro B2B portal (pneuscruzeiro.pt).
 
     Login: POST https://www.pneuscruzeiro.pt/pt/login
@@ -2729,6 +2730,30 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
 
         await search_field.fill(medida_search)
         print(f"  [Cruzeiro] Pesquisar: {medida_search!r} (norm={medida_norm})")
+
+        # Selecionar fabricante no dropdown FABRICANTE (se especificado)
+        if marca:
+            try:
+                # O dropdown FABRICANTE está junto ao campo de pesquisa
+                selected = await page.evaluate(f'''() => {{
+                    const selects = document.querySelectorAll('select');
+                    for (const sel of selects) {{
+                        for (const opt of sel.options) {{
+                            if (opt.text.trim().toUpperCase() === {marca.upper()!r}) {{
+                                sel.value = opt.value;
+                                sel.dispatchEvent(new Event('change', {{bubbles: true}}));
+                                return opt.text.trim();
+                            }}
+                        }}
+                    }}
+                    return null;
+                }}''')
+                if selected:
+                    print(f"  [Cruzeiro] Fabricante seleccionado: {selected!r}")
+                else:
+                    print(f"  [Cruzeiro] Fabricante {marca!r} não encontrado no dropdown")
+            except Exception as _e_fab:
+                print(f"  [Cruzeiro] Erro ao seleccionar fabricante: {_e_fab}")
 
         # Clicar no botão de pesquisa → dispara HTMX para produtos-tabela-ajax
         search_btn = page.locator('#botao_iniciador_pesquisa_produtos')
@@ -3164,6 +3189,24 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
             )
             _crz_url_login  = supplier.get('url_login')  or 'https://www.pneuscruzeiro.pt/pt/login'
             _crz_url_search = supplier.get('url_search') or 'https://www.pneuscruzeiro.pt/pt/privatearea'
+
+            # Targets Cruzeiro: um por (medida, marca) — dedupados
+            # O site tem dropdown FABRICANTE, por isso pesquisamos por marca separadamente
+            _crz_pairs: list = []
+            _crz_seen_pairs: set = set()
+            for _m in medidas:
+                _brands = {bi['marca'].upper() for bi in medida_items.get(_m, []) if bi.get('marca')}
+                if _brands:
+                    for _b in sorted(_brands):
+                        if (_m, _b) not in _crz_seen_pairs:
+                            _crz_seen_pairs.add((_m, _b))
+                            _crz_pairs.append((_m, _b))
+                else:
+                    if (_m, '') not in _crz_seen_pairs:
+                        _crz_seen_pairs.add((_m, ''))
+                        _crz_pairs.append((_m, ''))
+            print(f"  [Cruzeiro] {len(_crz_pairs)} pesquisas (medida+fabricante): {_crz_pairs[:8]}")
+
             async with async_playwright() as _p_crz:
                 _crz_browser = await _p_crz.chromium.launch(
                     headless=True,
@@ -3174,7 +3217,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                 _crz_first = True
                 _crz_summary = []
 
-                for medida, marca, modelo in targets:
+                for medida, marca in _crz_pairs:
                     _crz_page = await _crz_ctx.new_page()
                     await _crz_page.add_init_script(
                         "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
@@ -3187,6 +3230,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                 medida,
                                 _crz_url_login, _crz_url_search,
                                 skip_login=(not _crz_first),
+                                marca=marca,
                             ),
                             timeout=150,
                         )
