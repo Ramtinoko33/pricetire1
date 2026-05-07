@@ -2018,6 +2018,7 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
         print(f"  [TugaPneus] Pesquisa progressiva: {_terms}")
         _found = False
         for i, _term in enumerate(_terms):
+            _fase = ["marca+modelo", "marca", "só medida"][min(i, 2)]
             print(f"  [TugaPneus] Tentativa {i+1}/{len(_terms)}: '{_term}'")
 
             if i > 0:
@@ -2048,6 +2049,8 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
             print(f"  [TugaPneus] URL após pesquisa: {_url_now}")
 
             # Verifica se há descrições "PNEU ..." no HTML bruto
+            _tit_count = len(re.findall(r'id=["\']linha_tit_\d+["\']', _html, re.IGNORECASE))
+            print(f"[TUGA-DEBUG] fase={_fase} query='{_term}' linha_tit encontrados={_tit_count}")
             if re.search(r'PNEU\s+\w', _html, re.IGNORECASE):
                 print(f"  [TugaPneus] Dados encontrados no HTML com '{_term}'")
                 _found = True
@@ -2110,9 +2113,11 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
             products = []
             for pid, desc in titles.items():
                 if pid not in prices:
+                    print(f"[TUGA-DEBUG] pid={pid} desc={desc!r:.80} → SEM PREÇO")
                     continue
                 dm = desc_re.match(desc)
                 if not dm:
+                    print(f"[TUGA-DEBUG] pid={pid} desc={desc!r:.80} → REGEX NÃO FAZ MATCH")
                     continue
                 products.append({
                     'brand':  dm.group(1).strip().upper(),
