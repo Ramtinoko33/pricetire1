@@ -2768,47 +2768,73 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
 
                 let brand = '', model = '', price = null;
 
-                // ── Coluna Produto (índice 2) ──────────────────────────────
+                // ── Coluna Fabricante (índice 1) — fonte primária da marca ──
+                // Contém o nome do fabricante como texto ou alt da imagem
+                const fabTxt = cells[1].textContent.trim().replace(/\s+/g, ' ').toUpperCase();
+                const fabImg = cells[1].querySelector('img');
+                const fabAlt = fabImg ? (fabImg.alt || fabImg.title || '').trim().toUpperCase() : '';
+                brand = fabTxt || fabAlt;
+
+                // ── Coluna Produto (índice 2) — fonte do modelo ────────────
                 // Formato: "PNEU MARCA MEDIDA MODELO ÍNDICE"
                 // ex.: "PNEU MICHELIN 205/55R16 PRIMACY 5 91V"
                 const produtoTxt = cells[2].textContent.trim().replace(/\s+/g, ' ');
                 let txt = produtoTxt.replace(/^PNEU\s+/i, '');
                 const parts = txt.split(' ');
-                if (parts.length >= 2) {
+
+                // Se coluna Fabricante estava vazia, extrair marca do Produto (fallback)
+                if (!brand && parts.length >= 1) {
                     brand = parts[0].toUpperCase();
-                    // parts[1] = medida (ex: "205/55R16") → saltar
-                    const remaining = parts.slice(2);
+                    parts.shift();
+                }
 
-                    if (remaining.length > 0) {
-                        const last  = remaining[remaining.length - 1];
-                        const prev  = remaining.length > 1 ? remaining[remaining.length - 2] : '';
-
-                        if (/^\d+[A-Z]+$/.test(last)) {
-                            // Último token é o índice carga+velocidade → modelo = tudo antes
-                            model = remaining.slice(0, -1).join(' ');
-                        } else if (last === 'XL' && /^\d+[A-Z]+$/.test(prev)) {
-                            // "… 91H XL" → índice + XL no final
-                            model = remaining.slice(0, -2).join(' ');
-                        } else {
-                            model = remaining.join(' ');
-                        }
+                // Saltar token que parece medida (ex: "205/55R16" ou "2055516")
+                if (parts.length > 0 && /\d{3}[\/\d]\d{2}[Rr\d]\d{2}/.test(parts[0])) {
+                    parts.shift();
+                } else if (parts.length > 0 && parts[0].toUpperCase() === brand) {
+                    // Marca repetida no início do Produto → saltar
+                    parts.shift();
+                    if (parts.length > 0 && /\d{3}[\/\d]\d{2}[Rr\d]\d{2}/.test(parts[0])) {
+                        parts.shift();
                     }
                 }
 
+                // Remover índice do fim: "91V", "94H XL", "91W XL FR", etc.
+                while (parts.length > 0) {
+                    const last = parts[parts.length - 1];
+                    const prev = parts.length > 1 ? parts[parts.length - 2] : '';
+                    if (/^[A-Z]{2,4}$/.test(last) && !/^[A-Z]{4,}$/.test(last)) {
+                        // sufixos como XL, FR, FP, EVC, DOT → remover
+                        parts.pop();
+                    } else if (/^\d{2,3}[A-Z]{1,2}$/.test(last)) {
+                        // índice carga+velocidade ex: "91V", "94W" → remover
+                        parts.pop();
+                    } else {
+                        break;
+                    }
+                }
+                model = parts.join(' ').trim();
+
                 // ── Coluna Preço (índice 7) ───────────────────────────────
-                // Formato: "67,00€" ou "67.00 €"
                 const precoTxt = cells[7].textContent.trim();
                 const m = precoTxt.match(/(\d+[,.]\d{2})/);
                 if (m) price = parseFloat(m[1].replace(',', '.'));
 
-                if (brand && price && price > 5 && price < 2000)
-                    products.push({ brand, model, price });
+                // DEBUG: emitir sempre para diagnóstico
+                products.push({
+                    brand, model, price,
+                    _raw_fabricante: fabTxt,
+                    _raw_produto: produtoTxt,
+                    _raw_preco: precoTxt,
+                });
             }
             return products;
         }'''
 
         products = await page.evaluate(_EXTRACT_JS)
-        print(f"  [Cruzeiro] Página 1: {len(products)} produtos")
+        print(f"  [Cruzeiro] Página 1: {len(products)} linhas extraídas")
+        for _dbg in products[:20]:
+            print(f"  [Cruzeiro DEBUG] fab={_dbg.get('_raw_fabricante','?')!r:20} | produto={_dbg.get('_raw_produto','?')!r:60} | brand={_dbg.get('brand','?')!r:15} | model={_dbg.get('model','?')!r:30} | price={_dbg.get('price')}")
 
         # ── Paginação: clicar "próxima página" até não haver mais ────────────
         _page_num = 1
@@ -2862,7 +2888,15 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
 
         print(f"  [Cruzeiro] Produtos extraídos (total {_page_num} pág.): {len(products)}")
 
+        # Limpar campos _raw_* usados apenas para debug
+        for p in products:
+            for k in list(p.keys()):
+                if k.startswith('_raw'):
+                    del p[k]
+
         if products:
+            # Filtrar linhas sem preço válido
+            products = [p for p in products if p.get('price') and p['price'] > 5]
             # Deduplicar por marca+modelo, manter preço mais baixo
             seen = {}
             for p in products:
