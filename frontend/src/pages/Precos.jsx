@@ -9,11 +9,21 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Search, RefreshCw, TrendingDown, Loader2, Zap, Database } from 'lucide-react';
 import { toast } from 'sonner';
 
+const MARCAS_FIXAS = [
+  'APOLLO','AVON','BARUM','BF GOODRICH','BRIDGESTONE','CEAT','CONTINENTAL',
+  'COOPER','DUNLOP','FALKEN','FIRESTONE','FULDA','GOODYEAR','HANKOOK',
+  'KLEBER','KUMHO','LAUFENN','LINGLONG','MAXXIS','MICHELIN','NANKANG',
+  'NEXEN','NOKIAN','PIRELLI','RADAR','SAILUN','SAVA','TOYO','UNIROYAL',
+  'VREDESTEIN','WESTLAKE','YOKOHAMA',
+];
+const MARCAS_FIXAS_SET = new Set(MARCAS_FIXAS.map(m => m.toUpperCase()));
+
 const Precos = () => {
   const [medida, setMedida]     = useState('');
   const [marca, setMarca]       = useState('');
   const [modelo, setModelo]     = useState('');
   const [loadIndex, setLoadIndex] = useState('');
+  const [marcasOutras, setMarcasOutras] = useState([]);
 
   const [prices, setPrices]   = useState([]);
   const [stats, setStats]     = useState(null);
@@ -23,6 +33,13 @@ const Precos = () => {
   const [scraping, setScraping]         = useState(false);
   const [scrapeProgress, setScrapeProgress] = useState('');
   const pollRef = useRef(null);
+
+  useEffect(() => {
+    api.get('/marcas').then(res => {
+      const outras = (res.data || []).filter(m => !MARCAS_FIXAS_SET.has(m.toUpperCase()));
+      setMarcasOutras(outras);
+    }).catch(() => {});
+  }, []);
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -153,8 +170,20 @@ const Precos = () => {
               onKeyDown={handleKey}
               data-testid="medida-input"
             />
-            <Input className="w-36" placeholder="Marca (ex: Michelin)"
-              value={marca} onChange={e => setMarca(e.target.value)} onKeyDown={handleKey} />
+            <select
+              className="w-36 h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              value={marca}
+              onChange={e => setMarca(e.target.value)}
+            >
+              <option value="">-- Marca --</option>
+              {MARCAS_FIXAS.map(m => <option key={m} value={m}>{m}</option>)}
+              {marcasOutras.length > 0 && (
+                <>
+                  <option disabled>──── Outras ────</option>
+                  {marcasOutras.map(m => <option key={m} value={m}>{m}</option>)}
+                </>
+              )}
+            </select>
             <Input className="w-40" placeholder="Modelo (ex: Primacy)"
               value={modelo} onChange={e => setModelo(e.target.value)} onKeyDown={handleKey} />
             <Input className="w-28" placeholder="Índice (91V)"

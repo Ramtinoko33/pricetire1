@@ -1245,6 +1245,21 @@ async def check_scraper_availability():
 
 # ==================== Scraped Prices ====================
 
+@api_router.get("/marcas")
+async def get_marcas():
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        rs = await conn.fetch(
+            """
+            SELECT DISTINCT UPPER(TRIM(marca)) AS marca
+            FROM scraped_prices
+            WHERE marca IS NOT NULL AND marca != ''
+            ORDER BY marca ASC
+            """
+        )
+    return [r["marca"] for r in rs]
+
+
 @api_router.get("/scraped-prices")
 async def get_scraped_prices(
     medida: str = None, marca: str = None,
