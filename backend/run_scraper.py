@@ -1651,8 +1651,50 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
 
     return result
 
-async def scrape_aguesport(page, username: str, password: str, medida: str) -> dict:
-    """Scrape Aguesport"""
+def _parse_aguesport_html(html: str) -> list:
+    """Parse product list from Aguesport results page HTML.
+
+    Title format in class="ma-bold14": "205/55 R16 91V KUMHO Ecowing ES31"
+    Price format in class="price ma-semibold14": "42,95€"
+    """
+    card_re = re.compile(
+        r'class="info-text"><span[^>]*class="ma-bold14">(.*?)</span>.*?'
+        r'class="price ma-semibold14">([\d,.]+)',
+        re.DOTALL,
+    )
+    title_re = re.compile(
+        r'\d{3}/\d{2} R\d{2}\s+(\d{2,3}[A-Z]{1,2})\s+(\S+)\s*(.*)',
+        re.IGNORECASE,
+    )
+    products = []
+    for title, price_str in card_re.findall(html):
+        title = title.strip()
+        try:
+            price = float(price_str.replace(',', '.'))
+        except ValueError:
+            continue
+        if price <= 0:
+            continue
+        m = title_re.match(title)
+        if not m:
+            continue
+        products.append({
+            'brand':      m.group(2).strip().upper(),
+            'model':      m.group(3).strip().upper(),
+            'load_index': m.group(1).strip().upper(),
+            'price':      price,
+        })
+    return products
+
+
+async def scrape_aguesport(page, username: str, password: str, medida: str,
+                            skip_login: bool = False) -> dict:
+    """Scrape Aguesport B2B portal (encomendas.aguesport.com).
+
+    Login: input[type="email"] + input[type="password"] → button[type="submit"]
+    Pesquisa: input[placeholder*="Medida"] com medida normalizada (ex: 2055516)
+    Resultados: class="info-text" / class="price ma-semibold14"
+    """
     result = {
         "supplier": "Aguesport",
         "price": None,
@@ -1660,85 +1702,48 @@ async def scrape_aguesport(page, username: str, password: str, medida: str) -> d
         "products": [],
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
-    
     try:
-        print("  [Aguesport] Logging in...")
-        await page.goto("https://encomendas.aguesport.com/login", wait_until="networkidle", timeout=60000)
-        await asyncio.sleep(2)
-        
-        # Fill login form
-        email_input = page.locator('input[type="email"], input[name="email"], input[name="username"]').first
-        if await email_input.count() > 0:
-            await email_input.fill(username)
-        
-        password_input = page.locator('input[type="password"]').first
-        if await password_input.count() > 0:
-            await password_input.fill(password)
-        
-        # Submit login
-        submit_btn = page.locator('button[type="submit"], input[type="submit"]').first
-        if await submit_btn.count() > 0:
-            await submit_btn.click()
-        await asyncio.sleep(5)
-        
-        # Search for tires
+        if not skip_login:
+            print("  [Aguesport] Login...")
+            await page.goto("https://encomendas.aguesport.com/login",
+                            wait_until="networkidle", timeout=60000)
+            await page.locator('input[type="email"]').first.fill(username)
+            await page.locator('input[type="password"]').first.fill(password)
+            await page.locator('button[type="submit"]').first.click()
+            await asyncio.sleep(3)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            print(f"  [Aguesport] URL após login: {page.url}")
+
         medida_norm = normalize_medida(medida)
-        print(f"  [Aguesport] Searching for: {medida_norm}")
-        
-        search_input = page.locator('input[type="search"], input[placeholder*="pesq"], input[name*="search"], #search').first
-        if await search_input.count() > 0:
-            await search_input.fill(medida_norm)
-            await search_input.press('Enter')
-            await asyncio.sleep(5)
-        
-        # Extract products
-        products = await page.evaluate('''() => {
-            const products = [];
-            const items = document.querySelectorAll('.product, .item, [class*="product"], [class*="item"], table tr');
-            
-            items.forEach(item => {
-                const text = item.textContent || '';
-                const priceMatch = text.match(/(\d+[,\.]\d{2})\s*€|€\s*(\d+[,\.]\d{2})/);
-                
-                if (priceMatch) {
-                    const priceStr = priceMatch[1] || priceMatch[2];
-                    const price = parseFloat(priceStr.replace(',', '.'));
-                    
-                    // Try to extract brand and model
-                    const brandMatch = text.match(/(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|BF GOODRICH|KUMHO|TOYO|NEXEN|FALKEN|COOPER|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL|SEMPERIT|BARUM|LASSA|SAVA|KLEBER|FULDA|GISLAVED|MATADOR|DEBICA|KELLY|DAYTON|ROADSTONE|NANKANG|FEDERAL|ACHILLES|LINGLONG|TRIANGLE|WESTLAKE|GOODRIDE|SAILUN|LANDSAIL|RADAR|ZEETEX|APLUS|COMPASAL|WINDFORCE|SUNFULL|ROADCLAW|HIFLY|SUNWIDE|POWERTRAC|THREE-A|GREMAX|ANTARES|BOTO|JINYU|DELINTE|MASSIMO|INSA TURBO)/i);
-                    
-                    if (price > 15 && price < 500) {
-                        products.push({
-                            brand: brandMatch ? brandMatch[1].toUpperCase() : 'UNKNOWN',
-                            model: '',
-                            price: price
-                        });
-                    }
-                }
-            });
-            
-            return products;
-        }''')
-        
-        if products and len(products) > 0:
+        print(f"  [Aguesport] Pesquisa: {medida_norm}")
+        medida_field = page.locator('input[placeholder*="Medida"]').first
+        await medida_field.fill(medida_norm)
+        await asyncio.sleep(0.5)
+        await page.locator('button[type="submit"]').first.click()
+        await asyncio.sleep(5)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
+
+        html = await page.content()
+        products = _parse_aguesport_html(html)
+
+        if products:
             result["products"] = products
-            prices = [p['price'] for p in products]
-            result["price"] = min(prices)
-            result["all_prices"] = sorted(prices)[:10]
-            print(f"  [Aguesport] Found {len(products)} products")
+            result["price"] = min(p["price"] for p in products)
+            print(f"  [Aguesport] {medida}: {len(products)} produtos, mín €{result['price']}")
         else:
-            content = await page.content()
-            prices = extract_prices(content)
-            if prices:
-                result["price"] = min(prices)
-                result["all_prices"] = sorted(prices)[:10]
-            else:
-                result["error"] = "No products found"
-                
+            result["error"] = "Nenhum produto encontrado"
+            print(f"  [Aguesport] {medida}: sem produtos")
+
     except Exception as e:
         result["error"] = str(e)
-        print(f"  [Aguesport] Error: {e}")
-    
+        print(f"  [Aguesport] Erro: {e}")
+
     return result
 
 async def scrape_abt_tyres(page, username: str, password: str, medida: str) -> dict:
@@ -3211,6 +3216,98 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     _err = _r.get('error') or ''
                     _sol_summary.append(f"{_m}:{_np}p{'(ERR)' if _err else ''}")
             print(f"  [Soledad] RESUMO: {' | '.join(_sol_summary)}")
+            continue  # Skip the generic per-medida loop below
+
+        # ── Aguesport: sessão única para todas as medidas ──────────────────
+        # Login uma vez; cada medida usa página nova no mesmo contexto.
+        if 'aguesport' in supplier_name:
+            _agu_ctx_kwargs = dict(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1920, 'height': 1080},
+                locale='pt-PT',
+            )
+            async with async_playwright() as _p_agu:
+                _agu_browser = await _p_agu.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox',
+                          '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                )
+                _agu_ctx = await _agu_browser.new_context(**_agu_ctx_kwargs)
+                _agu_first = True
+                _agu_summary = []
+
+                for medida in medidas:
+                    _agu_page = await _agu_ctx.new_page()
+                    await _agu_page.add_init_script(
+                        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+                    )
+                    try:
+                        result = await asyncio.wait_for(
+                            scrape_aguesport(
+                                _agu_page,
+                                supplier['username'], supplier['password'],
+                                medida,
+                                skip_login=(not _agu_first),
+                            ),
+                            timeout=120,
+                        )
+                        _agu_first = False
+                        result["medida"] = medida
+                        results.append(result)
+
+                        products = result.get('products', [])
+                        now = datetime.now(timezone.utc)
+                        conn_save = await _pg_connect()
+                        try:
+                            await conn_save.execute(
+                                "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
+                                supplier['name'], medida,
+                            )
+                            if products:
+                                for prod in products:
+                                    await conn_save.execute(
+                                        """INSERT INTO scraped_prices
+                                               (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
+                                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        prod.get('brand', '').upper(),
+                                        prod.get('model', ''),
+                                        prod.get('price'),
+                                        prod.get('load_index', ''),
+                                        now,
+                                    )
+                                print(f"  [Aguesport] {medida}: guardados {len(products)} produtos")
+                            elif result.get('price') is not None:
+                                await conn_save.execute(
+                                    """INSERT INTO scraped_prices
+                                           (id, supplier_name, medida, price, scraped_at)
+                                       VALUES ($1,$2,$3,$4,$5)""",
+                                    str(uuid.uuid4()), supplier['name'], medida,
+                                    result['price'], now,
+                                )
+                                print(f"  [Aguesport] {medida}: €{result['price']} (sem dados marca)")
+                            else:
+                                print(f"  [Aguesport] {medida}: sem produtos — registos antigos apagados")
+                        finally:
+                            await conn_save.close()
+
+                        _err = result.get('error') or ''
+                        _np  = len(result.get('products', []))
+                        _agu_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+
+                    except asyncio.TimeoutError:
+                        print(f"  [Aguesport] Timeout em {medida}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                        _agu_summary.append(f"{medida}:TIMEOUT")
+                    except Exception as _e_agu:
+                        print(f"  [Aguesport] Erro em {medida}: {_e_agu}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_agu)})
+                        _agu_summary.append(f"{medida}:ERR")
+                    finally:
+                        await _agu_page.close()
+
+                print(f"  [Aguesport] RESUMO: {' | '.join(_agu_summary)}")
+                await _agu_browser.close()
             continue  # Skip the generic per-medida loop below
 
         # ── Pneus Cruzeiro: sessão única para todas as medidas ──────────────
