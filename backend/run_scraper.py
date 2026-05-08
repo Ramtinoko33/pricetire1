@@ -1663,7 +1663,7 @@ def _parse_aguesport_html(html: str) -> list:
         re.DOTALL,
     )
     title_re = re.compile(
-        r'\d{3}/\d{2} R\d{2}\s+(\d{2,3}[A-Z]{1,2})\s+(\S+)\s*(.*)',
+        r'\d{3}/\d{2}\s+R\d{2}\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s+(\S+)\s+(.*)',
         re.IGNORECASE,
     )
     products = []
@@ -1724,8 +1724,8 @@ async def scrape_aguesport(page, username: str, password: str, medida: str,
                             wait_until="networkidle", timeout=30000)
         medida_field = page.locator('input[placeholder*="Medida"]').first
         await medida_field.fill(medida_norm)
-        await asyncio.sleep(0.5)
-        await page.locator('button[type="submit"]').first.click()
+        await asyncio.sleep(0.3)
+        await medida_field.press("Enter")
         await asyncio.sleep(5)
         try:
             await page.wait_for_load_state("networkidle", timeout=15000)
