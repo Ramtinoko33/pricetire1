@@ -1868,94 +1868,122 @@ async def scrape_aguesport(page, username: str, password: str, medida: str,
 
     return result
 
-async def scrape_abt_tyres(page, username: str, password: str, medida: str) -> dict:
-    """Scrape ABT Tyres B2B"""
+def _parse_abtyres_html(html: str) -> list:
+    """Parse product rows from ABTyres results page HTML.
+
+    Each row is a <tr role="row"> (skipping DEMO rows with yellow bg #FFF63D).
+    Data lives in hidden form inputs: marca, nome, preco.
+    nome format: "205/55 R 16 - 91V - TQ021" → load_index=91V, model=TQ021.
+    """
+    nome_re = re.compile(
+        r'[\d/\s]+R\s*\d+\s*-\s*(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s*-\s*(.*)',
+        re.IGNORECASE,
+    )
+    row_re   = re.compile(r'<tr\b[^>]*role=["\']row["\'][^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
+    input_re = re.compile(r'<input\b[^>]*name=["\'](\w+)["\'][^>]*value=["\']([^"\']*)["\']', re.IGNORECASE)
+
+    products = []
+    for row_m in row_re.finditer(html):
+        row_html = row_m.group(0)
+        if 'FFF63D' in row_html or 'fff63d' in row_html:
+            continue  # skip DEMO rows
+        fields = {m.group(1): m.group(2) for m in input_re.finditer(row_html)}
+        marca  = fields.get('marca', '').strip().upper()
+        nome   = fields.get('nome', '').strip()
+        preco  = fields.get('preco', '').strip()
+        if not nome or not preco:
+            continue
+        try:
+            price = float(preco.replace(',', '.'))
+        except ValueError:
+            continue
+        if price <= 0:
+            continue
+        m = nome_re.match(nome)
+        if not m:
+            continue
+        products.append({
+            'brand':      marca,
+            'model':      m.group(2).strip().upper(),
+            'load_index': m.group(1).strip().upper(),
+            'price':      price,
+        })
+    return products
+
+
+async def scrape_abtyres(page, username: str, password: str, medida: str,
+                         skip_login: bool = False) -> dict:
+    """Scrape ABTyres B2B portal (b2b.abtyres.pt).
+
+    Login: input[name="user"] + input[type="password"] + button:has-text("Entrar").
+    Search: input[name="pesq"] + button:has-text("PESQUISA") on /pneus.
+    Results: <tr role="row"> with hidden inputs marca/nome/preco; skip DEMO (#FFF63D).
+    """
     result = {
-        "supplier": "ABT Tyres",
+        "supplier": "ABTyres",
         "price": None,
         "error": None,
         "products": [],
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    
     try:
-        print("  [ABT Tyres] Logging in...")
-        await page.goto("https://b2b.abtyres.pt/", wait_until="networkidle", timeout=60000)
-        await asyncio.sleep(2)
-        
-        # Fill login form
-        username_input = page.locator('input[name="username"], input[name="user"], input[type="text"]').first
-        if await username_input.count() > 0:
-            await username_input.fill(username)
-        
-        password_input = page.locator('input[type="password"]').first
-        if await password_input.count() > 0:
-            await password_input.fill(password)
-        
-        # Submit login
-        submit_btn = page.locator('button[type="submit"], input[type="submit"], button:has-text("Login"), button:has-text("Entrar")').first
-        if await submit_btn.count() > 0:
-            await submit_btn.click()
-        await asyncio.sleep(5)
-        
-        # Search for tires
-        medida_norm = normalize_medida(medida)
-        print(f"  [ABT Tyres] Searching for: {medida_norm}")
-        
-        # Try search box
-        search_input = page.locator('input[type="search"], input[placeholder*="pesq"], input[name*="search"], #searchInput, .search-box input').first
-        if await search_input.count() > 0:
-            await search_input.fill(medida_norm)
-            await search_input.press('Enter')
-            await asyncio.sleep(5)
-        
-        # Extract products
-        products = await page.evaluate('''() => {
-            const products = [];
-            const items = document.querySelectorAll('.product, .item, .tire, [class*="product"], [class*="tire"], table tbody tr');
-            
-            items.forEach(item => {
-                const text = item.textContent || '';
-                const priceMatch = text.match(/(\d+[,\.]\d{2})\s*€|€\s*(\d+[,\.]\d{2})/);
-                
-                if (priceMatch) {
-                    const priceStr = priceMatch[1] || priceMatch[2];
-                    const price = parseFloat(priceStr.replace(',', '.'));
-                    
-                    const brandMatch = text.match(/(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|BF GOODRICH|KUMHO|TOYO|NEXEN|FALKEN|COOPER|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL|SEMPERIT|BARUM|LASSA|SAVA|KLEBER|FULDA|GISLAVED|MATADOR)/i);
-                    
-                    if (price > 15 && price < 500) {
-                        products.push({
-                            brand: brandMatch ? brandMatch[1].toUpperCase() : 'UNKNOWN',
-                            model: '',
-                            price: price
-                        });
-                    }
-                }
-            });
-            
-            return products;
-        }''')
-        
-        if products and len(products) > 0:
-            result["products"] = products
-            prices = [p['price'] for p in products]
-            result["price"] = min(prices)
-            result["all_prices"] = sorted(prices)[:10]
-            print(f"  [ABT Tyres] Found {len(products)} products")
+        if not skip_login:
+            print("  [ABTyres] Login...")
+            await page.goto("https://b2b.abtyres.pt/menu", wait_until="networkidle", timeout=60000)
+            await asyncio.sleep(1)
+            current = page.url
+            if 'menu' not in current and 'pneus' not in current:
+                # Need to login
+                await page.goto("https://b2b.abtyres.pt/", wait_until="networkidle", timeout=60000)
+                await asyncio.sleep(1)
+                await page.locator('input[name="user"]').first.fill(username)
+                await page.locator('input[type="password"]').first.fill(password)
+                await page.locator('button:has-text("Entrar")').first.click()
+                await asyncio.sleep(4)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=20000)
+                except Exception:
+                    pass
+                print(f"  [ABTyres] URL após login: {page.url}")
         else:
-            content = await page.content()
-            prices = extract_prices(content)
-            if prices:
-                result["price"] = min(prices)
-                result["all_prices"] = sorted(prices)[:10]
-            else:
-                result["error"] = "No products found"
-                
+            await page.goto("https://b2b.abtyres.pt/pneus", wait_until="networkidle", timeout=30000)
+            await asyncio.sleep(1)
+
+        medida_norm = normalize_medida(medida)
+        print(f"  [ABTyres] Pesquisa: {medida_norm}")
+        await page.goto("https://b2b.abtyres.pt/pneus", wait_until="networkidle", timeout=30000)
+        await asyncio.sleep(1)
+
+        pesq = page.locator('input[name="pesq"]').first
+        await pesq.fill(medida_norm)
+        await asyncio.sleep(0.3)
+        await page.locator('button:has-text("PESQUISA")').first.click()
+
+        # Wait for spinner to disappear
+        try:
+            await page.wait_for_selector('#loading', state='hidden', timeout=30000)
+        except Exception:
+            await asyncio.sleep(5)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
+
+        html = await page.content()
+        products = _parse_abtyres_html(html)
+
+        result["products"] = products
+        if products:
+            result["price"] = min(p["price"] for p in products)
+            print(f"  [ABTyres] {medida}: {len(products)} produtos, mín €{result['price']}")
+        else:
+            result["error"] = "Nenhum produto encontrado"
+            print(f"  [ABTyres] {medida}: sem produtos")
+
     except Exception as e:
         result["error"] = str(e)
-        print(f"  [ABT Tyres] Error: {e}")
-    
+        print(f"  [ABTyres] Erro: {e}")
+
     return result
 
 async def scrape_tugapneus(page, username: str, password: str, medida: str,
@@ -3524,6 +3552,98 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                 await _and_browser.close()
             continue  # Skip the generic per-medida loop below
 
+        # ── ABTyres: sessão única para todas as medidas ─────────────────────
+        # Login uma vez; cada medida navega directamente para /pneus e pesquisa.
+        if 'abtyres' in supplier_name:
+            _abt_ctx_kwargs = dict(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1920, 'height': 1080},
+                locale='pt-PT',
+            )
+            async with async_playwright() as _p_abt:
+                _abt_browser = await _p_abt.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox',
+                          '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                )
+                _abt_ctx = await _abt_browser.new_context(**_abt_ctx_kwargs)
+                _abt_first = True
+                _abt_summary = []
+
+                for medida in medidas:
+                    _abt_page = await _abt_ctx.new_page()
+                    await _abt_page.add_init_script(
+                        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+                    )
+                    try:
+                        result = await asyncio.wait_for(
+                            scrape_abtyres(
+                                _abt_page,
+                                supplier['username'], supplier['password'],
+                                medida,
+                                skip_login=(not _abt_first),
+                            ),
+                            timeout=120,
+                        )
+                        _abt_first = False
+                        result["medida"] = medida
+                        results.append(result)
+
+                        products = result.get('products', [])
+                        now = datetime.now(timezone.utc)
+                        conn_save = await _pg_connect()
+                        try:
+                            await conn_save.execute(
+                                "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
+                                supplier['name'], medida,
+                            )
+                            if products:
+                                for prod in products:
+                                    await conn_save.execute(
+                                        """INSERT INTO scraped_prices
+                                               (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
+                                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        prod.get('brand', '').upper(),
+                                        prod.get('model', ''),
+                                        prod.get('price'),
+                                        prod.get('load_index', ''),
+                                        now,
+                                    )
+                                print(f"  [ABTyres] {medida}: guardados {len(products)} produtos")
+                            elif result.get('price') is not None:
+                                await conn_save.execute(
+                                    """INSERT INTO scraped_prices
+                                           (id, supplier_name, medida, price, scraped_at)
+                                       VALUES ($1,$2,$3,$4,$5)""",
+                                    str(uuid.uuid4()), supplier['name'], medida,
+                                    result['price'], now,
+                                )
+                                print(f"  [ABTyres] {medida}: €{result['price']} (sem dados marca)")
+                            else:
+                                print(f"  [ABTyres] {medida}: sem produtos — registos antigos apagados")
+                        finally:
+                            await conn_save.close()
+
+                        _err = result.get('error') or ''
+                        _np  = len(result.get('products', []))
+                        _abt_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+
+                    except asyncio.TimeoutError:
+                        print(f"  [ABTyres] Timeout em {medida}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                        _abt_summary.append(f"{medida}:TIMEOUT")
+                    except Exception as _e_abt:
+                        print(f"  [ABTyres] Erro em {medida}: {_e_abt}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_abt)})
+                        _abt_summary.append(f"{medida}:ERR")
+                    finally:
+                        await _abt_page.close()
+
+                print(f"  [ABTyres] RESUMO: {' | '.join(_abt_summary)}")
+                await _abt_browser.close()
+            continue  # Skip the generic per-medida loop below
+
         # ── Pneus Cruzeiro: sessão única para todas as medidas ──────────────
         # Login só uma vez (reCAPTCHA invisible resolve automaticamente);
         # cada medida usa uma página nova no mesmo contexto autenticado.
@@ -3683,7 +3803,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     elif 'aguesport' in supplier_name:
                         result = await scrape_aguesport(page, supplier['username'], supplier['password'], medida)
                     elif 'abt' in supplier_name:
-                        result = await scrape_abt_tyres(page, supplier['username'], supplier['password'], medida)
+                        result = await scrape_abtyres(page, supplier['username'], supplier['password'], medida)
                     elif is_tuga:
                         result = await scrape_tugapneus(page, supplier['username'], supplier['password'], medida, marca, modelo)
                     elif 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:
@@ -3856,7 +3976,7 @@ async def _run_supplier_async(supplier_id: str, sizes: list, job_id: str = None)
                 elif 'aguesport' in supplier_name:
                     result = await scrape_aguesport(page, username, password, medida)
                 elif 'abt' in supplier_name:
-                    result = await scrape_abt_tyres(page, username, password, medida)
+                    result = await scrape_abtyres(page, username, password, medida)
                 elif 'tugapneus' in supplier_name or 'tuga' in supplier_name:
                     result = await scrape_tugapneus(page, username, password, medida)
                 elif 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:
