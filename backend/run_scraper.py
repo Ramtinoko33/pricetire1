@@ -1651,6 +1651,125 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
 
     return result
 
+def _parse_andres_html(html: str) -> list:
+    """Parse product list from Grupo Andres buscador page HTML.
+
+    Each card is separated by result-thumbnail-tooltip="".
+    Brand in <img title="MARCA">.
+    Description in data-ajax-description="205/55 R16 91V TURANZA 6" (no brand).
+    P. Compre in class="campaign-price"><span> (fallback: class="campaign-base-price").
+    """
+    import html as htmllib
+
+    desc_re      = re.compile(r'data-ajax-description="([^"]+)"')
+    brand_re     = re.compile(r'<img[^>]*title="([A-Z][A-Z0-9 \-/]+)"')
+    camp_price_re = re.compile(r'class="campaign-price"><span[^>]*>\s*([\d,.]+)')
+    base_price_re = re.compile(r'class="campaign-base-price">\s*([\d,.]+)')
+    title_re     = re.compile(
+        r'\d{3}/\d{2}\s+R\d{2}\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s+(.*)',
+        re.IGNORECASE,
+    )
+
+    products = []
+    for card in re.split(r'(?=result-thumbnail-tooltip="")', html)[1:]:
+        d = desc_re.search(card)
+        b = brand_re.search(card)
+        if not d or not b:
+            continue
+
+        p = camp_price_re.search(card) or base_price_re.search(card)
+        if not p:
+            continue
+
+        try:
+            price = float(p.group(1).replace(',', '.'))
+        except ValueError:
+            continue
+        if price <= 0:
+            continue
+
+        desc = htmllib.unescape(d.group(1)).strip()
+        m = title_re.match(desc)
+        if not m:
+            continue
+
+        products.append({
+            'brand':      b.group(1).strip().upper(),
+            'model':      m.group(2).strip().upper(),
+            'load_index': m.group(1).strip().upper(),
+            'price':      price,
+        })
+    return products
+
+
+async def scrape_grupo_andres(page, username: str, password: str, medida: str,
+                               skip_login: bool = False) -> dict:
+    """Scrape Grupo Andres B2B portal (online.grupoandres.com).
+
+    Login: grupoandres.com/pt-pt/ via JS form submit (dois forms desktop/mobile).
+    Pesquisa: navegar directamente para buscador?category=cubiertas&searchText={medida_norm}.
+    Resultados: _parse_andres_html.
+    """
+    result = {
+        "supplier": "Grupo Andres",
+        "price": None,
+        "error": None,
+        "products": [],
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    try:
+        if not skip_login:
+            print("  [Andres] Login...")
+            await page.goto("https://www.grupoandres.com/pt-pt/",
+                            wait_until="networkidle", timeout=60000)
+            await page.evaluate(
+                'function(args) {'
+                '  var forms = document.querySelectorAll("form");'
+                '  for (var i = 0; i < forms.length; i++) {'
+                '    var fields = forms[i].querySelectorAll("input");'
+                '    for (var j = 0; j < fields.length; j++) {'
+                '      if (fields[j].name.indexOf("[user]") >= 0) fields[j].value = args[0];'
+                '      if (fields[j].name.indexOf("[pass]") >= 0) fields[j].value = args[1];'
+                '    }'
+                '    if (fields.length > 0) { forms[i].submit(); break; }'
+                '  }'
+                '}',
+                [username, password]
+            )
+            await asyncio.sleep(5)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            print(f"  [Andres] URL após login: {page.url}")
+
+        medida_norm = normalize_medida(medida)
+        search_url = (
+            f"https://online.grupoandres.com/buscador"
+            f"?category=cubiertas&searchText={medida_norm}"
+        )
+        print(f"  [Andres] Pesquisa: {search_url}")
+        await page.goto(search_url, wait_until="networkidle", timeout=60000)
+        await asyncio.sleep(3)
+
+        html = await page.content()
+        products = _parse_andres_html(html)
+
+        if products:
+            result["products"] = products
+            result["price"] = min(p["price"] for p in products)
+            print(f"  [Andres] {medida}: {len(products)} produtos, mín €{result['price']}")
+        else:
+            result["error"] = "Nenhum produto encontrado"
+            print(f"  [Andres] {medida}: sem produtos")
+
+    except Exception as e:
+        result["error"] = str(e)
+        print(f"  [Andres] Erro: {e}")
+
+    return result
+
+
 def _parse_aguesport_html(html: str) -> list:
     """Parse product list from Aguesport results page HTML.
 
@@ -3311,6 +3430,98 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
 
                 print(f"  [Aguesport] RESUMO: {' | '.join(_agu_summary)}")
                 await _agu_browser.close()
+            continue  # Skip the generic per-medida loop below
+
+        # ── Grupo Andres: sessão única para todas as medidas ───────────────
+        # Login uma vez via JS form submit; pesquisa por URL directa.
+        if 'andres' in supplier_name:
+            _and_ctx_kwargs = dict(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1920, 'height': 1080},
+                locale='pt-PT',
+            )
+            async with async_playwright() as _p_and:
+                _and_browser = await _p_and.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox',
+                          '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                )
+                _and_ctx = await _and_browser.new_context(**_and_ctx_kwargs)
+                _and_first = True
+                _and_summary = []
+
+                for medida in medidas:
+                    _and_page = await _and_ctx.new_page()
+                    await _and_page.add_init_script(
+                        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+                    )
+                    try:
+                        result = await asyncio.wait_for(
+                            scrape_grupo_andres(
+                                _and_page,
+                                supplier['username'], supplier['password'],
+                                medida,
+                                skip_login=(not _and_first),
+                            ),
+                            timeout=120,
+                        )
+                        _and_first = False
+                        result["medida"] = medida
+                        results.append(result)
+
+                        products = result.get('products', [])
+                        now = datetime.now(timezone.utc)
+                        conn_save = await _pg_connect()
+                        try:
+                            await conn_save.execute(
+                                "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
+                                supplier['name'], medida,
+                            )
+                            if products:
+                                for prod in products:
+                                    await conn_save.execute(
+                                        """INSERT INTO scraped_prices
+                                               (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
+                                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        prod.get('brand', '').upper(),
+                                        prod.get('model', ''),
+                                        prod.get('price'),
+                                        prod.get('load_index', ''),
+                                        now,
+                                    )
+                                print(f"  [Andres] {medida}: guardados {len(products)} produtos")
+                            elif result.get('price') is not None:
+                                await conn_save.execute(
+                                    """INSERT INTO scraped_prices
+                                           (id, supplier_name, medida, price, scraped_at)
+                                       VALUES ($1,$2,$3,$4,$5)""",
+                                    str(uuid.uuid4()), supplier['name'], medida,
+                                    result['price'], now,
+                                )
+                                print(f"  [Andres] {medida}: €{result['price']} (sem dados marca)")
+                            else:
+                                print(f"  [Andres] {medida}: sem produtos — registos antigos apagados")
+                        finally:
+                            await conn_save.close()
+
+                        _err = result.get('error') or ''
+                        _np  = len(result.get('products', []))
+                        _and_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+
+                    except asyncio.TimeoutError:
+                        print(f"  [Andres] Timeout em {medida}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                        _and_summary.append(f"{medida}:TIMEOUT")
+                    except Exception as _e_and:
+                        print(f"  [Andres] Erro em {medida}: {_e_and}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_and)})
+                        _and_summary.append(f"{medida}:ERR")
+                    finally:
+                        await _and_page.close()
+
+                print(f"  [Andres] RESUMO: {' | '.join(_and_summary)}")
+                await _and_browser.close()
             continue  # Skip the generic per-medida loop below
 
         # ── Pneus Cruzeiro: sessão única para todas as medidas ──────────────
