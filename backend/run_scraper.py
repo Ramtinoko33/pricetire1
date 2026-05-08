@@ -1719,6 +1719,9 @@ async def scrape_aguesport(page, username: str, password: str, medida: str,
 
         medida_norm = normalize_medida(medida)
         print(f"  [Aguesport] Pesquisa: {medida_norm}")
+        if skip_login:
+            await page.goto("https://encomendas.aguesport.com/",
+                            wait_until="networkidle", timeout=30000)
         medida_field = page.locator('input[placeholder*="Medida"]').first
         await medida_field.fill(medida_norm)
         await asyncio.sleep(0.5)
