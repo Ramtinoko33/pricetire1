@@ -1885,13 +1885,17 @@ def _parse_abtyres_html(html: str) -> list:
     products = []
     for row_m in row_re.finditer(html):
         row_html = row_m.group(0)
+        # BUG2 FIX (a): fundo amarelo → linha DEMO
         if 'FFF63D' in row_html or 'fff63d' in row_html:
-            continue  # skip DEMO rows
+            continue
         fields = {m.group(1): m.group(2) for m in input_re.finditer(row_html)}
         marca  = fields.get('marca', '').strip().upper()
         nome   = fields.get('nome', '').strip()
         preco  = fields.get('preco', '').strip()
         if not nome or not preco:
+            continue
+        # BUG2 FIX (b): marca com sufixo DEMO (ex: 'NEXEN DEMO', 'KUMHO DEMO')
+        if 'DEMO' in marca:
             continue
         try:
             price = float(preco.replace(',', '.'))
@@ -1929,29 +1933,30 @@ async def scrape_abtyres(page, username: str, password: str, medida: str,
     try:
         if not skip_login:
             print("  [ABTyres] Login...")
-            await page.goto("https://b2b.abtyres.pt/menu", wait_until="networkidle", timeout=60000)
+            # BUG1 FIX: domcontentloaded em vez de networkidle (loading azul mantém rede activa)
+            await page.goto("https://b2b.abtyres.pt/menu", wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(1)
             current = page.url
             if 'menu' not in current and 'pneus' not in current:
                 # Need to login
-                await page.goto("https://b2b.abtyres.pt/", wait_until="networkidle", timeout=60000)
+                await page.goto("https://b2b.abtyres.pt/", wait_until="domcontentloaded", timeout=60000)
                 await asyncio.sleep(1)
                 await page.locator('input[name="user"]').first.fill(username)
                 await page.locator('input[type="password"]').first.fill(password)
                 await page.locator('button:has-text("Entrar")').first.click()
                 await asyncio.sleep(4)
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=20000)
+                    await page.wait_for_load_state("domcontentloaded", timeout=20000)
                 except Exception:
                     pass
                 print(f"  [ABTyres] URL após login: {page.url}")
         else:
-            await page.goto("https://b2b.abtyres.pt/pneus", wait_until="networkidle", timeout=30000)
+            await page.goto("https://b2b.abtyres.pt/pneus", wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(1)
 
         medida_norm = normalize_medida(medida)
         print(f"  [ABTyres] Pesquisa: {medida_norm}")
-        await page.goto("https://b2b.abtyres.pt/pneus", wait_until="networkidle", timeout=30000)
+        await page.goto("https://b2b.abtyres.pt/pneus", wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(1)
 
         pesq = page.locator('input[name="pesq"]').first
@@ -1959,15 +1964,15 @@ async def scrape_abtyres(page, username: str, password: str, medida: str,
         await asyncio.sleep(0.3)
         await page.locator('button:has-text("PESQUISA")').first.click()
 
-        # Wait for spinner to disappear
+        # Aguarda spinner desaparecer, depois aguarda primeira linha de resultado
         try:
-            await page.wait_for_selector('#loading', state='hidden', timeout=30000)
-        except Exception:
-            await asyncio.sleep(5)
-        try:
-            await page.wait_for_load_state("networkidle", timeout=15000)
+            await page.wait_for_selector('#loading', state='hidden', timeout=20000)
         except Exception:
             pass
+        try:
+            await page.wait_for_selector('tr[role="row"]', state='visible', timeout=20000)
+        except Exception:
+            await asyncio.sleep(5)
 
         html = await page.content()
         products = _parse_abtyres_html(html)
@@ -3583,7 +3588,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                 medida,
                                 skip_login=(not _abt_first),
                             ),
-                            timeout=120,
+                            timeout=180,
                         )
                         _abt_first = False
                         result["medida"] = medida
