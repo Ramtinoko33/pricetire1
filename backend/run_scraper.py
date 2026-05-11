@@ -3138,6 +3138,49 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
             return products;
         }'''
 
+        # JS reutilizável para parsear rows de HTML bruto (AJAX ou DOM).
+        # Injecta o HTML num elemento temporário → usa textContent do browser
+        # → comentários e entidades tratados correctamente, igual ao _EXTRACT_JS.
+        _PARSE_HTML_JS = r'''(html) => {
+            const temp = document.createElement('table');
+            temp.innerHTML = html;
+            const rows = temp.querySelectorAll('tr');
+            const products = [];
+
+            for (const row of rows) {
+                const cells = row.querySelectorAll('td');
+                if (cells.length < 8) continue;
+
+                let brand = '', model = '', price = null;
+
+                const produtoTxt = cells[2].textContent.trim().replace(/\s+/g, ' ');
+                let txt = produtoTxt.replace(/^PNEU\s+/i, '');
+                const parts = txt.split(' ').filter(p => p.length > 0);
+
+                if (parts.length >= 1) {
+                    brand = parts.shift().toUpperCase();
+                }
+
+                if (parts.length > 0 && /\d{3}\/\d{2}[Rr]\d{2}/.test(parts[0])) {
+                    parts.shift();
+                }
+
+                const remainingStr = parts.join(' ');
+                const idxMatch = remainingStr.match(/\b\d{2,3}[A-Z]{1,2}\b/);
+                model = (idxMatch ? remainingStr.slice(0, idxMatch.index) : remainingStr).trim();
+
+                const precoTxt = cells[7].textContent.trim();
+                const m = precoTxt.match(/(\d+[,.]\d{2})/);
+                if (m) price = parseFloat(m[1].replace(',', '.'));
+
+                if (brand && price) {
+                    products.push({brand, model, price,
+                        _raw_produto: produtoTxt, _raw_preco: precoTxt});
+                }
+            }
+            return products;
+        }'''
+
         products = await page.evaluate(_EXTRACT_JS)
         print(f"  [Cruzeiro] Página 1: {len(products)} linhas extraídas")
         for _dbg in products[:20]:
@@ -3174,15 +3217,13 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                     print(f"  [Cruzeiro] AJAX offset={_offset} erro: {_e_ajax}")
                     break
 
-                _new_prods = _parse_cruzeiro_html(_ajax_html)
-                print(f"  [CRZ-AJAX] offset={_offset} → {len(_new_prods)} produtos")
                 if '<tr' not in _ajax_html:
-                    # Resposta sem linhas = fim real da paginação
                     print(f"  [CRZ-AJAX] offset={_offset} sem <tr> — fim")
                     break
-                if not _new_prods:
-                    # Resposta tem <tr> mas parse falhou — continuar
-                    print(f"  [CRZ-AJAX] offset={_offset} parse=0 mas <tr> presente — continuar")
+                # Mesmo parser que o DOM: injecta HTML no browser e usa textContent
+                # (resolve comentários HTML, entidades, etc. que quebram o parser Python)
+                _new_prods = await page.evaluate(_PARSE_HTML_JS, _ajax_html)
+                print(f"  [CRZ-AJAX] offset={_offset} → {len(_new_prods)} produtos")
                 products.extend(_new_prods)
                 _offset += 16
 
@@ -3195,8 +3236,14 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                     del p[k]
 
         if products:
-            # Filtrar linhas sem preço válido
-            products = [p for p in products if p.get('price') and p['price'] > 5]
+            # Filtrar linhas sem preço válido e marcas com artefactos HTML (ex: "-->PNEU")
+            products = [
+                p for p in products
+                if p.get('price') and p['price'] > 5
+                and p.get('brand')
+                and not p['brand'].startswith('-->')
+                and p['brand'] not in ('', '-->', '-->PNEU')
+            ]
             # Deduplicar por marca+modelo, manter preço mais baixo
             seen = {}
             for p in products:
