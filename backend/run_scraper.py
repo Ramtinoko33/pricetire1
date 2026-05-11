@@ -1703,61 +1703,19 @@ def _parse_andres_html(html: str) -> list:
     return products
 
 
-def _parse_andres_item(item: dict) -> dict | None:
-    """Converte um item da API JSON do Andres num produto normalizado.
-
-    Estrutura confirmada via Network tab:
-      item['brand']['name']                               → "MICHELIN"
-      item['model']['name']                               → "PRIMACY 4+"
-      item['load'] + item['speed']                        → "91" + "H" = "91H"
-      item['price']['distributor_price']['campaign_price'] → 68.45 (se > 0)
-      item['price']['distributor_price']['base_price']    → 79.26 (fallback)
-    """
-    # Marca
-    brand_obj = item.get('brand') or {}
-    brand = (brand_obj.get('name') or '').strip().upper()
-    if not brand:
-        return None
-
-    # Modelo
-    model_obj = item.get('model') or {}
-    model = (model_obj.get('name') or '').strip().upper()
-
-    # Índice de carga+velocidade: combina load + speed (ex: "91" + "H" → "91H")
-    load_index = (str(item.get('load', '')) + str(item.get('speed', ''))).strip().upper()
-
-    # Preço distribuidor: campaign_price se > 0, senão base_price
-    try:
-        price_obj = item.get('price', {}).get('distributor_price', {})
-        camp = float(price_obj.get('campaign_price') or 0)
-        base = float(price_obj.get('base_price') or 0)
-        price = camp if camp > 0 else base
-    except (TypeError, ValueError):
-        return None
-    if price <= 0:
-        return None
-
-    # Ignorar produtos DEMO
-    if 'DEMO' in brand or 'DEMO' in model:
-        return None
-
-    return {
-        'brand':      brand,
-        'model':      model,
-        'load_index': load_index,
-        'price':      price,
-    }
-
-
 async def scrape_grupo_andres(page, username: str, password: str, medida: str,
                                skip_login: bool = False) -> dict:
-    """Scrape Grupo Andres B2B portal (online.grupoandres.com).
+    """Scrape Grupo Andres B2B via JSON API (online.grupoandres.com).
 
-    Login: Playwright para criar sessão autenticada.
-    Pesquisa: API JSON paginada /search/tyres?page=N — loop até resposta vazia.
-    Cookies da sessão Playwright passados como header Cookie nas chamadas aiohttp.
+    Login: Playwright em online.grupoandres.com/login — cria sessão autenticada.
+    Pesquisa: aiohttp GET /search/tyres?page=N com cookies Playwright.
+    Campos confirmados via Network tab:
+      data['search_results'][i]['brand']['name']
+      data['search_results'][i]['model']['name']
+      data['search_results'][i]['load'] + ['speed'] → load_index
+      data['search_results'][i]['price']['distributor_price']['campaign_price' | 'base_price']
     """
-    import aiohttp
+    import aiohttp as _aiohttp
     import json as _json
 
     result = {
@@ -1765,97 +1723,94 @@ async def scrape_grupo_andres(page, username: str, password: str, medida: str,
         "price": None,
         "error": None,
         "products": [],
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     try:
         if not skip_login:
-            print("  [Andres] Login em online.grupoandres.com...")
+            print("  [Andres] Login em online.grupoandres.com/login ...")
             await page.goto("https://online.grupoandres.com/login",
                             wait_until="domcontentloaded", timeout=60000)
             await page.locator('input[name="data[Usuario][user]"]').fill(username)
             await page.locator('input[name="data[Usuario][pass]"]').fill(password)
             await page.locator('form#login_form').evaluate("f => f.submit()")
-            await asyncio.sleep(3)
+            await asyncio.sleep(4)
             try:
-                await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                await page.wait_for_load_state("domcontentloaded", timeout=15000)
             except Exception:
                 pass
             print(f"  [Andres] URL após login: {page.url}")
 
-        # Extrair cookies da sessão autenticada
-        medida_norm = normalize_medida(medida)
+        # Extrair cookies da sessão autenticada do Playwright
         cookies = await page.context.cookies()
         cookie_str = '; '.join(f"{c['name']}={c['value']}" for c in cookies)
+        medida_norm = normalize_medida(medida)
 
-        buscador_url = (
-            f"https://online.grupoandres.com/buscador"
-            f"?category=cubiertas&searchText={medida_norm}"
-        )
-        headers = {
-            'Cookie': cookie_str,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'X-Requested-With': 'XMLHttpRequest',
-            'Referer': buscador_url,
-        }
-
-        # Paginar API JSON: data['search_results'] até lista vazia
         all_products: list = []
         page_num = 0
-        async with aiohttp.ClientSession() as http:
+        async with _aiohttp.ClientSession() as session:
             while True:
-                api_url = (
+                url = (
                     f"https://online.grupoandres.com/search/tyres"
                     f"?page={page_num}&step=1&filterWithStock=true&isNewSearch=true"
                     f"&sortBy=null&sortOrder=null&sortLoadSpeed=null"
                     f"&category=cubiertas&searchText={medida_norm}"
                 )
-                async with http.get(api_url, headers=headers,
-                                    timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                async with session.get(url, headers={
+                    'Cookie': cookie_str,
+                    'Accept': 'application/json',
+                    'Referer': 'https://online.grupoandres.com/',
+                    'X-Requested-With': 'XMLHttpRequest',
+                }, timeout=_aiohttp.ClientTimeout(total=30)) as resp:
                     if resp.status != 200:
-                        print(f"  [Andres] API page={page_num} status={resp.status} — parar")
+                        print(f"  [Andres] page={page_num} status={resp.status} — stop")
                         break
-                    text = await resp.text()
+                    try:
+                        data = await resp.json(content_type=None)
+                    except Exception as json_err:
+                        raw = await resp.text()
+                        print(f"  [Andres] page={page_num} JSON error: {json_err} raw={raw[:80]!r}")
+                        break
 
-                try:
-                    data = _json.loads(text)
-                except _json.JSONDecodeError:
-                    print(f"  [Andres] API page={page_num} não-JSON — sessão expirou?")
-                    print(f"  [Andres] Resposta: {text[:100]!r}")
+                items = data.get('search_results', []) if isinstance(data, dict) else []
+                if not items or data.get('empty_result', False):
+                    print(f"  [Andres] page={page_num} fim ({len(items)} items, empty_result={data.get('empty_result') if isinstance(data, dict) else '?'})")
                     break
 
-                # Resposta é dict com chave 'search_results'
-                if isinstance(data, dict):
-                    items = data.get('search_results', [])
-                    # empty_result=True indica fim da paginação
-                    if data.get('empty_result') or not items:
-                        print(f"  [Andres] API page={page_num} fim da paginacao (empty_result={data.get('empty_result')})")
-                        break
-                elif isinstance(data, list):
-                    items = data
-                    if not items:
-                        break
-                else:
-                    print(f"  [Andres] API page={page_num} formato inesperado: {str(data)[:100]}")
-                    break
-
-                print(f"  [Andres] API page={page_num}: {len(items)} items")
+                print(f"  [Andres] page={page_num}: {len(items)} items")
                 for item in items:
-                    prod = _parse_andres_item(item)
-                    if prod:
-                        all_products.append(prod)
+                    brand = (item.get('brand') or {}).get('name', '').strip().upper()
+                    model = (item.get('model') or {}).get('name', '').strip().upper()
+                    load  = str(item.get('load', '')).strip()
+                    speed = str(item.get('speed', '')).strip()
+                    load_index = (load + speed).upper()
+                    dist = (item.get('price') or {}).get('distributor_price') or {}
+                    price_val = dist.get('campaign_price') or dist.get('base_price')
+                    if not price_val or not brand or not model:
+                        continue
+                    try:
+                        price = float(price_val)
+                    except (TypeError, ValueError):
+                        continue
+                    if price <= 0:
+                        continue
+                    all_products.append({
+                        'brand':      brand,
+                        'model':      model,
+                        'load_index': load_index,
+                        'price':      price,
+                    })
 
                 page_num += 1
                 if page_num > 50:
-                    print("  [Andres] Limite de 50 paginas atingido")
+                    print("  [Andres] Limite 50 páginas atingido")
                     break
 
-        print(f"  [Andres] {medida}: {len(all_products)} produtos em {page_num} paginas")
+        print(f"  [Andres] {medida}: {len(all_products)} produtos em {page_num} páginas")
 
         if all_products:
             result["products"] = all_products
             result["price"] = min(p["price"] for p in all_products)
-            print(f"  [Andres] {medida}: mín €{result['price']}")
+            print(f"  [Andres] {medida}: mín €{result['price']:.2f}")
         else:
             result["error"] = "Nenhum produto encontrado"
             print(f"  [Andres] {medida}: sem produtos")
