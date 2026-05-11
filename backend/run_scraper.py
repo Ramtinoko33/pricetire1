@@ -1655,17 +1655,18 @@ def _parse_andres_html(html: str) -> list:
     """Parse product list from Grupo Andres buscador page HTML.
 
     Each card is separated by result-thumbnail-tooltip="".
-    Brand in <img title="MARCA">.
+    Brand in <img title="Michelin"> (mixed case — regex deve ser case-insensitive).
     Description in data-ajax-description="205/55 R16 91V TURANZA 6" (no brand).
     P. Compre in class="campaign-price"><span> (fallback: class="campaign-base-price").
     """
     import html as htmllib
 
-    desc_re      = re.compile(r'data-ajax-description="([^"]+)"')
-    brand_re     = re.compile(r'<img[^>]*title="([A-Z][A-Z0-9 \-/]+)"')
+    desc_re       = re.compile(r'data-ajax-description="([^"]+)"')
+    # BUG1 FIX: aceitar mixed case (ex: "Michelin", "BF Goodrich") — .upper() na extracção
+    brand_re      = re.compile(r'<img[^>]*\btitle="([A-Za-z][A-Za-z0-9 \-/]+)"')
     camp_price_re = re.compile(r'class="campaign-price"><span[^>]*>\s*([\d,.]+)')
     base_price_re = re.compile(r'class="campaign-base-price">\s*([\d,.]+)')
-    title_re     = re.compile(
+    title_re      = re.compile(
         r'\d{3}/\d{2}\s+R\d{2}\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s+(.*)',
         re.IGNORECASE,
     )
@@ -1754,6 +1755,18 @@ async def scrape_grupo_andres(page, username: str, password: str, medida: str,
             await page.wait_for_load_state("networkidle", timeout=8000)
         except Exception:
             pass
+
+        # BUG2 FIX: scroll infinito — carregar todos os produtos antes de extrair HTML
+        prev_count = 0
+        for _scroll in range(20):   # máx 20 scrolls × 1.5s = 30s extra
+            html_tmp = await page.content()
+            cur_count = len(re.findall(r'result-thumbnail-tooltip=""', html_tmp))
+            if cur_count == prev_count and _scroll > 0:
+                break
+            prev_count = cur_count
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(1.5)
+        print(f"  [Andres] {medida}: {prev_count} cards após scroll ({_scroll+1} iteracoes)")
 
         html = await page.content()
         products = _parse_andres_html(html)
