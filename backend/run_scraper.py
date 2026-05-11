@@ -2866,21 +2866,26 @@ def _parse_cruzeiro_html(html: str) -> list:
         if len(cells) < 8:
             continue
 
-        # Fabricante (coluna 1)
-        brand = ' '.join(cells[1].split()).upper()
-
-        # Produto (coluna 2): "PNEU MARCA MEDIDA MODELO ÍNDICE"
+        # Coluna 2 (Produto) é a fonte fiável — coluna 1 (Fabricante) pode
+        # conter "PNEU", texto de imagem ou estar vazia.
+        # Formato: "PNEU MARCA MEDIDA MODELO ÍNDICE"
+        #   ex: "PNEU MICHELIN 215/55R16 PRIMACY 5 91V"
+        #   ex: "NEXEN 215/55R18 N'FERA RU1 99V XL"  (sem prefixo PNEU)
         prod  = ' '.join(cells[2].split())
         txt   = re.sub(r'^PNEU\s+', '', prod, flags=re.IGNORECASE)
-        parts = txt.split()
+        parts = [p for p in txt.split() if p]
 
-        if not brand and parts:
-            brand = parts.pop(0).upper()
+        if not parts:
+            continue
 
-        # Ignorar token de medida ("205/55R16")
+        # 1. Primeiro token = MARCA (sempre da coluna Produto)
+        brand = parts.pop(0).upper()
+
+        # 2. Ignorar token de medida ("205/55R16")
         if parts and re.match(r'\d{3}/\d{2}[Rr]\d{2}', parts[0]):
             parts.pop(0)
 
+        # 3. Modelo = tudo antes do primeiro índice de carga+velocidade
         remaining = ' '.join(parts)
         idx_m = re.search(r'\b\d{2,3}[A-Z]{1,2}\b', remaining)
         model = remaining[:idx_m.start()].strip() if idx_m else remaining.strip()
@@ -3089,36 +3094,29 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
 
                 let brand = '', model = '', price = null;
 
-                // ── Coluna Fabricante (índice 1) — fonte primária da marca ──
-                // Contém o nome do fabricante como texto ou alt da imagem
-                const fabTxt = cells[1].textContent.trim().replace(/\s+/g, ' ').toUpperCase();
-                const fabImg = cells[1].querySelector('img');
-                const fabAlt = fabImg ? (fabImg.alt || fabImg.title || '').trim().toUpperCase() : '';
-                brand = fabTxt || fabAlt;
-
-                // ── Coluna Produto (índice 2) — fonte do modelo ────────────
+                // ── Coluna Produto (índice 2) — fonte fiável de marca e modelo ──
+                // Coluna Fabricante (índice 1) pode conter "PNEU", alt de imagem
+                // incorrecta ou texto de fallback — NÃO usar como fonte primária.
                 // Formato: "PNEU MARCA MEDIDA MODELO ÍNDICE"
-                // ex.: "PNEU MICHELIN 205/55R16 PRIMACY 5 91V"
+                //   ex: "PNEU MICHELIN 205/55R16 PRIMACY 5 91V"
+                //   ex: "NEXEN 215/55R18 N'FERA RU1 99V XL"  (sem prefixo PNEU)
                 const produtoTxt = cells[2].textContent.trim().replace(/\s+/g, ' ');
                 let txt = produtoTxt.replace(/^PNEU\s+/i, '');
-                const parts = txt.split(' ');
+                const parts = txt.split(' ').filter(p => p.length > 0);
 
-                // Se coluna Fabricante estava vazia, extrair marca do Produto (fallback)
-                if (!brand && parts.length >= 1) {
-                    brand = parts[0].toUpperCase();
+                // 1. Primeiro token = MARCA (sempre)
+                if (parts.length >= 1) {
+                    brand = parts.shift().toUpperCase();
+                }
+
+                // 2. Saltar token de medida (ex: "205/55R16")
+                if (parts.length > 0 && /\d{3}\/\d{2}[Rr]\d{2}/.test(parts[0])) {
                     parts.shift();
                 }
 
-                // Saltar token que parece medida (ex: "205/55R16")
-                if (parts.length > 0 && /\d{3}[\/]\d{2}[Rr]\d{2}/.test(parts[0])) {
-                    parts.shift();
-                }
-
-                // Modelo = tudo antes do primeiro índice de velocidade (ex: "91V", "94W XL")
-                // Estratégia: juntar os parts e cortar na primeira ocorrência de \d{2,3}[A-Z]
-                // ex: "RPX-800 91V (COM PROT JANTE)" → "RPX-800"
-                // ex: "DIMAX TOURING 94V XL FP (EVC)" → "DIMAX TOURING"
+                // 3. Modelo = tudo antes do primeiro índice de carga+velocidade
                 // ex: "PRIMACY 5 91V" → "PRIMACY 5"
+                // ex: "EFFICIENTGRIP PERFORMANCE 2 99V XL" → "EFFICIENTGRIP PERFORMANCE 2"
                 const remainingStr = parts.join(' ');
                 const idxMatch = remainingStr.match(/\b\d{2,3}[A-Z]{1,2}\b/);
                 model = (idxMatch ? remainingStr.slice(0, idxMatch.index) : remainingStr).trim();
@@ -3128,7 +3126,8 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                 const m = precoTxt.match(/(\d+[,.]\d{2})/);
                 if (m) price = parseFloat(m[1].replace(',', '.'));
 
-                // DEBUG: emitir sempre para diagnóstico
+                // DEBUG: emitir para diagnóstico
+                const fabTxt = cells[1].textContent.trim().replace(/\s+/g, ' ').toUpperCase();
                 products.push({
                     brand, model, price,
                     _raw_fabricante: fabTxt,
@@ -3176,9 +3175,14 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                     break
 
                 _new_prods = _parse_cruzeiro_html(_ajax_html)
-                print(f"  [Cruzeiro] AJAX offset={_offset}: {len(_new_prods)} produtos")
-                if not _new_prods:
+                print(f"  [CRZ-AJAX] offset={_offset} → {len(_new_prods)} produtos")
+                if '<tr' not in _ajax_html:
+                    # Resposta sem linhas = fim real da paginação
+                    print(f"  [CRZ-AJAX] offset={_offset} sem <tr> — fim")
                     break
+                if not _new_prods:
+                    # Resposta tem <tr> mas parse falhou — continuar
+                    print(f"  [CRZ-AJAX] offset={_offset} parse=0 mas <tr> presente — continuar")
                 products.extend(_new_prods)
                 _offset += 16
 
