@@ -24,6 +24,7 @@ sys.path.insert(0, '/app/backend')
 import asyncpg
 from playwright.async_api import async_playwright
 import re
+import aiohttp
 
 # PostgreSQL connection
 DATABASE_URL = os.environ['DATABASE_URL']
@@ -1715,9 +1716,6 @@ async def scrape_grupo_andres(page, username: str, password: str, medida: str,
       data['search_results'][i]['load'] + ['speed'] → load_index
       data['search_results'][i]['price']['distributor_price']['campaign_price' | 'base_price']
     """
-    import aiohttp as _aiohttp
-    import json as _json
-
     result = {
         "supplier": "Grupo Andres",
         "price": None,
@@ -1747,7 +1745,7 @@ async def scrape_grupo_andres(page, username: str, password: str, medida: str,
 
         all_products: list = []
         page_num = 0
-        async with _aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession() as session:
             while True:
                 url = (
                     f"https://online.grupoandres.com/search/tyres"
@@ -1760,7 +1758,7 @@ async def scrape_grupo_andres(page, username: str, password: str, medida: str,
                     'Accept': 'application/json',
                     'Referer': 'https://online.grupoandres.com/',
                     'X-Requested-With': 'XMLHttpRequest',
-                }, timeout=_aiohttp.ClientTimeout(total=30)) as resp:
+                }, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                     if resp.status != 200:
                         print(f"  [Andres] page={page_num} status={resp.status} — stop")
                         break
