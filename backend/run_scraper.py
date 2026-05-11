@@ -2849,6 +2849,58 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
     return products
 
 
+def _parse_cruzeiro_html(html: str) -> list:
+    """Parse <tr> rows from Cruzeiro HTMX AJAX response HTML.
+
+    Colunas: 0=Imagem 1=Fabricante 2=Produto 3=DOT 4=Stock 5=Etq 6=Qtd 7=Preço 8=PVP
+    Formato Produto: "PNEU MARCA MEDIDA MODELO ÍNDICE"
+      ex.: "PNEU MICHELIN 205/55R16 PRIMACY 5 91V"
+    """
+    tag_re = re.compile(r'<[^>]+>', re.DOTALL)
+    td_re  = re.compile(r'<td\b[^>]*>(.*?)</td>', re.DOTALL | re.IGNORECASE)
+    tr_re  = re.compile(r'<tr\b[^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
+    products = []
+
+    for tr_m in tr_re.finditer(html):
+        cells = [tag_re.sub('', td.group(1)).strip() for td in td_re.finditer(tr_m.group(1))]
+        if len(cells) < 8:
+            continue
+
+        # Fabricante (coluna 1)
+        brand = ' '.join(cells[1].split()).upper()
+
+        # Produto (coluna 2): "PNEU MARCA MEDIDA MODELO ÍNDICE"
+        prod  = ' '.join(cells[2].split())
+        txt   = re.sub(r'^PNEU\s+', '', prod, flags=re.IGNORECASE)
+        parts = txt.split()
+
+        if not brand and parts:
+            brand = parts.pop(0).upper()
+
+        # Ignorar token de medida ("205/55R16")
+        if parts and re.match(r'\d{3}/\d{2}[Rr]\d{2}', parts[0]):
+            parts.pop(0)
+
+        remaining = ' '.join(parts)
+        idx_m = re.search(r'\b\d{2,3}[A-Z]{1,2}\b', remaining)
+        model = remaining[:idx_m.start()].strip() if idx_m else remaining.strip()
+
+        # Preço (coluna 7)
+        m_price = re.search(r'(\d+[,.]\d{2})', cells[7])
+        if not m_price:
+            continue
+        try:
+            price = float(m_price.group(1).replace(',', '.'))
+        except ValueError:
+            continue
+        if price <= 5:
+            continue
+
+        products.append({'brand': brand, 'model': model, 'price': price})
+
+    return products
+
+
 async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                                url_login: str = "https://www.pneuscruzeiro.pt/pt/login",
                                url_search: str = "https://www.pneuscruzeiro.pt/pt/privatearea",
@@ -3092,57 +3144,45 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
         for _dbg in products[:20]:
             print(f"  [Cruzeiro DEBUG] fab={_dbg.get('_raw_fabricante','?')!r:20} | produto={_dbg.get('_raw_produto','?')!r:60} | brand={_dbg.get('brand','?')!r:15} | model={_dbg.get('model','?')!r:30} | price={_dbg.get('price')}")
 
-        # ── Paginação: clicar "próxima página" até não haver mais ────────────
-        _page_num = 1
-        _MAX_PAGES = 10
-        while _page_num < _MAX_PAGES:
-            # Detectar botão de próxima página (seta direita / próximo)
-            _next_sel = (
-                'a[aria-label*="próxima" i], a[aria-label*="next" i], '
-                'a[title*="próxima" i], a[title*="next" i], '
-                'li.next:not(.disabled) a, '
-                '.pagination a[rel="next"], '
-                'a.proxima-pagina, button.proxima-pagina, '
-                '[id*="proxima_pagina"], [id*="next_page"], '
-                'a:has(> i.fa-chevron-right), a:has(> i.fa-angle-right), '
-                'a:has(> span:text-is("›")), a:has(> span:text-is("»")), '
-                'button:has(> i.fa-chevron-right)'
-            )
-            try:
-                _next_btn = page.locator(_next_sel).first
-                _btn_count = await _next_btn.count()
-                if _btn_count == 0:
-                    break
-                _is_disabled = await _next_btn.get_attribute('disabled')
-                _parent_class = await _next_btn.evaluate('el => el.closest("li")?.className || ""')
-                if _is_disabled or 'disabled' in _parent_class:
-                    break
-            except Exception:
-                break
-
-            _page_num += 1
-            try:
-                async with page.expect_response(
-                    lambda r: 'produtos-tabela-ajax' in r.url,
-                    timeout=15000,
-                ) as _resp_pg:
-                    await _next_btn.click()
-                await _resp_pg.value
-                await asyncio.sleep(1)
-            except Exception as _e_pg:
-                # Sem HTMX response — tentar networkidle
+        # ── Paginação HTMX AJAX: offset=16, 32, 48... ───────────────────────
+        # O site usa hx-trigger="intersect once" — não há botão de página.
+        # Chama o endpoint AJAX directamente com os cookies de sessão.
+        print(f"  [Cruzeiro] Página 1 (DOM): {len(products)} produtos; a paginar via AJAX...")
+        _ajax_base = "https://www.pneuscruzeiro.pt/pt/produtos-tabela-ajax"
+        _cookies = await page.context.cookies()
+        _cookie_str = '; '.join(f"{c['name']}={c['value']}" for c in _cookies)
+        _offset = 16
+        async with aiohttp.ClientSession() as _http:
+            while _offset <= 320:
+                _ajax_url = (
+                    f"{_ajax_base}?offset={_offset}&fabricante=&runflat=0"
+                    f"&prodssrchtxt={medida_search}"
+                    f"&medidas=&orderby=preco_do_artigo"
+                    f"&orderdirection=ASC&tipoListaProdutos=1"
+                )
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=10000)
-                except Exception:
-                    pass
+                    async with _http.get(_ajax_url, headers={
+                        'Cookie': _cookie_str,
+                        'Accept': 'text/html,*/*',
+                        'HX-Request': 'true',
+                        'Referer': search_tab_url,
+                    }, timeout=aiohttp.ClientTimeout(total=20)) as _resp:
+                        if _resp.status != 200:
+                            print(f"  [Cruzeiro] AJAX offset={_offset} status={_resp.status} — stop")
+                            break
+                        _ajax_html = await _resp.text()
+                except Exception as _e_ajax:
+                    print(f"  [Cruzeiro] AJAX offset={_offset} erro: {_e_ajax}")
+                    break
 
-            _new_prods = await page.evaluate(_EXTRACT_JS)
-            if not _new_prods:
-                break
-            print(f"  [Cruzeiro] Página {_page_num}: {len(_new_prods)} produtos")
-            products.extend(_new_prods)
+                _new_prods = _parse_cruzeiro_html(_ajax_html)
+                print(f"  [Cruzeiro] AJAX offset={_offset}: {len(_new_prods)} produtos")
+                if not _new_prods:
+                    break
+                products.extend(_new_prods)
+                _offset += 16
 
-        print(f"  [Cruzeiro] Produtos extraídos (total {_page_num} pág.): {len(products)}")
+        print(f"  [Cruzeiro] Total após paginação AJAX: {len(products)} produtos")
 
         # Limpar campos _raw_* usados apenas para debug
         for p in products:
