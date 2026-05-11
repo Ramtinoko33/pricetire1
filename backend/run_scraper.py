@@ -1703,14 +1703,83 @@ def _parse_andres_html(html: str) -> list:
     return products
 
 
+def _parse_andres_item(item: dict, idx: int = 0) -> dict | None:
+    """Converte um item da API JSON do Andres num produto normalizado.
+
+    Na primeira chamada (idx==0) imprime os campos disponíveis para diagnóstico.
+    Tenta múltiplos nomes de campo comuns em portais B2B CakePHP ibéricos.
+    """
+    import json as _json
+    if idx == 0:
+        print(f"  [Andres-API] Campos do item[0]: {list(item.keys())}")
+        print(f"  [Andres-API] item[0] completo: {_json.dumps(item, ensure_ascii=False)[:500]}")
+
+    def _get(*keys):
+        for k in keys:
+            v = item.get(k) or item.get(k.lower()) or item.get(k.upper())
+            if v:
+                return str(v).strip()
+        return ''
+
+    # Preço — P. Compre
+    price_raw = _get('PrecioCompra', 'precio_compra', 'price', 'Price',
+                     'pvp', 'Pvp', 'precioCompra', 'purchase_price')
+    if not price_raw:
+        # Procurar qualquer campo numérico com "precio" ou "price"
+        for k, v in item.items():
+            if ('precio' in k.lower() or 'price' in k.lower()) and v:
+                price_raw = str(v)
+                break
+    try:
+        price = float(str(price_raw).replace(',', '.').replace(' ', ''))
+    except (ValueError, TypeError):
+        return None
+    if price <= 0:
+        return None
+
+    # Marca
+    brand = _get('Marca', 'marca', 'brand', 'Brand', 'fabricante', 'Fabricante').upper()
+
+    # Descrição completa (inclui medida + índice + modelo)
+    desc = _get('Descripcion', 'descripcion', 'description', 'Description',
+                'nombre', 'Nombre', 'name', 'Name', 'ArticuloDescripcion')
+
+    # Índice de carga+velocidade e modelo a partir da descrição
+    load_index = ''
+    model = desc
+    if desc:
+        # Formato típico: "205/55 R16 91V CROSSCLIMATE 2" ou "205/55R16 91V TURANZA T005"
+        m = re.search(
+            r'\d{3}/\d{2}\s*R\s*\d{2}\s+(\d{2,3}[A-Z]{1,2}(?:\s*XL)?)\s+(.*)',
+            desc, re.IGNORECASE,
+        )
+        if m:
+            load_index = m.group(1).strip().upper()
+            model = m.group(2).strip().upper()
+
+    # Ignorar produtos DEMO
+    if 'DEMO' in brand or 'DEMO' in model.upper():
+        return None
+
+    return {
+        'brand':      brand,
+        'model':      model,
+        'load_index': load_index,
+        'price':      price,
+    }
+
+
 async def scrape_grupo_andres(page, username: str, password: str, medida: str,
                                skip_login: bool = False) -> dict:
     """Scrape Grupo Andres B2B portal (online.grupoandres.com).
 
-    Login: grupoandres.com/pt-pt/ via JS form submit (dois forms desktop/mobile).
-    Pesquisa: navegar directamente para buscador?category=cubiertas&searchText={medida_norm}.
-    Resultados: _parse_andres_html.
+    Login: Playwright para criar sessão autenticada.
+    Pesquisa: API JSON paginada /search/tyres?page=N — loop até resposta vazia.
+    Cookies da sessão Playwright passados como header Cookie nas chamadas aiohttp.
     """
+    import aiohttp
+    import json as _json
+
     result = {
         "supplier": "Grupo Andres",
         "price": None,
@@ -1744,37 +1813,79 @@ async def scrape_grupo_andres(page, username: str, password: str, medida: str,
                 pass
             print(f"  [Andres] URL após login: {page.url}")
 
+        # Garantir que temos cookies de online.grupoandres.com (SSO)
         medida_norm = normalize_medida(medida)
-        search_url = (
+        buscador_url = (
             f"https://online.grupoandres.com/buscador"
             f"?category=cubiertas&searchText={medida_norm}"
         )
-        print(f"  [Andres] Pesquisa: {search_url}")
-        await page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
-        try:
-            await page.wait_for_load_state("networkidle", timeout=8000)
-        except Exception:
-            pass
+        await page.goto(buscador_url, wait_until="domcontentloaded", timeout=60000)
+        await asyncio.sleep(1)
+        print(f"  [Andres] URL buscador: {page.url}")
 
-        # BUG2 FIX: scroll infinito — carregar todos os produtos antes de extrair HTML
-        prev_count = 0
-        for _scroll in range(20):   # máx 20 scrolls × 1.5s = 30s extra
-            html_tmp = await page.content()
-            cur_count = len(re.findall(r'result-thumbnail-tooltip=""', html_tmp))
-            if cur_count == prev_count and _scroll > 0:
-                break
-            prev_count = cur_count
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await asyncio.sleep(1.5)
-        print(f"  [Andres] {medida}: {prev_count} cards após scroll ({_scroll+1} iteracoes)")
+        # Extrair cookies da sessão para usar nas chamadas HTTP directas
+        cookies = await page.context.cookies()
+        cookie_str = '; '.join(f"{c['name']}={c['value']}" for c in cookies)
 
-        html = await page.content()
-        products = _parse_andres_html(html)
+        headers = {
+            'Cookie': cookie_str,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': buscador_url,
+        }
 
-        if products:
-            result["products"] = products
-            result["price"] = min(p["price"] for p in products)
-            print(f"  [Andres] {medida}: {len(products)} produtos, mín €{result['price']}")
+        # Paginar API JSON até resposta vazia
+        all_products: list = []
+        page_num = 0
+        async with aiohttp.ClientSession() as http:
+            while True:
+                api_url = (
+                    f"https://online.grupoandres.com/search/tyres"
+                    f"?page={page_num}&step=1&filterWithStock=true&isNewSearch=true"
+                    f"&sortBy=null&sortOrder=null&sortLoadSpeed=null"
+                    f"&category=cubiertas&searchText={medida_norm}"
+                )
+                async with http.get(api_url, headers=headers,
+                                    timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                    if resp.status != 200:
+                        print(f"  [Andres] API page={page_num} status={resp.status} — parar")
+                        break
+                    text = await resp.text()
+
+                try:
+                    data = _json.loads(text)
+                except _json.JSONDecodeError:
+                    print(f"  [Andres] API page={page_num} resposta não-JSON (provavelmente login expirou)")
+                    print(f"  [Andres] Resposta (100 chars): {text[:100]!r}")
+                    break
+
+                if not data or (isinstance(data, list) and len(data) == 0):
+                    print(f"  [Andres] API page={page_num} vazia — fim da paginação")
+                    break
+
+                items = data if isinstance(data, list) else data.get('data', data.get('items', data.get('results', [])))
+                if not isinstance(items, list) or len(items) == 0:
+                    print(f"  [Andres] API page={page_num} sem items reconhecíveis: {str(data)[:200]}")
+                    break
+
+                print(f"  [Andres] API page={page_num}: {len(items)} items")
+                for i, item in enumerate(items):
+                    prod = _parse_andres_item(item, idx=len(all_products) + i)
+                    if prod:
+                        all_products.append(prod)
+
+                page_num += 1
+                if page_num > 50:   # segurança: máx 50 páginas
+                    print("  [Andres] Limite de 50 páginas atingido")
+                    break
+
+        print(f"  [Andres] {medida}: {len(all_products)} produtos após {page_num} páginas")
+
+        if all_products:
+            result["products"] = all_products
+            result["price"] = min(p["price"] for p in all_products)
+            print(f"  [Andres] {medida}: mín €{result['price']}")
         else:
             result["error"] = "Nenhum produto encontrado"
             print(f"  [Andres] {medida}: sem produtos")
