@@ -1703,62 +1703,42 @@ def _parse_andres_html(html: str) -> list:
     return products
 
 
-def _parse_andres_item(item: dict, idx: int = 0) -> dict | None:
+def _parse_andres_item(item: dict) -> dict | None:
     """Converte um item da API JSON do Andres num produto normalizado.
 
-    Na primeira chamada (idx==0) imprime os campos disponíveis para diagnóstico.
-    Tenta múltiplos nomes de campo comuns em portais B2B CakePHP ibéricos.
+    Estrutura confirmada via Network tab:
+      item['brand']['name']                               → "MICHELIN"
+      item['model']['name']                               → "PRIMACY 4+"
+      item['load'] + item['speed']                        → "91" + "H" = "91H"
+      item['price']['distributor_price']['campaign_price'] → 68.45 (se > 0)
+      item['price']['distributor_price']['base_price']    → 79.26 (fallback)
     """
-    import json as _json
-    if idx == 0:
-        print(f"  [Andres-API] Campos do item[0]: {list(item.keys())}")
-        print(f"  [Andres-API] item[0] completo: {_json.dumps(item, ensure_ascii=False)[:500]}")
+    # Marca
+    brand_obj = item.get('brand') or {}
+    brand = (brand_obj.get('name') or '').strip().upper()
+    if not brand:
+        return None
 
-    def _get(*keys):
-        for k in keys:
-            v = item.get(k) or item.get(k.lower()) or item.get(k.upper())
-            if v:
-                return str(v).strip()
-        return ''
+    # Modelo
+    model_obj = item.get('model') or {}
+    model = (model_obj.get('name') or '').strip().upper()
 
-    # Preço — P. Compre
-    price_raw = _get('PrecioCompra', 'precio_compra', 'price', 'Price',
-                     'pvp', 'Pvp', 'precioCompra', 'purchase_price')
-    if not price_raw:
-        # Procurar qualquer campo numérico com "precio" ou "price"
-        for k, v in item.items():
-            if ('precio' in k.lower() or 'price' in k.lower()) and v:
-                price_raw = str(v)
-                break
+    # Índice de carga+velocidade: combina load + speed (ex: "91" + "H" → "91H")
+    load_index = (str(item.get('load', '')) + str(item.get('speed', ''))).strip().upper()
+
+    # Preço distribuidor: campaign_price se > 0, senão base_price
     try:
-        price = float(str(price_raw).replace(',', '.').replace(' ', ''))
-    except (ValueError, TypeError):
+        price_obj = item.get('price', {}).get('distributor_price', {})
+        camp = float(price_obj.get('campaign_price') or 0)
+        base = float(price_obj.get('base_price') or 0)
+        price = camp if camp > 0 else base
+    except (TypeError, ValueError):
         return None
     if price <= 0:
         return None
 
-    # Marca
-    brand = _get('Marca', 'marca', 'brand', 'Brand', 'fabricante', 'Fabricante').upper()
-
-    # Descrição completa (inclui medida + índice + modelo)
-    desc = _get('Descripcion', 'descripcion', 'description', 'Description',
-                'nombre', 'Nombre', 'name', 'Name', 'ArticuloDescripcion')
-
-    # Índice de carga+velocidade e modelo a partir da descrição
-    load_index = ''
-    model = desc
-    if desc:
-        # Formato típico: "205/55 R16 91V CROSSCLIMATE 2" ou "205/55R16 91V TURANZA T005"
-        m = re.search(
-            r'\d{3}/\d{2}\s*R\s*\d{2}\s+(\d{2,3}[A-Z]{1,2}(?:\s*XL)?)\s+(.*)',
-            desc, re.IGNORECASE,
-        )
-        if m:
-            load_index = m.group(1).strip().upper()
-            model = m.group(2).strip().upper()
-
     # Ignorar produtos DEMO
-    if 'DEMO' in brand or 'DEMO' in model.upper():
+    if 'DEMO' in brand or 'DEMO' in model:
         return None
 
     return {
@@ -1789,23 +1769,12 @@ async def scrape_grupo_andres(page, username: str, password: str, medida: str,
     }
     try:
         if not skip_login:
-            print("  [Andres] Login...")
-            await page.goto("https://www.grupoandres.com/pt-pt/",
+            print("  [Andres] Login em online.grupoandres.com...")
+            await page.goto("https://online.grupoandres.com/login",
                             wait_until="domcontentloaded", timeout=60000)
-            await page.evaluate(
-                'function(args) {'
-                '  var forms = document.querySelectorAll("form");'
-                '  for (var i = 0; i < forms.length; i++) {'
-                '    var fields = forms[i].querySelectorAll("input");'
-                '    for (var j = 0; j < fields.length; j++) {'
-                '      if (fields[j].name.indexOf("[user]") >= 0) fields[j].value = args[0];'
-                '      if (fields[j].name.indexOf("[pass]") >= 0) fields[j].value = args[1];'
-                '    }'
-                '    if (fields.length > 0) { forms[i].submit(); break; }'
-                '  }'
-                '}',
-                [username, password]
-            )
+            await page.locator('input[name="data[Usuario][user]"]').fill(username)
+            await page.locator('input[name="data[Usuario][pass]"]').fill(password)
+            await page.locator('form#login_form').evaluate("f => f.submit()")
             await asyncio.sleep(3)
             try:
                 await page.wait_for_load_state("domcontentloaded", timeout=10000)
@@ -1813,20 +1782,15 @@ async def scrape_grupo_andres(page, username: str, password: str, medida: str,
                 pass
             print(f"  [Andres] URL após login: {page.url}")
 
-        # Garantir que temos cookies de online.grupoandres.com (SSO)
+        # Extrair cookies da sessão autenticada
         medida_norm = normalize_medida(medida)
+        cookies = await page.context.cookies()
+        cookie_str = '; '.join(f"{c['name']}={c['value']}" for c in cookies)
+
         buscador_url = (
             f"https://online.grupoandres.com/buscador"
             f"?category=cubiertas&searchText={medida_norm}"
         )
-        await page.goto(buscador_url, wait_until="domcontentloaded", timeout=60000)
-        await asyncio.sleep(1)
-        print(f"  [Andres] URL buscador: {page.url}")
-
-        # Extrair cookies da sessão para usar nas chamadas HTTP directas
-        cookies = await page.context.cookies()
-        cookie_str = '; '.join(f"{c['name']}={c['value']}" for c in cookies)
-
         headers = {
             'Cookie': cookie_str,
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -1835,7 +1799,7 @@ async def scrape_grupo_andres(page, username: str, password: str, medida: str,
             'Referer': buscador_url,
         }
 
-        # Paginar API JSON até resposta vazia
+        # Paginar API JSON: data['search_results'] até lista vazia
         all_products: list = []
         page_num = 0
         async with aiohttp.ClientSession() as http:
@@ -1856,31 +1820,37 @@ async def scrape_grupo_andres(page, username: str, password: str, medida: str,
                 try:
                     data = _json.loads(text)
                 except _json.JSONDecodeError:
-                    print(f"  [Andres] API page={page_num} resposta não-JSON (provavelmente login expirou)")
-                    print(f"  [Andres] Resposta (100 chars): {text[:100]!r}")
+                    print(f"  [Andres] API page={page_num} não-JSON — sessão expirou?")
+                    print(f"  [Andres] Resposta: {text[:100]!r}")
                     break
 
-                if not data or (isinstance(data, list) and len(data) == 0):
-                    print(f"  [Andres] API page={page_num} vazia — fim da paginação")
-                    break
-
-                items = data if isinstance(data, list) else data.get('data', data.get('items', data.get('results', [])))
-                if not isinstance(items, list) or len(items) == 0:
-                    print(f"  [Andres] API page={page_num} sem items reconhecíveis: {str(data)[:200]}")
+                # Resposta é dict com chave 'search_results'
+                if isinstance(data, dict):
+                    items = data.get('search_results', [])
+                    # empty_result=True indica fim da paginação
+                    if data.get('empty_result') or not items:
+                        print(f"  [Andres] API page={page_num} fim da paginacao (empty_result={data.get('empty_result')})")
+                        break
+                elif isinstance(data, list):
+                    items = data
+                    if not items:
+                        break
+                else:
+                    print(f"  [Andres] API page={page_num} formato inesperado: {str(data)[:100]}")
                     break
 
                 print(f"  [Andres] API page={page_num}: {len(items)} items")
-                for i, item in enumerate(items):
-                    prod = _parse_andres_item(item, idx=len(all_products) + i)
+                for item in items:
+                    prod = _parse_andres_item(item)
                     if prod:
                         all_products.append(prod)
 
                 page_num += 1
-                if page_num > 50:   # segurança: máx 50 páginas
-                    print("  [Andres] Limite de 50 páginas atingido")
+                if page_num > 50:
+                    print("  [Andres] Limite de 50 paginas atingido")
                     break
 
-        print(f"  [Andres] {medida}: {len(all_products)} produtos após {page_num} páginas")
+        print(f"  [Andres] {medida}: {len(all_products)} produtos em {page_num} paginas")
 
         if all_products:
             result["products"] = all_products
