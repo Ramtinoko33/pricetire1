@@ -391,7 +391,7 @@ async def scrape_dispnal(page, username: str, password: str, medida: str) -> dic
     
     try:
         print("  [Dispnal] Navigating...")
-        await page.goto("https://dispnal.pt/home/homepage", wait_until="networkidle", timeout=60000)
+        await page.goto("https://dispnal.pt/home/homepage", wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(3)
         
         content = await page.content()
@@ -529,7 +529,7 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
     try:
         # ── Login ────────────────────────────────────────────────────────────
         print(f"  [S. José] Navigating to login: {url_login}")
-        await page.goto(url_login, wait_until="networkidle", timeout=60000)
+        await page.goto(url_login, wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(2)
         _save_debug('/tmp/sjose_pre_login.html', await page.content())
 
@@ -577,7 +577,7 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
         # O campo aceita formato normalizado: "1956515" (sem barras, sem R)
         medida_norm = normalize_medida(medida)
         print(f"  [S. José] Navigating to search: {url_search}")
-        await page.goto(url_search, wait_until="networkidle", timeout=60000)
+        await page.goto(url_search, wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(2)
 
         search_page_url = page.url
@@ -750,7 +750,7 @@ async def scrape_euromais(page, username: str, password: str, medida: str) -> di
     
     try:
         print("  [Euromais] Logging in...")
-        await page.goto("https://www.eurotyre.pt/", wait_until="networkidle", timeout=60000)
+        await page.goto("https://www.eurotyre.pt/", wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(2)
         
         # Look for login link/button
@@ -1721,7 +1721,7 @@ async def scrape_grupo_andres(page, username: str, password: str, medida: str,
         if not skip_login:
             print("  [Andres] Login...")
             await page.goto("https://www.grupoandres.com/pt-pt/",
-                            wait_until="networkidle", timeout=60000)
+                            wait_until="domcontentloaded", timeout=60000)
             await page.evaluate(
                 'function(args) {'
                 '  var forms = document.querySelectorAll("form");'
@@ -1736,9 +1736,9 @@ async def scrape_grupo_andres(page, username: str, password: str, medida: str,
                 '}',
                 [username, password]
             )
-            await asyncio.sleep(5)
+            await asyncio.sleep(3)
             try:
-                await page.wait_for_load_state("networkidle", timeout=15000)
+                await page.wait_for_load_state("domcontentloaded", timeout=10000)
             except Exception:
                 pass
             print(f"  [Andres] URL após login: {page.url}")
@@ -1749,8 +1749,11 @@ async def scrape_grupo_andres(page, username: str, password: str, medida: str,
             f"?category=cubiertas&searchText={medida_norm}"
         )
         print(f"  [Andres] Pesquisa: {search_url}")
-        await page.goto(search_url, wait_until="networkidle", timeout=60000)
-        await asyncio.sleep(3)
+        await page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
 
         html = await page.content()
         products = _parse_andres_html(html)
@@ -1825,13 +1828,13 @@ async def scrape_aguesport(page, username: str, password: str, medida: str,
         if not skip_login:
             print("  [Aguesport] Login...")
             await page.goto("https://encomendas.aguesport.com/login",
-                            wait_until="networkidle", timeout=60000)
+                            wait_until="domcontentloaded", timeout=60000)
             await page.locator('input[type="email"]').first.fill(username)
             await page.locator('input[type="password"]').first.fill(password)
             await page.locator('button[type="submit"]').first.click()
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
             try:
-                await page.wait_for_load_state("networkidle", timeout=15000)
+                await page.wait_for_load_state("domcontentloaded", timeout=10000)
             except Exception:
                 pass
             print(f"  [Aguesport] URL após login: {page.url}")
@@ -1840,16 +1843,15 @@ async def scrape_aguesport(page, username: str, password: str, medida: str,
         print(f"  [Aguesport] Pesquisa: {medida_norm}")
         if skip_login:
             await page.goto("https://encomendas.aguesport.com/",
-                            wait_until="networkidle", timeout=30000)
+                            wait_until="domcontentloaded", timeout=30000)
         medida_field = page.locator('input[placeholder*="Medida"]').first
         await medida_field.fill(medida_norm)
         await asyncio.sleep(0.3)
         await medida_field.press("Enter")
-        await asyncio.sleep(5)
         try:
-            await page.wait_for_load_state("networkidle", timeout=15000)
+            await page.wait_for_selector('.ma-bold14', state='visible', timeout=12000)
         except Exception:
-            pass
+            await asyncio.sleep(3)
 
         html = await page.content()
         products = _parse_aguesport_html(html)
@@ -2853,7 +2855,7 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
         # ── LOGIN ────────────────────────────────────────────────────────────
         if not skip_login:
             print(f"  [Cruzeiro] A fazer login: {url_login}")
-            await page.goto(url_login, wait_until="networkidle", timeout=60000)
+            await page.goto(url_login, wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(2)
             _save_debug('/tmp/cruzeiro_pre_login.html', await page.content())
 
@@ -2908,8 +2910,8 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
         # ── PESQUISA ─────────────────────────────────────────────────────────
         search_tab_url = url_search.rstrip('?&') + '?tab=produtos'
         print(f"  [Cruzeiro] Navegando para pesquisa: {search_tab_url}")
-        await page.goto(search_tab_url, wait_until="networkidle", timeout=60000)
-        await asyncio.sleep(3)
+        await page.goto(search_tab_url, wait_until="domcontentloaded", timeout=60000)
+        await asyncio.sleep(2)
 
         # Verificar redireccção para login (sessão expirada)
         if 'login' in page.url.lower():
@@ -3281,7 +3283,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                 _sol_url_search,
                                 skip_login=(not _is_first),
                             ),
-                            timeout=150,  # 2.5 min max por medida → 5 medidas = 12.5 min max
+                            timeout=90,   # 1.5 min max por medida (fornecedores correm em paralelo)
                         )
                         _dt = (datetime.now() - _t0).total_seconds()
                         print(f"  [Soledad] Fim medida {medida}: {_dt:.0f}s, price={result.get('price')}, products={len(result.get('products',[]))}")
@@ -3300,7 +3302,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                         _sol_url_login, _sol_url_search,
                                         skip_login=False,  # forçar re-login
                                     ),
-                                    timeout=180,  # mais tempo para login + pesquisa
+                                    timeout=120,  # mais tempo para login + pesquisa no retry
                                 )
                                 _dt2 = (datetime.now() - _t0).total_seconds()
                                 print(f"  [Soledad] Retry medida {medida}: {_dt2:.0f}s, products={len(result.get('products',[]))}")
@@ -3404,7 +3406,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                 medida,
                                 skip_login=(not _agu_first),
                             ),
-                            timeout=120,
+                            timeout=60,
                         )
                         _agu_first = False
                         result["medida"] = medida
@@ -3496,7 +3498,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                 medida,
                                 skip_login=(not _and_first),
                             ),
-                            timeout=120,
+                            timeout=60,
                         )
                         _and_first = False
                         result["medida"] = medida
@@ -3703,7 +3705,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                 skip_login=(not _crz_first),
                                 marca=marca,
                             ),
-                            timeout=150,
+                            timeout=90,
                         )
                         _crz_first = False
                         result["medida"] = medida
