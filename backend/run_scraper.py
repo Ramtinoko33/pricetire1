@@ -14,6 +14,7 @@ import os
 import sys
 import argparse
 import uuid
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -3347,10 +3348,15 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
 
     results = []
 
+    _t_global = time.time()
+    print(f"[TIMER] SCRAPE GLOBAL INÍCIO: {time.strftime('%H:%M:%S')}")
+
     # Process each supplier with its own browser instance (like test script)
     for supplier in suppliers:
         supplier_name = supplier['name'].lower()
+        _t_supplier = time.time()
         print(f"\n--- Scraping {supplier['name']} ---")
+        print(f"[TIMER] {supplier['name']} INÍCIO: {time.strftime('%H:%M:%S')}")
         is_tuga = 'tugapneus' in supplier_name or 'tuga' in supplier_name
         is_brand_aware = is_tuga or 'inter-sprint' in supplier_name or 'intersprint' in supplier_name
 
@@ -3511,7 +3517,8 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     _err = _r.get('error') or ''
                     _sol_summary.append(f"{_m}:{_np}p{'(ERR)' if _err else ''}")
             print(f"  [Soledad] RESUMO: {' | '.join(_sol_summary)}")
-            continue  # Skip the generic per-medida loop below
+        print(f"[TIMER] {supplier['name']} FIM: {time.strftime('%H:%M:%S')} | duração={time.time()-_t_supplier:.1f}s")
+        continue  # Skip the generic per-medida loop below
 
         # ── Aguesport: sessão única para todas as medidas ──────────────────
         # Login uma vez; cada medida usa página nova no mesmo contexto.
@@ -3536,6 +3543,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     await _agu_page.add_init_script(
                         "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
                     )
+                    _t_medida = time.time()
                     try:
                         result = await asyncio.wait_for(
                             scrape_aguesport(
@@ -3589,13 +3597,16 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         _err = result.get('error') or ''
                         _np  = len(result.get('products', []))
                         _agu_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+                        print(f"[TIMER] {supplier['name']} medida={medida} duração={time.time()-_t_medida:.1f}s")
 
                     except asyncio.TimeoutError:
                         print(f"  [Aguesport] Timeout em {medida}")
+                        print(f"[TIMER] {supplier['name']} medida={medida} duração={time.time()-_t_medida:.1f}s [TIMEOUT]")
                         results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
                         _agu_summary.append(f"{medida}:TIMEOUT")
                     except Exception as _e_agu:
                         print(f"  [Aguesport] Erro em {medida}: {_e_agu}")
+                        print(f"[TIMER] {supplier['name']} medida={medida} duração={time.time()-_t_medida:.1f}s [ERRO]")
                         results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_agu)})
                         _agu_summary.append(f"{medida}:ERR")
                     finally:
@@ -3603,7 +3614,8 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
 
                 print(f"  [Aguesport] RESUMO: {' | '.join(_agu_summary)}")
                 await _agu_browser.close()
-            continue  # Skip the generic per-medida loop below
+        print(f"[TIMER] {supplier['name']} FIM: {time.strftime('%H:%M:%S')} | duração={time.time()-_t_supplier:.1f}s")
+        continue  # Skip the generic per-medida loop below
 
         # ── Grupo Andres: sessão única para todas as medidas ───────────────
         # Login uma vez via JS form submit; pesquisa por URL directa.
@@ -3628,6 +3640,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     await _and_page.add_init_script(
                         "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
                     )
+                    _t_medida = time.time()
                     try:
                         result = await asyncio.wait_for(
                             scrape_grupo_andres(
@@ -3681,13 +3694,16 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         _err = result.get('error') or ''
                         _np  = len(result.get('products', []))
                         _and_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+                        print(f"[TIMER] {supplier['name']} medida={medida} duração={time.time()-_t_medida:.1f}s")
 
                     except asyncio.TimeoutError:
                         print(f"  [Andres] Timeout em {medida}")
+                        print(f"[TIMER] {supplier['name']} medida={medida} duração={time.time()-_t_medida:.1f}s [TIMEOUT]")
                         results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
                         _and_summary.append(f"{medida}:TIMEOUT")
                     except Exception as _e_and:
                         print(f"  [Andres] Erro em {medida}: {_e_and}")
+                        print(f"[TIMER] {supplier['name']} medida={medida} duração={time.time()-_t_medida:.1f}s [ERRO]")
                         results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_and)})
                         _and_summary.append(f"{medida}:ERR")
                     finally:
@@ -3695,7 +3711,8 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
 
                 print(f"  [Andres] RESUMO: {' | '.join(_and_summary)}")
                 await _and_browser.close()
-            continue  # Skip the generic per-medida loop below
+        print(f"[TIMER] {supplier['name']} FIM: {time.strftime('%H:%M:%S')} | duração={time.time()-_t_supplier:.1f}s")
+        continue  # Skip the generic per-medida loop below
 
         # ── ABTyres: sessão única para todas as medidas ─────────────────────
         # Login uma vez; cada medida navega directamente para /pneus e pesquisa.
@@ -3720,6 +3737,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     await _abt_page.add_init_script(
                         "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
                     )
+                    _t_medida = time.time()
                     try:
                         result = await asyncio.wait_for(
                             scrape_abtyres(
@@ -3773,13 +3791,16 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         _err = result.get('error') or ''
                         _np  = len(result.get('products', []))
                         _abt_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+                        print(f"[TIMER] {supplier['name']} medida={medida} duração={time.time()-_t_medida:.1f}s")
 
                     except asyncio.TimeoutError:
                         print(f"  [ABTyres] Timeout em {medida}")
+                        print(f"[TIMER] {supplier['name']} medida={medida} duração={time.time()-_t_medida:.1f}s [TIMEOUT]")
                         results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
                         _abt_summary.append(f"{medida}:TIMEOUT")
                     except Exception as _e_abt:
                         print(f"  [ABTyres] Erro em {medida}: {_e_abt}")
+                        print(f"[TIMER] {supplier['name']} medida={medida} duração={time.time()-_t_medida:.1f}s [ERRO]")
                         results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_abt)})
                         _abt_summary.append(f"{medida}:ERR")
                     finally:
@@ -3787,7 +3808,8 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
 
                 print(f"  [ABTyres] RESUMO: {' | '.join(_abt_summary)}")
                 await _abt_browser.close()
-            continue  # Skip the generic per-medida loop below
+        print(f"[TIMER] {supplier['name']} FIM: {time.strftime('%H:%M:%S')} | duração={time.time()-_t_supplier:.1f}s")
+        continue  # Skip the generic per-medida loop below
 
         # ── Pneus Cruzeiro: sessão única para todas as medidas ──────────────
         # Login só uma vez (reCAPTCHA invisible resolve automaticamente);
@@ -3833,6 +3855,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     await _crz_page.add_init_script(
                         "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
                     )
+                    _t_medida = time.time()
                     try:
                         result = await asyncio.wait_for(
                             scrape_pneus_cruzeiro(
@@ -3894,22 +3917,27 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         _err = result.get('error') or ''
                         _np  = len(result.get('products', []))
                         _crz_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+                        print(f"[TIMER] {supplier['name']} medida={medida} duração={time.time()-_t_medida:.1f}s")
 
                     except asyncio.TimeoutError:
                         print(f"  [Cruzeiro] Timeout em {medida}")
+                        print(f"[TIMER] {supplier['name']} medida={medida} duração={time.time()-_t_medida:.1f}s [TIMEOUT]")
                         results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
                         _crz_summary.append(f"{medida}:TIMEOUT")
                     except Exception as e:
                         print(f"  [Cruzeiro] Erro em {medida}: {e}")
+                        print(f"[TIMER] {supplier['name']} medida={medida} duração={time.time()-_t_medida:.1f}s [ERRO]")
                         results.append({"supplier": supplier['name'], "medida": medida, "error": str(e)})
                         _crz_summary.append(f"{medida}:ERR")
                     finally:
                         await _crz_page.close()
 
                 print(f"  [Cruzeiro] RESUMO: {' | '.join(_crz_summary)}")
-            continue  # Skip the generic per-medida loop below
+        print(f"[TIMER] {supplier['name']} FIM: {time.strftime('%H:%M:%S')} | duração={time.time()-_t_supplier:.1f}s")
+        continue  # Skip the generic per-medida loop below
 
         for medida, marca, modelo in targets:
+            _t_medida = time.time()
             # Create completely fresh browser for each medida
             async with async_playwright() as p:
                 browser = await p.chromium.launch(
@@ -4020,13 +4048,19 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         print(f"  {medida}: best price €{result['price']}")
                     else:
                         print(f"  {medida}: {result.get('error', 'No price found')}")
-                        
+                    print(f"[TIMER] {supplier['name']} medida={medida} duração={time.time()-_t_medida:.1f}s")
+
                 except Exception as e:
                     print(f"  Error: {e}")
+                    print(f"[TIMER] {supplier['name']} medida={medida} duração={time.time()-_t_medida:.1f}s [ERRO]")
                     results.append({"supplier": supplier['name'], "medida": medida, "error": str(e)})
                 finally:
                     await browser.close()
     
+        print(f"[TIMER] {supplier['name']} FIM: {time.strftime('%H:%M:%S')} | duração={time.time()-_t_supplier:.1f}s")
+
+    print(f"[TIMER] SCRAPE GLOBAL FIM: duração total={time.time()-_t_global:.1f}s")
+
     # Save results to file
     result_file = RESULTS_DIR / f"scrape_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(result_file, 'w') as f:
