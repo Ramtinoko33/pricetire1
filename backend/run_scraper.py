@@ -2674,17 +2674,99 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
             result["error"] = "Sem resultados para esta medida"
             return result
 
-        # ── Extrair produtos do HTML ──────────────────────────────────────
-        content = await _ctx.content()
-
+        # ── Ordenar por preço (clicar cabeçalho EUR/Preco se disponível) ──
         try:
-            # Compatível com /api/scraper/debug-html?supplier=intersprint&file=search_page
-            with open('/tmp/intersprint_search_page.html', 'w', encoding='utf-8') as _f:
-                _f.write(content)
+            _sort_loc = _ctx.locator(
+                'th:has-text("EUR"), th:has-text("Preco"), th:has-text("Preço"), '
+                'a:has-text("EUR"), a:has-text("Preco"), a:has-text("Preço")'
+            ).first
+            if await _sort_loc.count() > 0:
+                await _sort_loc.click()
+                await asyncio.sleep(3)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    pass
+                print(f"  [InterSprint] Ordenado por preço")
         except Exception:
             pass
 
-        products = _parse_intersprint_html(content, marca_upper)
+        # ── Extrair produtos de TODAS as páginas ─────────────────────────
+        _MAX_PAGES = 10
+        _all_products: list = []
+        _seen_all: set = set()
+        _total_pages = 1
+        _content = ''
+
+        for _pg_num in range(1, _MAX_PAGES + 1):
+            try:
+                _content = await _ctx.content()
+            except Exception as _e_ct:
+                print(f"  [InterSprint] Erro ao obter HTML da página {_pg_num}: {_e_ct}")
+                break
+
+            # Guardar HTML da página 1 para debug
+            if _pg_num == 1:
+                try:
+                    with open('/tmp/intersprint_search_page.html', 'w', encoding='utf-8') as _f:
+                        _f.write(_content)
+                except Exception:
+                    pass
+                # Extrair número total de páginas
+                _tp_m = re.search(
+                    r'[Tt]otal\s+de\s+p[aá]ginas?\s*[:\(]?\s*(\d+)',
+                    _content
+                )
+                if _tp_m:
+                    _total_pages = min(int(_tp_m.group(1)), _MAX_PAGES)
+                    print(f"  [InterSprint] Total de páginas detectado: {_total_pages}")
+                else:
+                    print(f"  [InterSprint] 'Total de paginas' não encontrado — assume 1 página")
+
+            _page_prods = _parse_intersprint_html(_content, marca_upper)
+
+            # Deduplicar entre páginas
+            _new_prods = []
+            for _p in _page_prods:
+                _k = f"{_p['brand']}|{_p['medida']}|{_p['indice']}|{_p['price']}"
+                if _k not in _seen_all:
+                    _seen_all.add(_k)
+                    _new_prods.append(_p)
+            _all_products.extend(_new_prods)
+            print(f"  [InterSprint] Página {_pg_num}: {len(_page_prods)} produtos ({len(_new_prods)} novos)")
+
+            if _pg_num >= _total_pages:
+                break
+
+            # Navegar para a próxima página
+            _next_pg = _pg_num + 1
+            _navigated = False
+            for _nav_sel in [
+                f'a:has-text("{_next_pg}")',
+                f'input[value="{_next_pg}"]',
+                'a:has-text("Proxima"), a:has-text("Próxima"), '
+                'a:has-text(">>"), a:has-text("Siguiente"), a:has-text("Next")',
+            ]:
+                try:
+                    _nav_lnk = _ctx.locator(_nav_sel).first
+                    if await _nav_lnk.count() > 0:
+                        await _nav_lnk.click()
+                        await asyncio.sleep(4)
+                        try:
+                            await page.wait_for_load_state("networkidle", timeout=15000)
+                        except Exception:
+                            pass
+                        _navigated = True
+                        break
+                except Exception:
+                    continue
+
+            if not _navigated:
+                print(f"  [InterSprint] Sem link para página {_next_pg} — a parar paginação")
+                break
+
+        print(f"  [InterSprint] Total acumulado: {len(_all_products)} produtos")
+        products = _all_products
 
         if products:
             result["products"] = products
@@ -2694,7 +2776,8 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
             for p in products[:5]:
                 print(f"    {p['brand']} {p['medida']} {p.get('indice','')} {p.get('model','')} → €{p['price']}")
         else:
-            prices = extract_prices(content)
+            # Fallback: extrair preços brutos do HTML da última página lida
+            prices = extract_prices(_content)
             if prices:
                 result["price"] = min(prices)
                 result["all_prices"] = sorted(prices)[:10]
