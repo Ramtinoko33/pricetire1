@@ -2795,63 +2795,58 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
 def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
     """Parse HTML da página de resultados InterSprint.
 
-    Estrutura da tabela InterSprint (colunas):
-      Marca | Descricao | Estacao | 3PMSF | LI/SI | Rotulo | Foto | E/EU | Stock | EUR | ...
+    Estrutura da tabela (colunas):
+      Marca | Descricao | Estacao | 3PMSF | LI/SI | Rotulo | Foto | E/EU | Stock | EUR
 
-    Descricao format: "{size} {[A-Z]?R}{rim} TL {LI/SI} {brand_abbr} {model}"
-    Exemplo: "205/55 VR16 TL 94V SUNNY NP226 XL"
+    Descricao format: "215/55 VR18 TL 99V MI PRIMACY 5 XL [M&S,Todas as estacoes]"
+    Campos posicionais após medida regex match:
+      TL → load_index → brand_abbr → modelo...
 
-    FIXES v5:
-    - Decode HTML entities (&nbsp; → space, &#47; → /) BEFORE running any regex,
-      because InterSprint separates column content with &nbsp; inside <td>.
-    - medida_re now allows optional spaces around the speed-letter and R.
-    - Context tracking: when a row has size info but no price (rowspan header),
-      the next row(s) with price inherit that context.
-    - debug print for rows with price but no medida after decode.
-    search_brand: fallback quando a célula da marca está vazia.
+    ABORDAGEM: parsing por célula <td> individual.
+    Extrai a célula Descricao (a que contém o padrão de medida) e
+    passa-a isolada para _parse_after_medida — evita contaminação
+    das colunas adjacentes (LI/SI duplicado, E/EU, Estacao, Stock…).
+
+    search_brand: fallback quando a célula Marca está vazia.
     """
     import re as _re
 
     products: list = []
     seen: set = set()
-    _no_medida_dbg: list = []  # DEBUG: primeiras linhas com preço mas sem medida
+    _no_medida_dbg: list = []
 
-    price_re = _re.compile(
+    price_re  = _re.compile(
         r'€\s*(\d+[,.]\d{2})|(\d+[,.]\d{2})\s*€|&nbsp;\s*(\d+[,.]\d{2})\s*&nbsp;',
         _re.IGNORECASE
     )
-    # medida_re aceita espaços opcionais ao redor da letra de construção e entre R e jante
-    # Suporta: "205/55 VR16", "205/55R16", "205/55 R16", "205/55 ZR18", "205/55 R 16"
     medida_re = _re.compile(r'(\d{3}/\d{2})\s*[A-Z]?\s*R\s*(\d{2})\b', _re.IGNORECASE)
     tag_re    = _re.compile(r'<[^>]+>')
-    row_re    = _re.compile(r'<tr[^>]*>(.*?)</tr>', _re.IGNORECASE | _re.DOTALL)
+    row_re    = _re.compile(r'<tr\b[^>]*>(.*?)</tr>', _re.IGNORECASE | _re.DOTALL)
+    td_re     = _re.compile(r'<td\b[^>]*>(.*?)</td>', _re.IGNORECASE | _re.DOTALL)
 
-    # Contexto do último row que tinha informação de medida/marca
-    # (para tabelas com rowspan onde o preço fica em linhas separadas)
+    # Contexto da última linha com Descricao (para rowspan: preço em linha separada)
     _ctx_brand  = ''
     _ctx_medida = ''
     _ctx_indice = ''
     _ctx_model  = ''
 
     def _decode_entities(text: str) -> str:
-        """Decodifica entidades HTML comuns antes do matching de regex."""
         text = text.replace('&#47;', '/').replace('&amp;', '&')
         text = text.replace('&nbsp;', ' ').replace('&lt;', '<').replace('&gt;', '>')
         text = _re.sub(r'&#(\d+);', lambda m: chr(int(m.group(1))), text)
-        text = _re.sub(r'&\w+;', ' ', text)  # outras entidades → espaço
+        text = _re.sub(r'&\w+;', ' ', text)
         return _re.sub(r'\s+', ' ', text).strip()
 
     def _parse_after_medida(after_text: str, ctx_brand: str) -> tuple:
-        """Parse positional fields AFTER the medida regex match in an InterSprint row.
+        """Parse da Descricao APENAS após o match da medida (texto isolado da célula).
 
-        Descrição format after medida: "TL  99V  MI  PRIMACY 5 XL  [M&S]  A  B  A  42  89,90"
-        Positions:
-          0+  : TL / TW (skip)
-          next: load index  \d{2,3}[A-Z]{1,2}  e.g. "99V"
-          next: brand abbr  [A-Z]{2}            e.g. "MI"
-          rest: model tokens until eco ratings (single A-E) or stock count (2+ digits)
+        after_text: texto da célula Descricao desde o fim da medida regex.
+        Exemplo: " TL 99V MI PRIMACY 5 XL [M&S,Todas as estacoes]"
 
-        Returns (brand, model, load_index) — brand is full name from map or ctx_brand fallback.
+        Campos posicionais:
+          [skip TL/TW]  [load_index: 99V]  [brand_abbr: MI]  [model: PRIMACY 5 XL]
+
+        Retorna (brand, model, load_index).
         """
         _BMAP = {
             'MI': 'MICHELIN',    'BR': 'BRIDGESTONE', 'GY': 'GOODYEAR',
@@ -2871,76 +2866,70 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
             'FO': 'FORTUNA',     'LF': 'LANDFORSAIL', 'ZE': 'ZEETEX',
             'SC': 'SECURITY',    'CI': 'CIMOS',       'GT': 'GT RADIAL',
         }
-        # 1. Remove [bracket] content (M&S, seasonal markers, etc.)
-        clean = _re.sub(r'\[.*?\]', '', after_text)
-        # 2. Remove price patterns (safety net)
-        clean = _re.sub(r'\b\d+[,.]\d{2}\b', ' ', clean)
+        # 1. Remover conteúdo entre [...] (M&S, Todas as estacoes, etc.)
+        clean = _re.sub(r'\[.*?\]', '', after_text).strip()
         tokens = clean.split()
 
         i = 0
-        # Skip TL / TW
+        # Saltar TL / TW
         while i < len(tokens) and tokens[i].upper() in ('TL', 'TW'):
             i += 1
 
-        # Load index: \d{2,3}[A-Z]{1,2} (e.g. "99V", "95H", "121S")
+        # Load index: \d{2,3}[A-Z]{1,2}  ex: "99V", "95H", "121S"
         load_index = ''
         if i < len(tokens) and _re.match(r'^\d{2,3}[A-Z]{1,2}$', tokens[i], _re.I):
             load_index = tokens[i].upper()
             i += 1
 
-        # Brand abbreviation: exactly 2 uppercase letters (e.g. "MI", "DC")
+        # Abreviatura de marca: exatamente 2 letras maiúsculas  ex: "MI", "DC"
         parsed_brand = ctx_brand
         if i < len(tokens) and _re.match(r'^[A-Z]{2}$', tokens[i]):
-            abbr = tokens[i].upper()
-            parsed_brand = _BMAP.get(abbr, ctx_brand or abbr)
+            parsed_brand = _BMAP.get(tokens[i].upper(), ctx_brand or tokens[i].upper())
             i += 1
 
-        # Model: remaining tokens, stopping at eco ratings or stock count
-        model_parts = []
-        for jj in range(i, len(tokens)):
-            tok = tokens[jj]
-            # 2+ digit pure integer → stock qty or noise level → stop
-            if _re.match(r'^\d{2,}$', tok):
-                break
-            # Single A-E letter followed by another A-E letter or digit → eco rating → stop
-            if _re.match(r'^[A-E]$', tok, _re.I):
-                nxt = tokens[jj + 1] if jj + 1 < len(tokens) else ''
-                if _re.match(r'^[A-E]$', nxt, _re.I) or _re.match(r'^\d+$', nxt):
-                    break
-            model_parts.append(tok.upper())
+        # Modelo: tokens restantes (Descricao já está isolada — sem colunas extra)
+        model = ' '.join(t.upper() for t in tokens[i:])
 
-        return parsed_brand, ' '.join(model_parts), load_index
+        return parsed_brand, model, load_index
 
     for row_m in row_re.finditer(html):
-        # 1. Strip tags → raw text
-        raw = _re.sub(r'\s+', ' ', tag_re.sub(' ', row_m.group(1))).strip()
-        if len(raw) < 5:
-            continue
+        row_inner = row_m.group(1)
 
-        # 2. Decode HTML entities (&nbsp; é separador de colunas no portal)
-        # Nota: linhas de preço isoladas ficam com < 10 chars após decode (ex: "93,16")
-        # por isso não filtrar pelo comprimento do decoded text — só rejeitar verdadeiramente vazias.
-        row_text = _decode_entities(raw)
-        if not row_text:
-            continue
+        # ── Extrair células <td> individuais ─────────────────────────────
+        _cells_txt = [
+            _decode_entities(_re.sub(r'\s+', ' ', tag_re.sub(' ', c.group(1))).strip())
+            for c in td_re.finditer(row_inner)
+        ]
 
-        # 3. Tentar extrair medida DESTA linha (atualiza contexto se encontrar)
-        medida_m = medida_re.search(row_text)
-        if medida_m:
-            g1 = medida_m.group(1).replace(' ', '')   # normaliza "205 / 55" → "205/55"
-            _ctx_medida = f"{g1}R{medida_m.group(2)}".upper()
-            # Brand: prefer full name from Marca column (text before medida in row)
-            _ctx_brand  = row_text[:medida_m.start()].strip().upper()
-            # Positional parse of text after medida: TL | LI/SI | brand_abbr | model
+        # ── Célula Descricao: a que contém o padrão de medida ────────────
+        _desc_cell = ''
+        _desc_idx  = -1
+        for _ci, _ct in enumerate(_cells_txt):
+            if medida_re.search(_ct):
+                _desc_cell = _ct
+                _desc_idx  = _ci
+                break
+
+        # ── Preço: pesquisa no HTML raw da linha (preserva &nbsp; formato) ──
+        _raw_row = _re.sub(r'\s+', ' ', tag_re.sub(' ', row_inner))
+        price_m  = price_re.search(_raw_row)
+
+        # ── Actualizar contexto se esta linha tem Descricao ──────────────
+        if _desc_cell:
+            _dm = medida_re.search(_desc_cell)
+            _g1 = _dm.group(1).replace(' ', '')
+            _ctx_medida = f"{_g1}R{_dm.group(2)}".upper()
+            # Célula Marca: imediatamente antes da Descricao (normalmente índice 0)
+            _mk = _cells_txt[_desc_idx - 1].upper() if _desc_idx > 0 else ''
+            # Filtrar alt-text de imagens (contém espaços ou dígitos → ignorar)
+            if len(_mk) > 25 or any(c.isdigit() for c in _mk):
+                _mk = ''
             _parsed_brand, _ctx_model, _ctx_indice = _parse_after_medida(
-                row_text[medida_m.end():], _ctx_brand
+                _desc_cell[_dm.end():], _mk
             )
-            # Only use abbreviation-derived brand if Marca column was empty
-            if not _ctx_brand:
-                _ctx_brand = _parsed_brand or search_brand.upper() or 'UNKNOWN'
+            _ctx_brand = _mk or _parsed_brand or search_brand.upper() or 'UNKNOWN'
 
-        # 4. Verificar se esta linha tem preço (usar raw: &nbsp; ainda não foi decodificado)
-        price_m = price_re.search(raw)
+        # ── Sem preço → não é linha de produto ───────────────────────────
         if not price_m:
             continue
         try:
@@ -2952,18 +2941,14 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
         if not (15 < price < 800):
             continue
 
-        # 5. Usar medida/marca do contexto (desta linha ou da última linha com medida)
+        # ── Construir produto com contexto acumulado ──────────────────────
         medida_val = _ctx_medida
-        brand_val  = _ctx_brand if _ctx_brand else (search_brand.upper() or 'UNKNOWN')
+        brand_val  = _ctx_brand or search_brand.upper() or 'UNKNOWN'
         indice_val = _ctx_indice
         model_val  = _ctx_model
 
-        # DEBUG: registar linhas com preço mas sem medida (máx 3)
         if not medida_val and len(_no_medida_dbg) < 3:
-            _no_medida_dbg.append(row_text[:300])
-
-        if not model_val and indice_val:
-            model_val = indice_val
+            _no_medida_dbg.append(str(_cells_txt[:6])[:300])
 
         key = f"{brand_val}|{medida_val}|{indice_val}|{price}"
         if key not in seen:
