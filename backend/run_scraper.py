@@ -1153,6 +1153,11 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
 
         await asyncio.sleep(0.3)
 
+        # Limpar respostas stale capturadas durante inicialização Angular (localStorage auto-load).
+        # O Angular SPA pode disparar automaticamente a pesquisa anterior ao navegar para url_search.
+        # Só queremos respostas da pesquisa actual, não da pesquisa anterior.
+        api_responses.clear()
+
         # Step 2: Click "Pesquisar" via evaluate() — also dispatches ngSubmit on the form
         pesquisar_clicked = await page.evaluate('''() => {
             for (const b of document.querySelectorAll("button")) {
