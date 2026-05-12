@@ -1355,11 +1355,14 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         # AR_ prefix pattern (AR_PRECIO, AR_MARCA, AR_DESCRIPCION) used in Spanish B2B systems.
         # NOTE: 'valor' and 'importe' intentionally excluded — too generic:
         #   VALOR appears in filter dropdowns, IMPORTE_SIGUIENTE/CONSEGUIDO in promotions.
-        _PRICE_SUBSTRINGS = ('pvp', 'preco', 'precio', 'price', 'coste',
+        # Soledad API uses PRECIOSINDESCUENTO, PRECIOCONIVA, AR_PVR — listed first for priority
+        _PRICE_SUBSTRINGS = ('preciosindescuento', 'precioconiva', 'ar_pvr', 'pvr',
+                             'pvp', 'preco', 'precio', 'price', 'coste',
                              'tarifa', 'unitprice', 'saleprice', 'netprice', 'preciouni',
                              'precouni', 'pvpfinal', 'pvpnet')
-        _BRAND_SUBSTRINGS = ('marca', 'brand', 'manufacturer', 'fabricante', 'marque')
-        _MODEL_SUBSTRINGS = ('descripcion', 'descricao', 'description', 'modelo',
+        # Soledad API uses AR_MARCA for brand and AR_MODELO for model
+        _BRAND_SUBSTRINGS = ('ar_marca', 'marca', 'brand', 'manufacturer', 'fabricante', 'marque')
+        _MODEL_SUBSTRINGS = ('ar_modelo', 'descripcion', 'descricao', 'description', 'modelo',
                              'model', 'nome', 'designation', 'denominacion', 'referencia')
         # Soledad API uses AR_CARGA (load number e.g. 91) and AR_VELOCIDAD (speed letter e.g. H)
         # Use endswith matching to avoid false positives from field names containing 'ic' etc.
@@ -1520,8 +1523,9 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                     _diag_printed = True
             except Exception:
                 pass
-        else:
-            # Secondary: DOM extraction
+
+        if not products:
+            # Secondary: DOM extraction (only when API interception found nothing)
             print(f"  [Soledad] No API products — trying DOM extraction")
             products = await page.evaluate(r'''() => {
                 const products = [];
