@@ -2823,8 +2823,6 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
     # medida_re aceita espaços opcionais ao redor da letra de construção e entre R e jante
     # Suporta: "205/55 VR16", "205/55R16", "205/55 R16", "205/55 ZR18", "205/55 R 16"
     medida_re = _re.compile(r'(\d{3}/\d{2})\s*[A-Z]?\s*R\s*(\d{2})\b', _re.IGNORECASE)
-    # indice_re aceita espaço opcional entre número e letra (ex: "94 V" ou "94V")
-    indice_re = _re.compile(r'\b(\d{2,3}\s*[A-Z]{1,2}(?:\s*XL)?)\b')
     tag_re    = _re.compile(r'<[^>]+>')
     row_re    = _re.compile(r'<tr[^>]*>(.*?)</tr>', _re.IGNORECASE | _re.DOTALL)
 
@@ -2843,23 +2841,75 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
         text = _re.sub(r'&\w+;', ' ', text)  # outras entidades → espaço
         return _re.sub(r'\s+', ' ', text).strip()
 
-    def _extract_model(row_text: str, after_pos: int, brand: str) -> str:
-        rem = row_text[after_pos:]
-        rem = price_re.sub('', rem)
-        # Após decode, preços ficam como "89.90" sem € — remover explicitamente
-        rem = _re.sub(r'\b\d+[,.]\d{2}\b', ' ', rem)
-        rem = _re.sub(r'\bTL\b|\bTW\b', ' ', rem, flags=_re.IGNORECASE)
-        rem = _re.sub(r'\b\d{2,3}\s*[A-Z]{1,2}(?:\s*XL)?\b', ' ', rem)
-        rem = _re.sub(r'\b\d+\b', ' ', rem)
-        rem = _re.sub(r'\s+', ' ', rem).strip()
-        parts = rem.upper().split()
-        if parts:
-            first = parts[0]
-            if (first == brand
-                    or brand.startswith(first)
-                    or (len(first) <= 3 and first.isalpha())):
-                parts = parts[1:]
-        return ' '.join(parts)[:60].strip()
+    def _parse_after_medida(after_text: str, ctx_brand: str) -> tuple:
+        """Parse positional fields AFTER the medida regex match in an InterSprint row.
+
+        Descrição format after medida: "TL  99V  MI  PRIMACY 5 XL  [M&S]  A  B  A  42  89,90"
+        Positions:
+          0+  : TL / TW (skip)
+          next: load index  \d{2,3}[A-Z]{1,2}  e.g. "99V"
+          next: brand abbr  [A-Z]{2}            e.g. "MI"
+          rest: model tokens until eco ratings (single A-E) or stock count (2+ digits)
+
+        Returns (brand, model, load_index) — brand is full name from map or ctx_brand fallback.
+        """
+        _BMAP = {
+            'MI': 'MICHELIN',    'BR': 'BRIDGESTONE', 'GY': 'GOODYEAR',
+            'CO': 'CONTINENTAL', 'PI': 'PIRELLI',     'HA': 'HANKOOK',
+            'DU': 'DUNLOP',      'KL': 'KLEBER',      'UN': 'UNIROYAL',
+            'VR': 'VREDESTEIN',  'GE': 'GENERAL',     'VI': 'VIKING',
+            'DC': 'DOUBLE COIN', 'DE': 'DELINTE',     'LA': 'LANDSAIL',
+            'SE': 'SENTURY',     'MS': 'MASTERSTEEL', 'RH': 'ROADHOG',
+            'NK': 'NANKANG',     'FU': 'FULDA',       'TR': 'TRIANGLE',
+            'AT': 'ATLAS',       'CA': 'CEAT',        'HI': 'HIFLY',
+            'SU': 'SUNNY',       'AP': 'APOLLO',      'TO': 'TOYO',
+            'YO': 'YOKOHAMA',    'SA': 'SAILUN',      'BA': 'BARUM',
+            'MA': 'MAXXIS',      'LI': 'LINGLONG',    'WA': 'WANLI',
+            'KU': 'KUMHO',       'FA': 'FALKEN',      'RI': 'RIKEN',
+            'BF': 'BF GOODRICH', 'BI': 'BF GOODRICH', 'NO': 'NOKIAN',
+            'LE': 'LENDA',       'EV': 'EVENT',       'NE': 'NEXEN',
+            'FO': 'FORTUNA',     'LF': 'LANDFORSAIL', 'ZE': 'ZEETEX',
+            'SC': 'SECURITY',    'CI': 'CIMOS',       'GT': 'GT RADIAL',
+        }
+        # 1. Remove [bracket] content (M&S, seasonal markers, etc.)
+        clean = _re.sub(r'\[.*?\]', '', after_text)
+        # 2. Remove price patterns (safety net)
+        clean = _re.sub(r'\b\d+[,.]\d{2}\b', ' ', clean)
+        tokens = clean.split()
+
+        i = 0
+        # Skip TL / TW
+        while i < len(tokens) and tokens[i].upper() in ('TL', 'TW'):
+            i += 1
+
+        # Load index: \d{2,3}[A-Z]{1,2} (e.g. "99V", "95H", "121S")
+        load_index = ''
+        if i < len(tokens) and _re.match(r'^\d{2,3}[A-Z]{1,2}$', tokens[i], _re.I):
+            load_index = tokens[i].upper()
+            i += 1
+
+        # Brand abbreviation: exactly 2 uppercase letters (e.g. "MI", "DC")
+        parsed_brand = ctx_brand
+        if i < len(tokens) and _re.match(r'^[A-Z]{2}$', tokens[i]):
+            abbr = tokens[i].upper()
+            parsed_brand = _BMAP.get(abbr, ctx_brand or abbr)
+            i += 1
+
+        # Model: remaining tokens, stopping at eco ratings or stock count
+        model_parts = []
+        for jj in range(i, len(tokens)):
+            tok = tokens[jj]
+            # 2+ digit pure integer → stock qty or noise level → stop
+            if _re.match(r'^\d{2,}$', tok):
+                break
+            # Single A-E letter followed by another A-E letter or digit → eco rating → stop
+            if _re.match(r'^[A-E]$', tok, _re.I):
+                nxt = tokens[jj + 1] if jj + 1 < len(tokens) else ''
+                if _re.match(r'^[A-E]$', nxt, _re.I) or _re.match(r'^\d+$', nxt):
+                    break
+            model_parts.append(tok.upper())
+
+        return parsed_brand, ' '.join(model_parts), load_index
 
     for row_m in row_re.finditer(html):
         # 1. Strip tags → raw text
@@ -2879,15 +2929,15 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
         if medida_m:
             g1 = medida_m.group(1).replace(' ', '')   # normaliza "205 / 55" → "205/55"
             _ctx_medida = f"{g1}R{medida_m.group(2)}".upper()
+            # Brand: prefer full name from Marca column (text before medida in row)
             _ctx_brand  = row_text[:medida_m.start()].strip().upper()
+            # Positional parse of text after medida: TL | LI/SI | brand_abbr | model
+            _parsed_brand, _ctx_model, _ctx_indice = _parse_after_medida(
+                row_text[medida_m.end():], _ctx_brand
+            )
+            # Only use abbreviation-derived brand if Marca column was empty
             if not _ctx_brand:
-                _ctx_brand = search_brand.upper() if search_brand else 'UNKNOWN'
-            # Índice: procurar a partir do início da medida
-            im = indice_re.search(row_text[medida_m.start():])
-            _ctx_indice = im.group(1).upper().replace(' ', '') if im else ''
-            _ctx_model  = _extract_model(row_text, medida_m.end(), _ctx_brand)
-            if not _ctx_model and _ctx_indice:
-                _ctx_model = _ctx_indice
+                _ctx_brand = _parsed_brand or search_brand.upper() or 'UNKNOWN'
 
         # 4. Verificar se esta linha tem preço (usar raw: &nbsp; ainda não foi decodificado)
         price_m = price_re.search(raw)
