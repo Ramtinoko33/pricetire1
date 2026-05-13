@@ -686,20 +686,21 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                     let brand = "", model = "", price = null;
 
                     if (descCol >= 0 && descCol < cells.length) {
-                        // A célula tem um <a hidden> + <span visible> com o mesmo texto.
-                        // textContent concatena ambos → texto duplicado → modelo errado.
-                        // Preferir o span visível; fallback para célula inteira.
-                        const descEl = cells[descCol].querySelector('span[id*="lblDescription"]')
-                                    || cells[descCol].querySelector('span[style*="visibility:visible"]')
-                                    || cells[descCol].querySelector('span:not([style*="hidden"]):not([style*="none"])')
-                                    || cells[descCol];
-                        const parsed = parseDesc(descEl.textContent.trim());
+                        // Estrutura confirmada: <a style="visibility:hidden;display:none;">TEXT</a>
+                        //                      <span id="...lblDescription_N" style="visibility:visible;">TEXT</span>
+                        // textContent concatena ambos → texto duplicado. Usar só o span.
+                        const spanEl = cells[descCol].querySelector('span[id*="lblDescription"]');
+                        const rawTxt = spanEl ? spanEl.textContent.trim()
+                                              : cells[descCol].textContent.trim();
+                        const parsed = parseDesc(rawTxt);
                         brand = parsed.brand;
                         model = parsed.model;
                     } else {
                         // Fallback: varrer células à procura de marca conhecida
                         for (const cell of cells) {
-                            const txt = cell.textContent.trim();
+                            const spanEl = cell.querySelector('span[id*="lblDescription"]');
+                            const txt = spanEl ? spanEl.textContent.trim()
+                                               : cell.textContent.trim();
                             if (txt.split(/\\s+/).length >= 2 && KNOWN_BRANDS.test(txt.split(/\\s+/)[0])) {
                                 const parsed = parseDesc(txt);
                                 brand = parsed.brand;
@@ -734,31 +735,6 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
             }
             return products;
         }'''
-
-        # DIAGNÓSTICO TEMPORÁRIO: imprimir innerHTML das primeiras 3 células Descrição
-        # (visível nos logs Railway — remover após identificar estrutura HTML)
-        _raw_cells = await page.evaluate('''() => {
-            const panel = document.getElementById('ContentPlaceHolder1_UpdatePanelResults');
-            const root = panel || document;
-            const results = [];
-            for (const table of root.querySelectorAll("table")) {
-                const rows = table.querySelectorAll("tr");
-                if (rows.length < 2) continue;
-                let descCol = -1;
-                const hdr = rows[0].querySelectorAll("th, td");
-                hdr.forEach((h, i) => { if (/descri/i.test(h.textContent)) descCol = i; });
-                if (descCol < 0) continue;
-                for (let i = 1; i < Math.min(rows.length, 4); i++) {
-                    const cells = rows[i].querySelectorAll("td");
-                    if (descCol < cells.length)
-                        results.push(cells[descCol].innerHTML.replace(/\\s+/g, ' ').substring(0, 400));
-                }
-                break;
-            }
-            return results;
-        }''')
-        for _ci, _rc in enumerate(_raw_cells):
-            print(f"  [S. José DIAG] RAW_CELL[{_ci}]: {_rc}")
 
         products = await page.evaluate(_SJOSE_EXTRACT_JS)
         print(f"  [S. José] Página 1: {len(products)} produtos")
