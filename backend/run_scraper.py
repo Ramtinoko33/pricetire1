@@ -1355,8 +1355,14 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         # AR_ prefix pattern (AR_PRECIO, AR_MARCA, AR_DESCRIPCION) used in Spanish B2B systems.
         # NOTE: 'valor' and 'importe' intentionally excluded — too generic:
         #   VALOR appears in filter dropdowns, IMPORTE_SIGUIENTE/CONSEGUIDO in promotions.
-        # Soledad API uses PRECIOSINDESCUENTO, PRECIOCONIVA, AR_PVR — listed first for priority
-        _PRICE_SUBSTRINGS = ('preciosindescuento', 'precioconiva', 'ar_pvr', 'pvr',
+        # Soledad API price fields — ordered by priority (most specific first).
+        # PRECIOMOSTRARBUSQUEDA = preço de venda ao cliente na pesquisa (campo confirmado).
+        # PRECIOMOSTRARPEDIDO   = preço de venda ao cliente no pedido.
+        # PRECIOCONDESCUENTO    = preço com desconto aplicado.
+        # PRECIOSINDESCUENTO    = preço sem desconto (bruto).
+        _PRICE_SUBSTRINGS = ('preciomostrarbusqueda', 'preciomostrarpedido',
+                             'preciocondescuento', 'preciosindescuento', 'precioconiva',
+                             'ar_pvr', 'pvr',
                              'pvp', 'preco', 'precio', 'price', 'coste',
                              'tarifa', 'unitprice', 'saleprice', 'netprice', 'preciouni',
                              'precouni', 'pvpfinal', 'pvpnet')
@@ -1481,7 +1487,29 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         for _r in sorted(api_responses, key=lambda x: len(x['body']), reverse=True)[:3]:
             print(f"  [Soledad] API preview ({_r['url'].split('?')[0][-40:]}): {_r['body'][:300]}")
 
-        for resp in api_responses:
+        # Filtrar respostas para usar apenas as que contêm produtos da medida pesquisada.
+        # O campo AR_NOMBRE tem formato "215/55X18 ..." — o scraper pode capturar respostas
+        # de stock geral (outras medidas) que chegam antes/depois da pesquisa actual.
+        def _response_has_medida(body: str) -> bool:
+            if len(medida_norm) < 7:
+                return True  # medida fora do padrão — não filtrar
+            ancho  = medida_norm[:3]          # "215"
+            perfil = medida_norm[3:5]         # "55"
+            llanta = medida_norm[5:7]         # "18"
+            # Soledad usa "X" em vez de "R" no campo AR_NOMBRE: "215/55X18"
+            medida_x = f"{ancho}/{perfil}X{llanta}"   # "215/55X18"
+            medida_r = f"{ancho}/{perfil}R{llanta}"   # "215/55R18" (fallback)
+            body_lower = body.lower()
+            return medida_x.lower() in body_lower or medida_r.lower() in body_lower
+
+        _relevant = [r for r in api_responses if _response_has_medida(r['body'])]
+        _responses_to_parse = _relevant if _relevant else api_responses
+        if not _relevant:
+            print(f"  [Soledad] Aviso: nenhuma resposta contém medida {medida_norm} — usando todas ({len(api_responses)})")
+        else:
+            print(f"  [Soledad] Filtro medida: {len(_relevant)}/{len(api_responses)} respostas relevantes para {medida_norm}")
+
+        for resp in _responses_to_parse:
             try:
                 data = json.loads(resp['body'])
                 before = len(products)
