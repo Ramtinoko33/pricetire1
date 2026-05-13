@@ -3393,13 +3393,22 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
 
         if products:
             # Filtrar linhas sem preço válido e marcas com artefactos HTML (ex: "-->PNEU")
-            products = [
-                p for p in products
-                if p.get('price') and p['price'] > 5
-                and p.get('brand')
-                and not p['brand'].startswith('-->')
-                and p['brand'] not in ('', '-->', '-->PNEU')
-            ]
+            # Log de descartados para diagnóstico
+            valid_products = []
+            for _p in products:
+                _motivo = None
+                if not _p.get('price') or _p['price'] <= 5:
+                    _motivo = 'sem preço válido'
+                elif not _p.get('brand'):
+                    _motivo = 'sem marca'
+                elif _p['brand'].startswith('-->') or _p['brand'] in ('', '-->', '-->PNEU'):
+                    _motivo = f"marca artefacto HTML: {_p['brand']!r}"
+                if _motivo:
+                    print(f"  [CRZ-DESCARTADO] brand={_p.get('brand','')!r} model={_p.get('model','')!r} "
+                          f"price={_p.get('price')!r} motivo={_motivo!r}")
+                else:
+                    valid_products.append(_p)
+            products = valid_products
             # Deduplicar por marca+modelo, manter preço mais baixo
             seen = {}
             for p in products:
@@ -4001,6 +4010,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                 _crz_ctx   = await _crz_browser.new_context(**_crz_ctx_kwargs)
                 _crz_first = True
                 _crz_summary = []
+                _crz_deleted_medidas: set = set()  # medidas já limpas na BD nesta sessão
 
                 for medida, marca in _crz_pairs:
                     _crz_page = await _crz_ctx.new_page()
@@ -4029,14 +4039,16 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         conn_save = await _pg_connect()
                         try:
                             if products:
-                                marcas_enc = {p.get('brand', '').upper() for p in products}
-                                for m_brand in marcas_enc:
+                                # Apagar TODOS os registos antigos desta medida na primeira
+                                # pesquisa bem-sucedida — evita mistura de datas/marcas antigas.
+                                # Cada medida tem múltiplas pesquisas (uma por marca), por isso
+                                # rastreamos quais medidas já foram limpas nesta sessão.
+                                if medida not in _crz_deleted_medidas:
                                     await conn_save.execute(
-                                        """DELETE FROM scraped_prices
-                                           WHERE supplier_name=$1 AND medida=$2
-                                             AND COALESCE(marca,'')=$3""",
-                                        supplier['name'], medida, m_brand,
+                                        "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
+                                        supplier['name'], medida,
                                     )
+                                    _crz_deleted_medidas.add(medida)
                                 for prod in products:
                                     await conn_save.execute(
                                         """INSERT INTO scraped_prices
