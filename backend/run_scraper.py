@@ -24,6 +24,7 @@ sys.path.insert(0, '/app/backend')
 import asyncpg
 from playwright.async_api import async_playwright
 import re
+import aiohttp
 
 # PostgreSQL connection
 DATABASE_URL = os.environ['DATABASE_URL']
@@ -391,7 +392,7 @@ async def scrape_dispnal(page, username: str, password: str, medida: str) -> dic
     
     try:
         print("  [Dispnal] Navigating...")
-        await page.goto("https://dispnal.pt/home/homepage", wait_until="networkidle", timeout=60000)
+        await page.goto("https://dispnal.pt/home/homepage", wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(3)
         
         content = await page.content()
@@ -529,7 +530,7 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
     try:
         # ── Login ────────────────────────────────────────────────────────────
         print(f"  [S. José] Navigating to login: {url_login}")
-        await page.goto(url_login, wait_until="networkidle", timeout=60000)
+        await page.goto(url_login, wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(2)
         _save_debug('/tmp/sjose_pre_login.html', await page.content())
 
@@ -577,7 +578,7 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
         # O campo aceita formato normalizado: "1956515" (sem barras, sem R)
         medida_norm = normalize_medida(medida)
         print(f"  [S. José] Navigating to search: {url_search}")
-        await page.goto(url_search, wait_until="networkidle", timeout=60000)
+        await page.goto(url_search, wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(2)
 
         search_page_url = page.url
@@ -735,6 +736,31 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
             return products;
         }'''
 
+        # DIAGNÓSTICO TEMPORÁRIO: imprimir innerHTML das primeiras 3 células Descrição
+        # (visível nos logs Railway — remover após identificar estrutura HTML)
+        _raw_cells = await page.evaluate('''() => {
+            const panel = document.getElementById('ContentPlaceHolder1_UpdatePanelResults');
+            const root = panel || document;
+            const results = [];
+            for (const table of root.querySelectorAll("table")) {
+                const rows = table.querySelectorAll("tr");
+                if (rows.length < 2) continue;
+                let descCol = -1;
+                const hdr = rows[0].querySelectorAll("th, td");
+                hdr.forEach((h, i) => { if (/descri/i.test(h.textContent)) descCol = i; });
+                if (descCol < 0) continue;
+                for (let i = 1; i < Math.min(rows.length, 4); i++) {
+                    const cells = rows[i].querySelectorAll("td");
+                    if (descCol < cells.length)
+                        results.push(cells[descCol].innerHTML.replace(/\\s+/g, ' ').substring(0, 400));
+                }
+                break;
+            }
+            return results;
+        }''')
+        for _ci, _rc in enumerate(_raw_cells):
+            print(f"  [S. José DIAG] RAW_CELL[{_ci}]: {_rc}")
+
         products = await page.evaluate(_SJOSE_EXTRACT_JS)
         print(f"  [S. José] Página 1: {len(products)} produtos")
 
@@ -809,7 +835,7 @@ async def scrape_euromais(page, username: str, password: str, medida: str) -> di
     
     try:
         print("  [Euromais] Logging in...")
-        await page.goto("https://www.eurotyre.pt/", wait_until="networkidle", timeout=60000)
+        await page.goto("https://www.eurotyre.pt/", wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(2)
         
         # Look for login link/button
@@ -1210,6 +1236,11 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             print(f"  [Soledad] evaluate() fill fallback: {filled}")
 
         await asyncio.sleep(0.3)
+
+        # Limpar respostas stale capturadas durante inicialização Angular (localStorage auto-load).
+        # O Angular SPA pode disparar automaticamente a pesquisa anterior ao navegar para url_search.
+        # Só queremos respostas da pesquisa actual, não da pesquisa anterior.
+        api_responses.clear()
 
         # Step 2: Click "Pesquisar" via evaluate() — also dispatches ngSubmit on the form
         pesquisar_clicked = await page.evaluate('''() => {
@@ -1743,8 +1774,218 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
 
     return result
 
-async def scrape_aguesport(page, username: str, password: str, medida: str) -> dict:
-    """Scrape Aguesport"""
+def _parse_andres_html(html: str) -> list:
+    """Parse product list from Grupo Andres buscador page HTML.
+
+    Each card is separated by result-thumbnail-tooltip="".
+    Brand in <img title="Michelin"> (mixed case — regex deve ser case-insensitive).
+    Description in data-ajax-description="205/55 R16 91V TURANZA 6" (no brand).
+    P. Compre in class="campaign-price"><span> (fallback: class="campaign-base-price").
+    """
+    import html as htmllib
+
+    desc_re       = re.compile(r'data-ajax-description="([^"]+)"')
+    # BUG1 FIX: aceitar mixed case (ex: "Michelin", "BF Goodrich") — .upper() na extracção
+    brand_re      = re.compile(r'<img[^>]*\btitle="([A-Za-z][A-Za-z0-9 \-/]+)"')
+    camp_price_re = re.compile(r'class="campaign-price"><span[^>]*>\s*([\d,.]+)')
+    base_price_re = re.compile(r'class="campaign-base-price">\s*([\d,.]+)')
+    title_re      = re.compile(
+        r'\d{3}/\d{2}\s+R\d{2}\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s+(.*)',
+        re.IGNORECASE,
+    )
+
+    products = []
+    for card in re.split(r'(?=result-thumbnail-tooltip="")', html)[1:]:
+        d = desc_re.search(card)
+        b = brand_re.search(card)
+        if not d or not b:
+            continue
+
+        p = camp_price_re.search(card) or base_price_re.search(card)
+        if not p:
+            continue
+
+        try:
+            price = float(p.group(1).replace(',', '.'))
+        except ValueError:
+            continue
+        if price <= 0:
+            continue
+
+        desc = htmllib.unescape(d.group(1)).strip()
+        m = title_re.match(desc)
+        if not m:
+            continue
+
+        products.append({
+            'brand':      b.group(1).strip().upper(),
+            'model':      m.group(2).strip().upper(),
+            'load_index': m.group(1).strip().upper(),
+            'price':      price,
+        })
+    return products
+
+
+async def scrape_grupo_andres(page, username: str, password: str, medida: str,
+                               skip_login: bool = False) -> dict:
+    """Scrape Grupo Andres B2B via JSON API (online.grupoandres.com).
+
+    Login: Playwright em online.grupoandres.com/login — cria sessão autenticada.
+    Pesquisa: aiohttp GET /search/tyres?page=N com cookies Playwright.
+    Campos confirmados via Network tab:
+      data['search_results'][i]['brand']['name']
+      data['search_results'][i]['model']['name']
+      data['search_results'][i]['load'] + ['speed'] → load_index
+      data['search_results'][i]['price']['distributor_price']['campaign_price' | 'base_price']
+    """
+    result = {
+        "supplier": "Grupo Andres",
+        "price": None,
+        "error": None,
+        "products": [],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        if not skip_login:
+            print("  [Andres] Login em online.grupoandres.com/login ...")
+            await page.goto("https://online.grupoandres.com/login",
+                            wait_until="domcontentloaded", timeout=60000)
+            await page.locator('input[name="data[Usuario][user]"]').fill(username)
+            await page.locator('input[name="data[Usuario][pass]"]').fill(password)
+            await page.locator('form#login_form').evaluate("f => f.submit()")
+            await asyncio.sleep(4)
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=15000)
+            except Exception:
+                pass
+            print(f"  [Andres] URL após login: {page.url}")
+
+        # Extrair cookies da sessão autenticada do Playwright
+        cookies = await page.context.cookies()
+        cookie_str = '; '.join(f"{c['name']}={c['value']}" for c in cookies)
+        medida_norm = normalize_medida(medida)
+
+        all_products: list = []
+        page_num = 0
+        async with aiohttp.ClientSession() as session:
+            while True:
+                url = (
+                    f"https://online.grupoandres.com/search/tyres"
+                    f"?page={page_num}&step=1&filterWithStock=true&isNewSearch=true"
+                    f"&sortBy=null&sortOrder=null&sortLoadSpeed=null"
+                    f"&category=cubiertas&searchText={medida_norm}"
+                )
+                async with session.get(url, headers={
+                    'Cookie': cookie_str,
+                    'Accept': 'application/json',
+                    'Referer': 'https://online.grupoandres.com/',
+                    'X-Requested-With': 'XMLHttpRequest',
+                }, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    if resp.status != 200:
+                        print(f"  [Andres] page={page_num} status={resp.status} — stop")
+                        break
+                    try:
+                        data = await resp.json(content_type=None)
+                    except Exception as json_err:
+                        raw = await resp.text()
+                        print(f"  [Andres] page={page_num} JSON error: {json_err} raw={raw[:80]!r}")
+                        break
+
+                items = data.get('search_results', []) if isinstance(data, dict) else []
+                if not items or data.get('empty_result', False):
+                    print(f"  [Andres] page={page_num} fim ({len(items)} items, empty_result={data.get('empty_result') if isinstance(data, dict) else '?'})")
+                    break
+
+                print(f"  [Andres] page={page_num}: {len(items)} items")
+                for item in items:
+                    brand = (item.get('brand') or {}).get('name', '').strip().upper()
+                    model = (item.get('model') or {}).get('name', '').strip().upper()
+                    load  = str(item.get('load', '')).strip()
+                    speed = str(item.get('speed', '')).strip()
+                    load_index = (load + speed).upper()
+                    dist = (item.get('price') or {}).get('distributor_price') or {}
+                    price_val = dist.get('campaign_price') or dist.get('base_price')
+                    if not price_val or not brand or not model:
+                        continue
+                    try:
+                        price = float(price_val)
+                    except (TypeError, ValueError):
+                        continue
+                    if price <= 0:
+                        continue
+                    all_products.append({
+                        'brand':      brand,
+                        'model':      model,
+                        'load_index': load_index,
+                        'price':      price,
+                    })
+
+                page_num += 1
+                if page_num > 50:
+                    print("  [Andres] Limite 50 páginas atingido")
+                    break
+
+        print(f"  [Andres] {medida}: {len(all_products)} produtos em {page_num} páginas")
+
+        if all_products:
+            result["products"] = all_products
+            result["price"] = min(p["price"] for p in all_products)
+            print(f"  [Andres] {medida}: mín €{result['price']:.2f}")
+        else:
+            result["error"] = "Nenhum produto encontrado"
+            print(f"  [Andres] {medida}: sem produtos")
+
+    except Exception as e:
+        result["error"] = str(e)
+        print(f"  [Andres] Erro: {e}")
+
+    return result
+
+
+def _parse_aguesport_html(html: str) -> list:
+    """Parse product list from Aguesport results page HTML.
+
+    Title format in class="ma-bold14": "205/55 R16 91V KUMHO Ecowing ES31"
+    Price format in class="price ma-semibold14": "42,95€"
+    """
+    card_re = re.compile(
+        r'class="info-text"><span[^>]*class="ma-bold14">(.*?)</span>.*?'
+        r'class="price ma-semibold14">([\d,.]+)',
+        re.DOTALL,
+    )
+    title_re = re.compile(
+        r'\d{3}/\d{2}\s+R\d{2}\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s+(\S+)\s+(.*)',
+        re.IGNORECASE,
+    )
+    products = []
+    for title, price_str in card_re.findall(html):
+        title = title.strip()
+        try:
+            price = float(price_str.replace(',', '.'))
+        except ValueError:
+            continue
+        if price <= 0:
+            continue
+        m = title_re.match(title)
+        if not m:
+            continue
+        products.append({
+            'brand':      m.group(2).strip().upper(),
+            'model':      m.group(3).strip().upper(),
+            'load_index': m.group(1).strip().upper(),
+            'price':      price,
+        })
+    return products
+
+
+async def scrape_aguesport(page, username: str, password: str, medida: str,
+                            skip_login: bool = False) -> dict:
+    """Scrape Aguesport B2B portal (encomendas.aguesport.com).
+
+    Login: input[type="email"] + input[type="password"] → button[type="submit"]
+    Pesquisa: input[placeholder*="Medida"] com medida normalizada (ex: 2055516)
+    Resultados: class="info-text" / class="price ma-semibold14"
+    """
     result = {
         "supplier": "Aguesport",
         "price": None,
@@ -1752,175 +1993,173 @@ async def scrape_aguesport(page, username: str, password: str, medida: str) -> d
         "products": [],
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
-    
     try:
-        print("  [Aguesport] Logging in...")
-        await page.goto("https://encomendas.aguesport.com/login", wait_until="networkidle", timeout=60000)
-        await asyncio.sleep(2)
-        
-        # Fill login form
-        email_input = page.locator('input[type="email"], input[name="email"], input[name="username"]').first
-        if await email_input.count() > 0:
-            await email_input.fill(username)
-        
-        password_input = page.locator('input[type="password"]').first
-        if await password_input.count() > 0:
-            await password_input.fill(password)
-        
-        # Submit login
-        submit_btn = page.locator('button[type="submit"], input[type="submit"]').first
-        if await submit_btn.count() > 0:
-            await submit_btn.click()
-        await asyncio.sleep(5)
-        
-        # Search for tires
+        if not skip_login:
+            print("  [Aguesport] Login...")
+            await page.goto("https://encomendas.aguesport.com/login",
+                            wait_until="domcontentloaded", timeout=60000)
+            await page.locator('input[type="email"]').first.fill(username)
+            await page.locator('input[type="password"]').first.fill(password)
+            await page.locator('button[type="submit"]').first.click()
+            await asyncio.sleep(2)
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=10000)
+            except Exception:
+                pass
+            print(f"  [Aguesport] URL após login: {page.url}")
+
         medida_norm = normalize_medida(medida)
-        print(f"  [Aguesport] Searching for: {medida_norm}")
-        
-        search_input = page.locator('input[type="search"], input[placeholder*="pesq"], input[name*="search"], #search').first
-        if await search_input.count() > 0:
-            await search_input.fill(medida_norm)
-            await search_input.press('Enter')
-            await asyncio.sleep(5)
-        
-        # Extract products
-        products = await page.evaluate('''() => {
-            const products = [];
-            const items = document.querySelectorAll('.product, .item, [class*="product"], [class*="item"], table tr');
-            
-            items.forEach(item => {
-                const text = item.textContent || '';
-                const priceMatch = text.match(/(\d+[,\.]\d{2})\s*€|€\s*(\d+[,\.]\d{2})/);
-                
-                if (priceMatch) {
-                    const priceStr = priceMatch[1] || priceMatch[2];
-                    const price = parseFloat(priceStr.replace(',', '.'));
-                    
-                    // Try to extract brand and model
-                    const brandMatch = text.match(/(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|BF GOODRICH|KUMHO|TOYO|NEXEN|FALKEN|COOPER|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL|SEMPERIT|BARUM|LASSA|SAVA|KLEBER|FULDA|GISLAVED|MATADOR|DEBICA|KELLY|DAYTON|ROADSTONE|NANKANG|FEDERAL|ACHILLES|LINGLONG|TRIANGLE|WESTLAKE|GOODRIDE|SAILUN|LANDSAIL|RADAR|ZEETEX|APLUS|COMPASAL|WINDFORCE|SUNFULL|ROADCLAW|HIFLY|SUNWIDE|POWERTRAC|THREE-A|GREMAX|ANTARES|BOTO|JINYU|DELINTE|MASSIMO|INSA TURBO)/i);
-                    
-                    if (price > 15 && price < 500) {
-                        products.push({
-                            brand: brandMatch ? brandMatch[1].toUpperCase() : 'UNKNOWN',
-                            model: '',
-                            price: price
-                        });
-                    }
-                }
-            });
-            
-            return products;
-        }''')
-        
-        if products and len(products) > 0:
+        print(f"  [Aguesport] Pesquisa: {medida_norm}")
+        if skip_login:
+            await page.goto("https://encomendas.aguesport.com/",
+                            wait_until="domcontentloaded", timeout=30000)
+        medida_field = page.locator('input[placeholder*="Medida"]').first
+        await medida_field.fill(medida_norm)
+        await asyncio.sleep(0.3)
+        await medida_field.press("Enter")
+        try:
+            await page.wait_for_selector('.ma-bold14', state='visible', timeout=12000)
+        except Exception:
+            await asyncio.sleep(3)
+
+        html = await page.content()
+        products = _parse_aguesport_html(html)
+
+        if products:
             result["products"] = products
-            prices = [p['price'] for p in products]
-            result["price"] = min(prices)
-            result["all_prices"] = sorted(prices)[:10]
-            print(f"  [Aguesport] Found {len(products)} products")
+            result["price"] = min(p["price"] for p in products)
+            print(f"  [Aguesport] {medida}: {len(products)} produtos, mín €{result['price']}")
         else:
-            content = await page.content()
-            prices = extract_prices(content)
-            if prices:
-                result["price"] = min(prices)
-                result["all_prices"] = sorted(prices)[:10]
-            else:
-                result["error"] = "No products found"
-                
+            result["error"] = "Nenhum produto encontrado"
+            print(f"  [Aguesport] {medida}: sem produtos")
+
     except Exception as e:
         result["error"] = str(e)
-        print(f"  [Aguesport] Error: {e}")
-    
+        print(f"  [Aguesport] Erro: {e}")
+
     return result
 
-async def scrape_abt_tyres(page, username: str, password: str, medida: str) -> dict:
-    """Scrape ABT Tyres B2B"""
+def _parse_abtyres_html(html: str) -> list:
+    """Parse product rows from ABTyres results page HTML.
+
+    Each row is a <tr role="row"> (skipping DEMO rows with yellow bg #FFF63D).
+    Data lives in hidden form inputs: marca, nome, preco.
+    nome format: "205/55 R 16 - 91V - TQ021" → load_index=91V, model=TQ021.
+    """
+    nome_re = re.compile(
+        r'[\d/\s]+R\s*\d+\s*-\s*(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s*-\s*(.*)',
+        re.IGNORECASE,
+    )
+    row_re   = re.compile(r'<tr\b[^>]*role=["\']row["\'][^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
+    input_re = re.compile(r'<input\b[^>]*name=["\'](\w+)["\'][^>]*value=["\']([^"\']*)["\']', re.IGNORECASE)
+
+    products = []
+    for row_m in row_re.finditer(html):
+        row_html = row_m.group(0)
+        # BUG2 FIX (a): fundo amarelo → linha DEMO
+        if 'FFF63D' in row_html or 'fff63d' in row_html:
+            continue
+        fields = {m.group(1): m.group(2) for m in input_re.finditer(row_html)}
+        marca  = fields.get('marca', '').strip().upper()
+        nome   = fields.get('nome', '').strip()
+        preco  = fields.get('preco', '').strip()
+        if not nome or not preco:
+            continue
+        # BUG2 FIX (b): marca com sufixo DEMO (ex: 'NEXEN DEMO', 'KUMHO DEMO')
+        if 'DEMO' in marca:
+            continue
+        try:
+            price = float(preco.replace(',', '.'))
+        except ValueError:
+            continue
+        if price <= 0:
+            continue
+        m = nome_re.match(nome)
+        if not m:
+            continue
+        products.append({
+            'brand':      marca,
+            'model':      m.group(2).strip().upper(),
+            'load_index': m.group(1).strip().upper(),
+            'price':      price,
+        })
+    return products
+
+
+async def scrape_abtyres(page, username: str, password: str, medida: str,
+                         skip_login: bool = False) -> dict:
+    """Scrape ABTyres B2B portal (b2b.abtyres.pt).
+
+    Login: input[name="user"] + input[type="password"] + button:has-text("Entrar").
+    Search: input[name="pesq"] + button:has-text("PESQUISA") on /pneus.
+    Results: <tr role="row"> with hidden inputs marca/nome/preco; skip DEMO (#FFF63D).
+    """
     result = {
-        "supplier": "ABT Tyres",
+        "supplier": "ABTyres",
         "price": None,
         "error": None,
         "products": [],
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    
     try:
-        print("  [ABT Tyres] Logging in...")
-        await page.goto("https://b2b.abtyres.pt/", wait_until="networkidle", timeout=60000)
-        await asyncio.sleep(2)
-        
-        # Fill login form
-        username_input = page.locator('input[name="username"], input[name="user"], input[type="text"]').first
-        if await username_input.count() > 0:
-            await username_input.fill(username)
-        
-        password_input = page.locator('input[type="password"]').first
-        if await password_input.count() > 0:
-            await password_input.fill(password)
-        
-        # Submit login
-        submit_btn = page.locator('button[type="submit"], input[type="submit"], button:has-text("Login"), button:has-text("Entrar")').first
-        if await submit_btn.count() > 0:
-            await submit_btn.click()
-        await asyncio.sleep(5)
-        
-        # Search for tires
-        medida_norm = normalize_medida(medida)
-        print(f"  [ABT Tyres] Searching for: {medida_norm}")
-        
-        # Try search box
-        search_input = page.locator('input[type="search"], input[placeholder*="pesq"], input[name*="search"], #searchInput, .search-box input').first
-        if await search_input.count() > 0:
-            await search_input.fill(medida_norm)
-            await search_input.press('Enter')
-            await asyncio.sleep(5)
-        
-        # Extract products
-        products = await page.evaluate('''() => {
-            const products = [];
-            const items = document.querySelectorAll('.product, .item, .tire, [class*="product"], [class*="tire"], table tbody tr');
-            
-            items.forEach(item => {
-                const text = item.textContent || '';
-                const priceMatch = text.match(/(\d+[,\.]\d{2})\s*€|€\s*(\d+[,\.]\d{2})/);
-                
-                if (priceMatch) {
-                    const priceStr = priceMatch[1] || priceMatch[2];
-                    const price = parseFloat(priceStr.replace(',', '.'));
-                    
-                    const brandMatch = text.match(/(MICHELIN|BRIDGESTONE|CONTINENTAL|PIRELLI|GOODYEAR|DUNLOP|HANKOOK|YOKOHAMA|FIRESTONE|BF GOODRICH|KUMHO|TOYO|NEXEN|FALKEN|COOPER|NOKIAN|VREDESTEIN|MAXXIS|GENERAL|UNIROYAL|SEMPERIT|BARUM|LASSA|SAVA|KLEBER|FULDA|GISLAVED|MATADOR)/i);
-                    
-                    if (price > 15 && price < 500) {
-                        products.push({
-                            brand: brandMatch ? brandMatch[1].toUpperCase() : 'UNKNOWN',
-                            model: '',
-                            price: price
-                        });
-                    }
-                }
-            });
-            
-            return products;
-        }''')
-        
-        if products and len(products) > 0:
-            result["products"] = products
-            prices = [p['price'] for p in products]
-            result["price"] = min(prices)
-            result["all_prices"] = sorted(prices)[:10]
-            print(f"  [ABT Tyres] Found {len(products)} products")
+        if not skip_login:
+            print("  [ABTyres] Login...")
+            # BUG1 FIX: domcontentloaded em vez de networkidle (loading azul mantém rede activa)
+            await page.goto("https://b2b.abtyres.pt/menu", wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(1)
+            current = page.url
+            if 'menu' not in current and 'pneus' not in current:
+                # Need to login
+                await page.goto("https://b2b.abtyres.pt/", wait_until="domcontentloaded", timeout=60000)
+                await asyncio.sleep(1)
+                await page.locator('input[name="user"]').first.fill(username)
+                await page.locator('input[type="password"]').first.fill(password)
+                await page.locator('button:has-text("Entrar")').first.click()
+                await asyncio.sleep(4)
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=20000)
+                except Exception:
+                    pass
+                print(f"  [ABTyres] URL após login: {page.url}")
         else:
-            content = await page.content()
-            prices = extract_prices(content)
-            if prices:
-                result["price"] = min(prices)
-                result["all_prices"] = sorted(prices)[:10]
-            else:
-                result["error"] = "No products found"
-                
+            await page.goto("https://b2b.abtyres.pt/pneus", wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(1)
+
+        medida_norm = normalize_medida(medida)
+        print(f"  [ABTyres] Pesquisa: {medida_norm}")
+        await page.goto("https://b2b.abtyres.pt/pneus", wait_until="domcontentloaded", timeout=60000)
+        await asyncio.sleep(1)
+
+        pesq = page.locator('input[name="pesq"]').first
+        await pesq.fill(medida_norm)
+        await asyncio.sleep(0.3)
+        await page.locator('button:has-text("PESQUISA")').first.click()
+
+        # Aguarda spinner desaparecer, depois aguarda primeira linha de resultado
+        try:
+            await page.wait_for_selector('#loading', state='hidden', timeout=20000)
+        except Exception:
+            pass
+        try:
+            await page.wait_for_selector('tr[role="row"]', state='visible', timeout=20000)
+        except Exception:
+            await asyncio.sleep(5)
+
+        html = await page.content()
+        products = _parse_abtyres_html(html)
+
+        result["products"] = products
+        if products:
+            result["price"] = min(p["price"] for p in products)
+            print(f"  [ABTyres] {medida}: {len(products)} produtos, mín €{result['price']}")
+        else:
+            result["error"] = "Nenhum produto encontrado"
+            print(f"  [ABTyres] {medida}: sem produtos")
+
     except Exception as e:
         result["error"] = str(e)
-        print(f"  [ABT Tyres] Error: {e}")
-    
+        print(f"  [ABTyres] Erro: {e}")
+
     return result
 
 async def scrape_tugapneus(page, username: str, password: str, medida: str,
@@ -2557,17 +2796,99 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
             result["error"] = "Sem resultados para esta medida"
             return result
 
-        # ── Extrair produtos do HTML ──────────────────────────────────────
-        content = await _ctx.content()
-
+        # ── Ordenar por preço (clicar cabeçalho EUR/Preco se disponível) ──
         try:
-            # Compatível com /api/scraper/debug-html?supplier=intersprint&file=search_page
-            with open('/tmp/intersprint_search_page.html', 'w', encoding='utf-8') as _f:
-                _f.write(content)
+            _sort_loc = _ctx.locator(
+                'th:has-text("EUR"), th:has-text("Preco"), th:has-text("Preço"), '
+                'a:has-text("EUR"), a:has-text("Preco"), a:has-text("Preço")'
+            ).first
+            if await _sort_loc.count() > 0:
+                await _sort_loc.click()
+                await asyncio.sleep(3)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    pass
+                print(f"  [InterSprint] Ordenado por preço")
         except Exception:
             pass
 
-        products = _parse_intersprint_html(content, marca_upper)
+        # ── Extrair produtos de TODAS as páginas ─────────────────────────
+        _MAX_PAGES = 10
+        _all_products: list = []
+        _seen_all: set = set()
+        _total_pages = 1
+        _content = ''
+
+        for _pg_num in range(1, _MAX_PAGES + 1):
+            try:
+                _content = await _ctx.content()
+            except Exception as _e_ct:
+                print(f"  [InterSprint] Erro ao obter HTML da página {_pg_num}: {_e_ct}")
+                break
+
+            # Guardar HTML da página 1 para debug
+            if _pg_num == 1:
+                try:
+                    with open('/tmp/intersprint_search_page.html', 'w', encoding='utf-8') as _f:
+                        _f.write(_content)
+                except Exception:
+                    pass
+                # Extrair número total de páginas
+                _tp_m = re.search(
+                    r'[Tt]otal\s+de\s+p[aá]ginas?\s*[:\(]?\s*(\d+)',
+                    _content
+                )
+                if _tp_m:
+                    _total_pages = min(int(_tp_m.group(1)), _MAX_PAGES)
+                    print(f"  [InterSprint] Total de páginas detectado: {_total_pages}")
+                else:
+                    print(f"  [InterSprint] 'Total de paginas' não encontrado — assume 1 página")
+
+            _page_prods = _parse_intersprint_html(_content, marca_upper)
+
+            # Deduplicar entre páginas
+            _new_prods = []
+            for _p in _page_prods:
+                _k = f"{_p['brand']}|{_p['medida']}|{_p['indice']}|{_p['price']}"
+                if _k not in _seen_all:
+                    _seen_all.add(_k)
+                    _new_prods.append(_p)
+            _all_products.extend(_new_prods)
+            print(f"  [InterSprint] Página {_pg_num}: {len(_page_prods)} produtos ({len(_new_prods)} novos)")
+
+            if _pg_num >= _total_pages:
+                break
+
+            # Navegar para a próxima página
+            _next_pg = _pg_num + 1
+            _navigated = False
+            for _nav_sel in [
+                f'a:has-text("{_next_pg}")',
+                f'input[value="{_next_pg}"]',
+                'a:has-text("Proxima"), a:has-text("Próxima"), '
+                'a:has-text(">>"), a:has-text("Siguiente"), a:has-text("Next")',
+            ]:
+                try:
+                    _nav_lnk = _ctx.locator(_nav_sel).first
+                    if await _nav_lnk.count() > 0:
+                        await _nav_lnk.click()
+                        await asyncio.sleep(4)
+                        try:
+                            await page.wait_for_load_state("networkidle", timeout=15000)
+                        except Exception:
+                            pass
+                        _navigated = True
+                        break
+                except Exception:
+                    continue
+
+            if not _navigated:
+                print(f"  [InterSprint] Sem link para página {_next_pg} — a parar paginação")
+                break
+
+        print(f"  [InterSprint] Total acumulado: {len(_all_products)} produtos")
+        products = _all_products
 
         if products:
             result["products"] = products
@@ -2577,7 +2898,8 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
             for p in products[:5]:
                 print(f"    {p['brand']} {p['medida']} {p.get('indice','')} {p.get('model','')} → €{p['price']}")
         else:
-            prices = extract_prices(content)
+            # Fallback: extrair preços brutos do HTML da última página lida
+            prices = extract_prices(_content)
             if prices:
                 result["price"] = min(prices)
                 result["all_prices"] = sorted(prices)[:10]
@@ -2595,102 +2917,141 @@ async def scrape_inter_sprint(page, username: str, password: str, medida: str,
 def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
     """Parse HTML da página de resultados InterSprint.
 
-    Estrutura da tabela InterSprint (colunas):
-      Marca | Descricao | Estacao | 3PMSF | LI/SI | Rotulo | Foto | E/EU | Stock | EUR | ...
+    Estrutura da tabela (colunas):
+      Marca | Descricao | Estacao | 3PMSF | LI/SI | Rotulo | Foto | E/EU | Stock | EUR
 
-    Descricao format: "{size} {[A-Z]?R}{rim} TL {LI/SI} {brand_abbr} {model}"
-    Exemplo: "205/55 VR16 TL 94V SUNNY NP226 XL"
+    Descricao format: "215/55 VR18 TL 99V MI PRIMACY 5 XL [M&S,Todas as estacoes]"
+    Campos posicionais após medida regex match:
+      TL → load_index → brand_abbr → modelo...
 
-    FIXES v5:
-    - Decode HTML entities (&nbsp; → space, &#47; → /) BEFORE running any regex,
-      because InterSprint separates column content with &nbsp; inside <td>.
-    - medida_re now allows optional spaces around the speed-letter and R.
-    - Context tracking: when a row has size info but no price (rowspan header),
-      the next row(s) with price inherit that context.
-    - debug print for rows with price but no medida after decode.
-    search_brand: fallback quando a célula da marca está vazia.
+    ABORDAGEM: parsing por célula <td> individual.
+    Extrai a célula Descricao (a que contém o padrão de medida) e
+    passa-a isolada para _parse_after_medida — evita contaminação
+    das colunas adjacentes (LI/SI duplicado, E/EU, Estacao, Stock…).
+
+    search_brand: fallback quando a célula Marca está vazia.
     """
     import re as _re
 
     products: list = []
     seen: set = set()
-    _no_medida_dbg: list = []  # DEBUG: primeiras linhas com preço mas sem medida
+    _no_medida_dbg: list = []
 
-    price_re = _re.compile(
+    price_re  = _re.compile(
         r'€\s*(\d+[,.]\d{2})|(\d+[,.]\d{2})\s*€|&nbsp;\s*(\d+[,.]\d{2})\s*&nbsp;',
         _re.IGNORECASE
     )
-    # medida_re aceita espaços opcionais ao redor da letra de construção e entre R e jante
-    # Suporta: "205/55 VR16", "205/55R16", "205/55 R16", "205/55 ZR18", "205/55 R 16"
     medida_re = _re.compile(r'(\d{3}/\d{2})\s*[A-Z]?\s*R\s*(\d{2})\b', _re.IGNORECASE)
-    # indice_re aceita espaço opcional entre número e letra (ex: "94 V" ou "94V")
-    indice_re = _re.compile(r'\b(\d{2,3}\s*[A-Z]{1,2}(?:\s*XL)?)\b')
     tag_re    = _re.compile(r'<[^>]+>')
-    row_re    = _re.compile(r'<tr[^>]*>(.*?)</tr>', _re.IGNORECASE | _re.DOTALL)
+    row_re    = _re.compile(r'<tr\b[^>]*>(.*?)</tr>', _re.IGNORECASE | _re.DOTALL)
+    td_re     = _re.compile(r'<td\b[^>]*>(.*?)</td>', _re.IGNORECASE | _re.DOTALL)
 
-    # Contexto do último row que tinha informação de medida/marca
-    # (para tabelas com rowspan onde o preço fica em linhas separadas)
+    # Contexto da última linha com Descricao (para rowspan: preço em linha separada)
     _ctx_brand  = ''
     _ctx_medida = ''
     _ctx_indice = ''
     _ctx_model  = ''
 
     def _decode_entities(text: str) -> str:
-        """Decodifica entidades HTML comuns antes do matching de regex."""
         text = text.replace('&#47;', '/').replace('&amp;', '&')
         text = text.replace('&nbsp;', ' ').replace('&lt;', '<').replace('&gt;', '>')
         text = _re.sub(r'&#(\d+);', lambda m: chr(int(m.group(1))), text)
-        text = _re.sub(r'&\w+;', ' ', text)  # outras entidades → espaço
+        text = _re.sub(r'&\w+;', ' ', text)
         return _re.sub(r'\s+', ' ', text).strip()
 
-    def _extract_model(row_text: str, after_pos: int, brand: str) -> str:
-        rem = row_text[after_pos:]
-        rem = price_re.sub('', rem)
-        # Após decode, preços ficam como "89.90" sem € — remover explicitamente
-        rem = _re.sub(r'\b\d+[,.]\d{2}\b', ' ', rem)
-        rem = _re.sub(r'\bTL\b|\bTW\b', ' ', rem, flags=_re.IGNORECASE)
-        rem = _re.sub(r'\b\d{2,3}\s*[A-Z]{1,2}(?:\s*XL)?\b', ' ', rem)
-        rem = _re.sub(r'\b\d+\b', ' ', rem)
-        rem = _re.sub(r'\s+', ' ', rem).strip()
-        parts = rem.upper().split()
-        if parts:
-            first = parts[0]
-            if (first == brand
-                    or brand.startswith(first)
-                    or (len(first) <= 3 and first.isalpha())):
-                parts = parts[1:]
-        return ' '.join(parts)[:60].strip()
+    def _parse_after_medida(after_text: str, ctx_brand: str) -> tuple:
+        """Parse da Descricao APENAS após o match da medida (texto isolado da célula).
+
+        after_text: texto da célula Descricao desde o fim da medida regex.
+        Exemplo: " TL 99V MI PRIMACY 5 XL [M&S,Todas as estacoes]"
+
+        Campos posicionais:
+          [skip TL/TW]  [load_index: 99V]  [brand_abbr: MI]  [model: PRIMACY 5 XL]
+
+        Retorna (brand, model, load_index).
+        """
+        _BMAP = {
+            'MI': 'MICHELIN',    'BR': 'BRIDGESTONE', 'GY': 'GOODYEAR',
+            'CO': 'CONTINENTAL', 'PI': 'PIRELLI',     'HA': 'HANKOOK',
+            'DU': 'DUNLOP',      'KL': 'KLEBER',      'UN': 'UNIROYAL',
+            'VR': 'VREDESTEIN',  'GE': 'GENERAL',     'VI': 'VIKING',
+            'DC': 'DOUBLE COIN', 'DE': 'DELINTE',     'LA': 'LANDSAIL',
+            'SE': 'SENTURY',     'MS': 'MASTERSTEEL', 'RH': 'ROADHOG',
+            'NK': 'NANKANG',     'FU': 'FULDA',       'TR': 'TRIANGLE',
+            'AT': 'ATLAS',       'CA': 'CEAT',        'HI': 'HIFLY',
+            'SU': 'SUNNY',       'AP': 'APOLLO',      'TO': 'TOYO',
+            'YO': 'YOKOHAMA',    'SA': 'SAILUN',      'BA': 'BARUM',
+            'MA': 'MAXXIS',      'LI': 'LINGLONG',    'WA': 'WANLI',
+            'KU': 'KUMHO',       'FA': 'FALKEN',      'RI': 'RIKEN',
+            'BF': 'BF GOODRICH', 'BI': 'BF GOODRICH', 'NO': 'NOKIAN',
+            'LE': 'LENDA',       'EV': 'EVENT',       'NE': 'NEXEN',
+            'FO': 'FORTUNA',     'LF': 'LANDFORSAIL', 'ZE': 'ZEETEX',
+            'SC': 'SECURITY',    'CI': 'CIMOS',       'GT': 'GT RADIAL',
+        }
+        # 1. Remover conteúdo entre [...] (M&S, Todas as estacoes, etc.)
+        clean = _re.sub(r'\[.*?\]', '', after_text).strip()
+        tokens = clean.split()
+
+        i = 0
+        # Saltar TL / TW
+        while i < len(tokens) and tokens[i].upper() in ('TL', 'TW'):
+            i += 1
+
+        # Load index: \d{2,3}[A-Z]{1,2}  ex: "99V", "95H", "121S"
+        load_index = ''
+        if i < len(tokens) and _re.match(r'^\d{2,3}[A-Z]{1,2}$', tokens[i], _re.I):
+            load_index = tokens[i].upper()
+            i += 1
+
+        # Abreviatura de marca: exatamente 2 letras maiúsculas  ex: "MI", "DC"
+        parsed_brand = ctx_brand
+        if i < len(tokens) and _re.match(r'^[A-Z]{2}$', tokens[i]):
+            parsed_brand = _BMAP.get(tokens[i].upper(), ctx_brand or tokens[i].upper())
+            i += 1
+
+        # Modelo: tokens restantes (Descricao já está isolada — sem colunas extra)
+        model = ' '.join(t.upper() for t in tokens[i:])
+
+        return parsed_brand, model, load_index
 
     for row_m in row_re.finditer(html):
-        # 1. Strip tags → raw text
-        raw = _re.sub(r'\s+', ' ', tag_re.sub(' ', row_m.group(1))).strip()
-        if len(raw) < 5:
-            continue
+        row_inner = row_m.group(1)
 
-        # 2. Decode HTML entities (&nbsp; é separador de colunas no portal)
-        # Nota: linhas de preço isoladas ficam com < 10 chars após decode (ex: "93,16")
-        # por isso não filtrar pelo comprimento do decoded text — só rejeitar verdadeiramente vazias.
-        row_text = _decode_entities(raw)
-        if not row_text:
-            continue
+        # ── Extrair células <td> individuais ─────────────────────────────
+        _cells_txt = [
+            _decode_entities(_re.sub(r'\s+', ' ', tag_re.sub(' ', c.group(1))).strip())
+            for c in td_re.finditer(row_inner)
+        ]
 
-        # 3. Tentar extrair medida DESTA linha (atualiza contexto se encontrar)
-        medida_m = medida_re.search(row_text)
-        if medida_m:
-            g1 = medida_m.group(1).replace(' ', '')   # normaliza "205 / 55" → "205/55"
-            _ctx_medida = f"{g1}R{medida_m.group(2)}".upper()
-            _ctx_brand  = row_text[:medida_m.start()].strip().upper()
-            if not _ctx_brand:
-                _ctx_brand = search_brand.upper() if search_brand else 'UNKNOWN'
-            # Índice: procurar a partir do início da medida
-            im = indice_re.search(row_text[medida_m.start():])
-            _ctx_indice = im.group(1).upper().replace(' ', '') if im else ''
-            _ctx_model  = _extract_model(row_text, medida_m.end(), _ctx_brand)
-            if not _ctx_model and _ctx_indice:
-                _ctx_model = _ctx_indice
+        # ── Célula Descricao: a que contém o padrão de medida ────────────
+        _desc_cell = ''
+        _desc_idx  = -1
+        for _ci, _ct in enumerate(_cells_txt):
+            if medida_re.search(_ct):
+                _desc_cell = _ct
+                _desc_idx  = _ci
+                break
 
-        # 4. Verificar se esta linha tem preço (usar raw: &nbsp; ainda não foi decodificado)
-        price_m = price_re.search(raw)
+        # ── Preço: pesquisa no HTML raw da linha (preserva &nbsp; formato) ──
+        _raw_row = _re.sub(r'\s+', ' ', tag_re.sub(' ', row_inner))
+        price_m  = price_re.search(_raw_row)
+
+        # ── Actualizar contexto se esta linha tem Descricao ──────────────
+        if _desc_cell:
+            _dm = medida_re.search(_desc_cell)
+            _g1 = _dm.group(1).replace(' ', '')
+            _ctx_medida = f"{_g1}R{_dm.group(2)}".upper()
+            # Célula Marca: imediatamente antes da Descricao (normalmente índice 0)
+            _mk = _cells_txt[_desc_idx - 1].upper() if _desc_idx > 0 else ''
+            # Filtrar alt-text de imagens (contém espaços ou dígitos → ignorar)
+            if len(_mk) > 25 or any(c.isdigit() for c in _mk):
+                _mk = ''
+            _parsed_brand, _ctx_model, _ctx_indice = _parse_after_medida(
+                _desc_cell[_dm.end():], _mk
+            )
+            _ctx_brand = _mk or _parsed_brand or search_brand.upper() or 'UNKNOWN'
+
+        # ── Sem preço → não é linha de produto ───────────────────────────
         if not price_m:
             continue
         try:
@@ -2702,18 +3063,14 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
         if not (15 < price < 800):
             continue
 
-        # 5. Usar medida/marca do contexto (desta linha ou da última linha com medida)
+        # ── Construir produto com contexto acumulado ──────────────────────
         medida_val = _ctx_medida
-        brand_val  = _ctx_brand if _ctx_brand else (search_brand.upper() or 'UNKNOWN')
+        brand_val  = _ctx_brand or search_brand.upper() or 'UNKNOWN'
         indice_val = _ctx_indice
         model_val  = _ctx_model
 
-        # DEBUG: registar linhas com preço mas sem medida (máx 3)
         if not medida_val and len(_no_medida_dbg) < 3:
-            _no_medida_dbg.append(row_text[:300])
-
-        if not model_val and indice_val:
-            model_val = indice_val
+            _no_medida_dbg.append(str(_cells_txt[:6])[:300])
 
         key = f"{brand_val}|{medida_val}|{indice_val}|{price}"
         if key not in seen:
@@ -2729,6 +3086,63 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
     print(f"  [InterSprint] _parse_intersprint_html: {len(products)} produtos")
     if _no_medida_dbg:
         print(f"  [InterSprint] DEBUG linhas-sem-medida: {_no_medida_dbg}")
+    return products
+
+
+def _parse_cruzeiro_html(html: str) -> list:
+    """Parse <tr> rows from Cruzeiro HTMX AJAX response HTML.
+
+    Colunas: 0=Imagem 1=Fabricante 2=Produto 3=DOT 4=Stock 5=Etq 6=Qtd 7=Preço 8=PVP
+    Formato Produto: "PNEU MARCA MEDIDA MODELO ÍNDICE"
+      ex.: "PNEU MICHELIN 205/55R16 PRIMACY 5 91V"
+    """
+    tag_re = re.compile(r'<[^>]+>', re.DOTALL)
+    td_re  = re.compile(r'<td\b[^>]*>(.*?)</td>', re.DOTALL | re.IGNORECASE)
+    tr_re  = re.compile(r'<tr\b[^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
+    products = []
+
+    for tr_m in tr_re.finditer(html):
+        cells = [tag_re.sub('', td.group(1)).strip() for td in td_re.finditer(tr_m.group(1))]
+        if len(cells) < 8:
+            continue
+
+        # Coluna 2 (Produto) é a fonte fiável — coluna 1 (Fabricante) pode
+        # conter "PNEU", texto de imagem ou estar vazia.
+        # Formato: "PNEU MARCA MEDIDA MODELO ÍNDICE"
+        #   ex: "PNEU MICHELIN 215/55R16 PRIMACY 5 91V"
+        #   ex: "NEXEN 215/55R18 N'FERA RU1 99V XL"  (sem prefixo PNEU)
+        prod  = ' '.join(cells[2].split())
+        txt   = re.sub(r'^PNEU\s+', '', prod, flags=re.IGNORECASE)
+        parts = [p for p in txt.split() if p]
+
+        if not parts:
+            continue
+
+        # 1. Primeiro token = MARCA (sempre da coluna Produto)
+        brand = parts.pop(0).upper()
+
+        # 2. Ignorar token de medida ("205/55R16")
+        if parts and re.match(r'\d{3}/\d{2}[Rr]\d{2}', parts[0]):
+            parts.pop(0)
+
+        # 3. Modelo = tudo antes do primeiro índice de carga+velocidade
+        remaining = ' '.join(parts)
+        idx_m = re.search(r'\b\d{2,3}[A-Z]{1,2}\b', remaining)
+        model = remaining[:idx_m.start()].strip() if idx_m else remaining.strip()
+
+        # Preço (coluna 7)
+        m_price = re.search(r'(\d+[,.]\d{2})', cells[7])
+        if not m_price:
+            continue
+        try:
+            price = float(m_price.group(1).replace(',', '.'))
+        except ValueError:
+            continue
+        if price <= 5:
+            continue
+
+        products.append({'brand': brand, 'model': model, 'price': price})
+
     return products
 
 
@@ -2785,7 +3199,7 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
         # ── LOGIN ────────────────────────────────────────────────────────────
         if not skip_login:
             print(f"  [Cruzeiro] A fazer login: {url_login}")
-            await page.goto(url_login, wait_until="networkidle", timeout=60000)
+            await page.goto(url_login, wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(2)
             _save_debug('/tmp/cruzeiro_pre_login.html', await page.content())
 
@@ -2840,8 +3254,8 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
         # ── PESQUISA ─────────────────────────────────────────────────────────
         search_tab_url = url_search.rstrip('?&') + '?tab=produtos'
         print(f"  [Cruzeiro] Navegando para pesquisa: {search_tab_url}")
-        await page.goto(search_tab_url, wait_until="networkidle", timeout=60000)
-        await asyncio.sleep(3)
+        await page.goto(search_tab_url, wait_until="domcontentloaded", timeout=60000)
+        await asyncio.sleep(2)
 
         # Verificar redireccção para login (sessão expirada)
         if 'login' in page.url.lower():
@@ -2920,24 +3334,19 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
 
                 let brand = '', model = '', price = null;
 
-                // ── Coluna Fabricante (índice 1) — fonte primária da marca ──
-                // Contém o nome do fabricante como texto ou alt da imagem
-                const fabTxt = cells[1].textContent.trim().replace(/\s+/g, ' ').toUpperCase();
-                const fabImg = cells[1].querySelector('img');
-                const fabAlt = fabImg ? (fabImg.alt || fabImg.title || '').trim().toUpperCase() : '';
-                brand = fabTxt || fabAlt;
-
-                // ── Coluna Produto (índice 2) — fonte do modelo ────────────
+                // ── Coluna Produto (índice 2) — fonte fiável de marca e modelo ──
+                // Coluna Fabricante (índice 1) pode conter "PNEU", alt de imagem
+                // incorrecta ou texto de fallback — NÃO usar como fonte primária.
                 // Formato: "PNEU MARCA MEDIDA MODELO ÍNDICE"
-                // ex.: "PNEU MICHELIN 205/55R16 PRIMACY 5 91V"
+                //   ex: "PNEU MICHELIN 205/55R16 PRIMACY 5 91V"
+                //   ex: "NEXEN 215/55R18 N'FERA RU1 99V XL"  (sem prefixo PNEU)
                 const produtoTxt = cells[2].textContent.trim().replace(/\s+/g, ' ');
                 let txt = produtoTxt.replace(/^PNEU\s+/i, '');
-                const parts = txt.split(' ');
+                const parts = txt.split(' ').filter(p => p.length > 0);
 
-                // Se coluna Fabricante estava vazia, extrair marca do Produto (fallback)
-                if (!brand && parts.length >= 1) {
-                    brand = parts[0].toUpperCase();
-                    parts.shift();
+                // 1. Primeiro token = MARCA (sempre)
+                if (parts.length >= 1) {
+                    brand = parts.shift().toUpperCase();
                 }
 
                 // Se a coluna Fabricante tinha texto, o produto repete a marca em parts[0]
@@ -2952,11 +3361,9 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                     parts.shift();
                 }
 
-                // Modelo = tudo antes do primeiro índice de velocidade (ex: "91V", "94W XL")
-                // Estratégia: juntar os parts e cortar na primeira ocorrência de \d{2,3}[A-Z]
-                // ex: "RPX-800 91V (COM PROT JANTE)" → "RPX-800"
-                // ex: "DIMAX TOURING 94V XL FP (EVC)" → "DIMAX TOURING"
+                // 3. Modelo = tudo antes do primeiro índice de carga+velocidade
                 // ex: "PRIMACY 5 91V" → "PRIMACY 5"
+                // ex: "EFFICIENTGRIP PERFORMANCE 2 99V XL" → "EFFICIENTGRIP PERFORMANCE 2"
                 const remainingStr = parts.join(' ');
                 const idxMatch = remainingStr.match(/\b\d{2,3}[A-Z]{1,2}\b/);
                 model = (idxMatch ? remainingStr.slice(0, idxMatch.index) : remainingStr).trim();
@@ -2966,7 +3373,8 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                 const m = precoTxt.match(/(\d+[,.]\d{2})/);
                 if (m) price = parseFloat(m[1].replace(',', '.'));
 
-                // DEBUG: emitir sempre para diagnóstico
+                // DEBUG: emitir para diagnóstico
+                const fabTxt = cells[1].textContent.trim().replace(/\s+/g, ' ').toUpperCase();
                 products.push({
                     brand, model, price,
                     _raw_fabricante: fabTxt,
@@ -2977,62 +3385,96 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
             return products;
         }'''
 
+        # JS reutilizável para parsear rows de HTML bruto (AJAX ou DOM).
+        # Injecta o HTML num elemento temporário → usa textContent do browser
+        # → comentários e entidades tratados correctamente, igual ao _EXTRACT_JS.
+        _PARSE_HTML_JS = r'''(html) => {
+            const temp = document.createElement('table');
+            temp.innerHTML = html;
+            const rows = temp.querySelectorAll('tr');
+            const products = [];
+
+            for (const row of rows) {
+                const cells = row.querySelectorAll('td');
+                if (cells.length < 8) continue;
+
+                let brand = '', model = '', price = null;
+
+                const produtoTxt = cells[2].textContent.trim().replace(/\s+/g, ' ');
+                let txt = produtoTxt.replace(/^PNEU\s+/i, '');
+                const parts = txt.split(' ').filter(p => p.length > 0);
+
+                if (parts.length >= 1) {
+                    brand = parts.shift().toUpperCase();
+                }
+
+                if (parts.length > 0 && /\d{3}\/\d{2}[Rr]\d{2}/.test(parts[0])) {
+                    parts.shift();
+                }
+
+                const remainingStr = parts.join(' ');
+                const idxMatch = remainingStr.match(/\b\d{2,3}[A-Z]{1,2}\b/);
+                model = (idxMatch ? remainingStr.slice(0, idxMatch.index) : remainingStr).trim();
+
+                const precoTxt = cells[7].textContent.trim();
+                const m = precoTxt.match(/(\d+[,.]\d{2})/);
+                if (m) price = parseFloat(m[1].replace(',', '.'));
+
+                if (brand && price) {
+                    products.push({brand, model, price,
+                        _raw_produto: produtoTxt, _raw_preco: precoTxt});
+                }
+            }
+            return products;
+        }'''
+
         products = await page.evaluate(_EXTRACT_JS)
         print(f"  [Cruzeiro] Página 1: {len(products)} linhas extraídas")
         for _dbg in products[:20]:
             print(f"  [Cruzeiro DEBUG] fab={_dbg.get('_raw_fabricante','?')!r:20} | produto={_dbg.get('_raw_produto','?')!r:60} | brand={_dbg.get('brand','?')!r:15} | model={_dbg.get('model','?')!r:30} | price={_dbg.get('price')}")
 
-        # ── Paginação: clicar "próxima página" até não haver mais ────────────
-        _page_num = 1
-        _MAX_PAGES = 10
-        while _page_num < _MAX_PAGES:
-            # Detectar botão de próxima página (seta direita / próximo)
-            _next_sel = (
-                'a[aria-label*="próxima" i], a[aria-label*="next" i], '
-                'a[title*="próxima" i], a[title*="next" i], '
-                'li.next:not(.disabled) a, '
-                '.pagination a[rel="next"], '
-                'a.proxima-pagina, button.proxima-pagina, '
-                '[id*="proxima_pagina"], [id*="next_page"], '
-                'a:has(> i.fa-chevron-right), a:has(> i.fa-angle-right), '
-                'a:has(> span:text-is("›")), a:has(> span:text-is("»")), '
-                'button:has(> i.fa-chevron-right)'
-            )
-            try:
-                _next_btn = page.locator(_next_sel).first
-                _btn_count = await _next_btn.count()
-                if _btn_count == 0:
-                    break
-                _is_disabled = await _next_btn.get_attribute('disabled')
-                _parent_class = await _next_btn.evaluate('el => el.closest("li")?.className || ""')
-                if _is_disabled or 'disabled' in _parent_class:
-                    break
-            except Exception:
-                break
-
-            _page_num += 1
-            try:
-                async with page.expect_response(
-                    lambda r: 'produtos-tabela-ajax' in r.url,
-                    timeout=15000,
-                ) as _resp_pg:
-                    await _next_btn.click()
-                await _resp_pg.value
-                await asyncio.sleep(1)
-            except Exception as _e_pg:
-                # Sem HTMX response — tentar networkidle
+        # ── Paginação HTMX AJAX: offset=16, 32, 48... ───────────────────────
+        # O site usa hx-trigger="intersect once" — não há botão de página.
+        # Chama o endpoint AJAX directamente com os cookies de sessão.
+        print(f"  [Cruzeiro] Página 1 (DOM): {len(products)} produtos; a paginar via AJAX...")
+        _ajax_base = "https://www.pneuscruzeiro.pt/pt/produtos-tabela-ajax"
+        _cookies = await page.context.cookies()
+        _cookie_str = '; '.join(f"{c['name']}={c['value']}" for c in _cookies)
+        _offset = 16
+        async with aiohttp.ClientSession() as _http:
+            while _offset <= 320:
+                _ajax_url = (
+                    f"{_ajax_base}?offset={_offset}&fabricante=&runflat=0"
+                    f"&prodssrchtxt={medida_search}"
+                    f"&medidas=&orderby=preco_do_artigo"
+                    f"&orderdirection=ASC&tipoListaProdutos=1"
+                )
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=10000)
-                except Exception:
-                    pass
+                    async with _http.get(_ajax_url, headers={
+                        'Cookie': _cookie_str,
+                        'Accept': 'text/html,*/*',
+                        'HX-Request': 'true',
+                        'Referer': search_tab_url,
+                    }, timeout=aiohttp.ClientTimeout(total=20)) as _resp:
+                        if _resp.status != 200:
+                            print(f"  [Cruzeiro] AJAX offset={_offset} status={_resp.status} — stop")
+                            break
+                        _ajax_html = await _resp.text()
+                except Exception as _e_ajax:
+                    print(f"  [Cruzeiro] AJAX offset={_offset} erro: {_e_ajax}")
+                    break
 
-            _new_prods = await page.evaluate(_EXTRACT_JS)
-            if not _new_prods:
-                break
-            print(f"  [Cruzeiro] Página {_page_num}: {len(_new_prods)} produtos")
-            products.extend(_new_prods)
+                if '<tr' not in _ajax_html:
+                    print(f"  [CRZ-AJAX] offset={_offset} sem <tr> — fim")
+                    break
+                # Mesmo parser que o DOM: injecta HTML no browser e usa textContent
+                # (resolve comentários HTML, entidades, etc. que quebram o parser Python)
+                _new_prods = await page.evaluate(_PARSE_HTML_JS, _ajax_html)
+                print(f"  [CRZ-AJAX] offset={_offset} → {len(_new_prods)} produtos")
+                products.extend(_new_prods)
+                _offset += 16
 
-        print(f"  [Cruzeiro] Produtos extraídos (total {_page_num} pág.): {len(products)}")
+        print(f"  [Cruzeiro] Total após paginação AJAX: {len(products)} produtos")
 
         # Limpar campos _raw_* usados apenas para debug
         for p in products:
@@ -3041,12 +3483,20 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                     del p[k]
 
         if products:
-            # Filtrar linhas sem preço válido — log de descartados para diagnóstico
+            # Filtrar linhas sem preço válido e marcas com artefactos HTML (ex: "-->PNEU")
+            # Log de descartados para diagnóstico
             valid_products = []
             for _p in products:
+                _motivo = None
                 if not _p.get('price') or _p['price'] <= 5:
+                    _motivo = 'sem preço válido'
+                elif not _p.get('brand'):
+                    _motivo = 'sem marca'
+                elif _p['brand'].startswith('-->') or _p['brand'] in ('', '-->', '-->PNEU'):
+                    _motivo = f"marca artefacto HTML: {_p['brand']!r}"
+                if _motivo:
                     print(f"  [CRZ-DESCARTADO] brand={_p.get('brand','')!r} model={_p.get('model','')!r} "
-                          f"price={_p.get('price')!r} motivo='sem preço válido'")
+                          f"price={_p.get('price')!r} motivo={_motivo!r}")
                 else:
                     valid_products.append(_p)
             products = valid_products
@@ -3245,7 +3695,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                 _sol_url_search,
                                 skip_login=(not _is_first),
                             ),
-                            timeout=150,  # 2.5 min max por medida → 5 medidas = 12.5 min max
+                            timeout=90,   # 1.5 min max por medida (fornecedores correm em paralelo)
                         )
                         _dt = (datetime.now() - _t0).total_seconds()
                         print(f"  [Soledad] Fim medida {medida}: {_dt:.0f}s, price={result.get('price')}, products={len(result.get('products',[]))}")
@@ -3264,7 +3714,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                         _sol_url_login, _sol_url_search,
                                         skip_login=False,  # forçar re-login
                                     ),
-                                    timeout=180,  # mais tempo para login + pesquisa
+                                    timeout=120,  # mais tempo para login + pesquisa no retry
                                 )
                                 _dt2 = (datetime.now() - _t0).total_seconds()
                                 print(f"  [Soledad] Retry medida {medida}: {_dt2:.0f}s, products={len(result.get('products',[]))}")
@@ -3337,6 +3787,282 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
             print(f"  [Soledad] RESUMO: {' | '.join(_sol_summary)}")
             continue  # Skip the generic per-medida loop below
 
+        # ── Aguesport: sessão única para todas as medidas ──────────────────
+        # Login uma vez; cada medida usa página nova no mesmo contexto.
+        if 'aguesport' in supplier_name:
+            _agu_ctx_kwargs = dict(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1920, 'height': 1080},
+                locale='pt-PT',
+            )
+            async with async_playwright() as _p_agu:
+                _agu_browser = await _p_agu.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox',
+                          '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                )
+                _agu_ctx = await _agu_browser.new_context(**_agu_ctx_kwargs)
+                _agu_first = True
+                _agu_summary = []
+
+                for medida in medidas:
+                    _agu_page = await _agu_ctx.new_page()
+                    await _agu_page.add_init_script(
+                        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+                    )
+                    try:
+                        result = await asyncio.wait_for(
+                            scrape_aguesport(
+                                _agu_page,
+                                supplier['username'], supplier['password'],
+                                medida,
+                                skip_login=(not _agu_first),
+                            ),
+                            timeout=60,
+                        )
+                        _agu_first = False
+                        result["medida"] = medida
+                        results.append(result)
+
+                        products = result.get('products', [])
+                        now = datetime.now(timezone.utc)
+                        conn_save = await _pg_connect()
+                        try:
+                            await conn_save.execute(
+                                "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
+                                supplier['name'], medida,
+                            )
+                            if products:
+                                for prod in products:
+                                    await conn_save.execute(
+                                        """INSERT INTO scraped_prices
+                                               (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
+                                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        prod.get('brand', '').upper(),
+                                        prod.get('model', ''),
+                                        prod.get('price'),
+                                        prod.get('load_index', ''),
+                                        now,
+                                    )
+                                print(f"  [Aguesport] {medida}: guardados {len(products)} produtos")
+                            elif result.get('price') is not None:
+                                await conn_save.execute(
+                                    """INSERT INTO scraped_prices
+                                           (id, supplier_name, medida, price, scraped_at)
+                                       VALUES ($1,$2,$3,$4,$5)""",
+                                    str(uuid.uuid4()), supplier['name'], medida,
+                                    result['price'], now,
+                                )
+                                print(f"  [Aguesport] {medida}: €{result['price']} (sem dados marca)")
+                            else:
+                                print(f"  [Aguesport] {medida}: sem produtos — registos antigos apagados")
+                        finally:
+                            await conn_save.close()
+
+                        _err = result.get('error') or ''
+                        _np  = len(result.get('products', []))
+                        _agu_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+
+                    except asyncio.TimeoutError:
+                        print(f"  [Aguesport] Timeout em {medida}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                        _agu_summary.append(f"{medida}:TIMEOUT")
+                    except Exception as _e_agu:
+                        print(f"  [Aguesport] Erro em {medida}: {_e_agu}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_agu)})
+                        _agu_summary.append(f"{medida}:ERR")
+                    finally:
+                        await _agu_page.close()
+
+                print(f"  [Aguesport] RESUMO: {' | '.join(_agu_summary)}")
+                await _agu_browser.close()
+            continue  # Skip the generic per-medida loop below
+
+        # ── Grupo Andres: sessão única para todas as medidas ───────────────
+        # Login uma vez via JS form submit; pesquisa por URL directa.
+        if 'andres' in supplier_name:
+            _and_ctx_kwargs = dict(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1920, 'height': 1080},
+                locale='pt-PT',
+            )
+            async with async_playwright() as _p_and:
+                _and_browser = await _p_and.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox',
+                          '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                )
+                _and_ctx = await _and_browser.new_context(**_and_ctx_kwargs)
+                _and_first = True
+                _and_summary = []
+
+                for medida in medidas:
+                    _and_page = await _and_ctx.new_page()
+                    await _and_page.add_init_script(
+                        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+                    )
+                    try:
+                        result = await asyncio.wait_for(
+                            scrape_grupo_andres(
+                                _and_page,
+                                supplier['username'], supplier['password'],
+                                medida,
+                                skip_login=(not _and_first),
+                            ),
+                            timeout=60,
+                        )
+                        _and_first = False
+                        result["medida"] = medida
+                        results.append(result)
+
+                        products = result.get('products', [])
+                        now = datetime.now(timezone.utc)
+                        conn_save = await _pg_connect()
+                        try:
+                            await conn_save.execute(
+                                "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
+                                supplier['name'], medida,
+                            )
+                            if products:
+                                for prod in products:
+                                    await conn_save.execute(
+                                        """INSERT INTO scraped_prices
+                                               (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
+                                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        prod.get('brand', '').upper(),
+                                        prod.get('model', ''),
+                                        prod.get('price'),
+                                        prod.get('load_index', ''),
+                                        now,
+                                    )
+                                print(f"  [Andres] {medida}: guardados {len(products)} produtos")
+                            elif result.get('price') is not None:
+                                await conn_save.execute(
+                                    """INSERT INTO scraped_prices
+                                           (id, supplier_name, medida, price, scraped_at)
+                                       VALUES ($1,$2,$3,$4,$5)""",
+                                    str(uuid.uuid4()), supplier['name'], medida,
+                                    result['price'], now,
+                                )
+                                print(f"  [Andres] {medida}: €{result['price']} (sem dados marca)")
+                            else:
+                                print(f"  [Andres] {medida}: sem produtos — registos antigos apagados")
+                        finally:
+                            await conn_save.close()
+
+                        _err = result.get('error') or ''
+                        _np  = len(result.get('products', []))
+                        _and_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+
+                    except asyncio.TimeoutError:
+                        print(f"  [Andres] Timeout em {medida}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                        _and_summary.append(f"{medida}:TIMEOUT")
+                    except Exception as _e_and:
+                        print(f"  [Andres] Erro em {medida}: {_e_and}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_and)})
+                        _and_summary.append(f"{medida}:ERR")
+                    finally:
+                        await _and_page.close()
+
+                print(f"  [Andres] RESUMO: {' | '.join(_and_summary)}")
+                await _and_browser.close()
+            continue  # Skip the generic per-medida loop below
+
+        # ── ABTyres: sessão única para todas as medidas ─────────────────────
+        # Login uma vez; cada medida navega directamente para /pneus e pesquisa.
+        if 'abtyres' in supplier_name:
+            _abt_ctx_kwargs = dict(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1920, 'height': 1080},
+                locale='pt-PT',
+            )
+            async with async_playwright() as _p_abt:
+                _abt_browser = await _p_abt.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox',
+                          '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                )
+                _abt_ctx = await _abt_browser.new_context(**_abt_ctx_kwargs)
+                _abt_first = True
+                _abt_summary = []
+
+                for medida in medidas:
+                    _abt_page = await _abt_ctx.new_page()
+                    await _abt_page.add_init_script(
+                        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+                    )
+                    try:
+                        result = await asyncio.wait_for(
+                            scrape_abtyres(
+                                _abt_page,
+                                supplier['username'], supplier['password'],
+                                medida,
+                                skip_login=(not _abt_first),
+                            ),
+                            timeout=180,
+                        )
+                        _abt_first = False
+                        result["medida"] = medida
+                        results.append(result)
+
+                        products = result.get('products', [])
+                        now = datetime.now(timezone.utc)
+                        conn_save = await _pg_connect()
+                        try:
+                            await conn_save.execute(
+                                "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
+                                supplier['name'], medida,
+                            )
+                            if products:
+                                for prod in products:
+                                    await conn_save.execute(
+                                        """INSERT INTO scraped_prices
+                                               (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
+                                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        prod.get('brand', '').upper(),
+                                        prod.get('model', ''),
+                                        prod.get('price'),
+                                        prod.get('load_index', ''),
+                                        now,
+                                    )
+                                print(f"  [ABTyres] {medida}: guardados {len(products)} produtos")
+                            elif result.get('price') is not None:
+                                await conn_save.execute(
+                                    """INSERT INTO scraped_prices
+                                           (id, supplier_name, medida, price, scraped_at)
+                                       VALUES ($1,$2,$3,$4,$5)""",
+                                    str(uuid.uuid4()), supplier['name'], medida,
+                                    result['price'], now,
+                                )
+                                print(f"  [ABTyres] {medida}: €{result['price']} (sem dados marca)")
+                            else:
+                                print(f"  [ABTyres] {medida}: sem produtos — registos antigos apagados")
+                        finally:
+                            await conn_save.close()
+
+                        _err = result.get('error') or ''
+                        _np  = len(result.get('products', []))
+                        _abt_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+
+                    except asyncio.TimeoutError:
+                        print(f"  [ABTyres] Timeout em {medida}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                        _abt_summary.append(f"{medida}:TIMEOUT")
+                    except Exception as _e_abt:
+                        print(f"  [ABTyres] Erro em {medida}: {_e_abt}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_abt)})
+                        _abt_summary.append(f"{medida}:ERR")
+                    finally:
+                        await _abt_page.close()
+
+                print(f"  [ABTyres] RESUMO: {' | '.join(_abt_summary)}")
+                await _abt_browser.close()
+            continue  # Skip the generic per-medida loop below
+
         # ── Pneus Cruzeiro: sessão única para todas as medidas ──────────────
         # Login só uma vez (reCAPTCHA invisible resolve automaticamente);
         # cada medida usa uma página nova no mesmo contexto autenticado.
@@ -3392,7 +4118,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                 skip_login=(not _crz_first),
                                 marca=marca,
                             ),
-                            timeout=150,
+                            timeout=90,
                         )
                         _crz_first = False
                         result["medida"] = medida
@@ -3499,7 +4225,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     elif 'aguesport' in supplier_name:
                         result = await scrape_aguesport(page, supplier['username'], supplier['password'], medida)
                     elif 'abt' in supplier_name:
-                        result = await scrape_abt_tyres(page, supplier['username'], supplier['password'], medida)
+                        result = await scrape_abtyres(page, supplier['username'], supplier['password'], medida)
                     elif is_tuga:
                         result = await scrape_tugapneus(page, supplier['username'], supplier['password'], medida, marca, modelo)
                     elif 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:
@@ -3571,13 +4297,13 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         print(f"  {medida}: best price €{result['price']}")
                     else:
                         print(f"  {medida}: {result.get('error', 'No price found')}")
-                        
+
                 except Exception as e:
                     print(f"  Error: {e}")
                     results.append({"supplier": supplier['name'], "medida": medida, "error": str(e)})
                 finally:
                     await browser.close()
-    
+
     # Save results to file
     result_file = RESULTS_DIR / f"scrape_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(result_file, 'w') as f:
@@ -3672,7 +4398,7 @@ async def _run_supplier_async(supplier_id: str, sizes: list, job_id: str = None)
                 elif 'aguesport' in supplier_name:
                     result = await scrape_aguesport(page, username, password, medida)
                 elif 'abt' in supplier_name:
-                    result = await scrape_abt_tyres(page, username, password, medida)
+                    result = await scrape_abtyres(page, username, password, medida)
                 elif 'tugapneus' in supplier_name or 'tuga' in supplier_name:
                     result = await scrape_tugapneus(page, username, password, medida)
                 elif 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:

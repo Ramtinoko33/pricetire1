@@ -1066,32 +1066,77 @@ scraper_status = {"running": False, "started_at": None, "progress": "", "results
 async def run_manual_scraper(medidas: list):
     global scraper_status
     scraper_status.update(running=True, started_at=datetime.now(timezone.utc).isoformat(),
-                          progress="Starting scraper...", results=[])
+                          progress="A obter lista de fornecedores...", results=[])
     try:
         medidas_str = ','.join(medidas)
         env = os.environ.copy()
         env['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
-        proc = await asyncio.create_subprocess_exec(
-            'python3', '/app/backend/run_scraper.py', '--medidas', medidas_str,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            env=env,
-            cwd='/app/backend',
+
+        # Obter lista de fornecedores activos
+        _pool = await get_db()
+        async with _pool.acquire() as _conn:
+            _active = rows(await _conn.fetch(
+                "SELECT name FROM suppliers WHERE is_active = TRUE ORDER BY name"
+            ))
+        supplier_names = [s['name'] for s in _active]
+
+        if not supplier_names:
+            scraper_status["progress"] = "Nenhum fornecedor activo"
+            return
+
+        logger.info(f"[manual scraper] {len(supplier_names)} fornecedores em paralelo, "
+                    f"{len(medidas)} medidas: {medidas}")
+        scraper_status["progress"] = (
+            f"A scraper {len(supplier_names)} fornecedores em paralelo "
+            f"({len(medidas)} medidas)..."
         )
-        output_lines = []
-        # Read output line-by-line without blocking the event loop
-        async for raw_line in proc.stdout:
-            line = raw_line.decode(errors='replace').rstrip()
-            if line:
-                output_lines.append(line)
-                scraper_status["progress"] = line
-                logger.info(f"[scraper] {line}")
-        await proc.wait()
-        scraper_status["progress"] = "Completed"
-        scraper_status["results"] = output_lines[-100:]
+
+        output_lines: list = []
+        completed: list = []
+
+        async def _run_one(sup_name: str):
+            """Lança run_scraper.py para um único fornecedor e aguarda conclusão."""
+            proc = await asyncio.create_subprocess_exec(
+                'python3', '/app/backend/run_scraper.py',
+                '--supplier', sup_name,
+                '--medidas', medidas_str,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env=env,
+                cwd='/app/backend',
+            )
+            try:
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=600)
+                out = stdout.decode(errors='replace')
+                for line in out.splitlines():
+                    if line.strip():
+                        output_lines.append(line)
+                        logger.info(f"[{sup_name}] {line}")
+                completed.append(sup_name)
+            except asyncio.TimeoutError:
+                proc.kill()
+                try:
+                    await proc.communicate()
+                except Exception:
+                    pass
+                completed.append(f"{sup_name}(timeout)")
+                logger.warning(f"[{sup_name}] Timeout após 600s")
+            scraper_status["progress"] = (
+                f"Concluídos {len(completed)}/{len(supplier_names)}: "
+                + ", ".join(completed)
+            )
+
+        # Todos os fornecedores em paralelo
+        await asyncio.gather(*[_run_one(n) for n in supplier_names])
+
+        scraper_status["progress"] = (
+            f"Scraping concluído — {len(supplier_names)} fornecedores, "
+            f"{len(medidas)} medidas"
+        )
+        scraper_status["results"] = output_lines[-200:]
         logger.info(f"Scraper manual concluído. {len(output_lines)} linhas de output.")
     except Exception as e:
-        scraper_status["progress"] = f"Error: {str(e)}"
+        scraper_status["progress"] = f"Erro: {str(e)}"
         logger.error(f"Scraper error: {e}")
     finally:
         scraper_status["running"] = False
