@@ -1360,9 +1360,10 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         # PRECIOMOSTRARPEDIDO   = preço de venda ao cliente no pedido.
         # PRECIOCONDESCUENTO    = preço com desconto aplicado.
         # PRECIOSINDESCUENTO    = preço sem desconto (bruto).
+        # AR_PVR = Precio de Venta al Público — NÃO usar (é o PVP, não o preço de custo).
+        # Campos ordenados por prioridade: PRECIOMOSTRARBUSQUEDA é o preço de custo confirmado.
         _PRICE_SUBSTRINGS = ('preciomostrarbusqueda', 'preciomostrarpedido',
-                             'preciocondescuento', 'preciosindescuento', 'precioconiva',
-                             'ar_pvr', 'pvr',
+                             'preciocondescuento', 'preciosindescuento', 'prepre',
                              'pvp', 'preco', 'precio', 'price', 'coste',
                              'tarifa', 'unitprice', 'saleprice', 'netprice', 'preciouni',
                              'precouni', 'pvpfinal', 'pvpnet')
