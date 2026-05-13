@@ -3522,6 +3522,24 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                 _sol_first = True
                 _sol_relogin = False  # set True when session expires mid-scrape
                 _sol_medida_count = 0  # contador para re-login preventivo
+
+                # Limpar medidas obsoletas: apagar registos do Soledad que NÃO estão
+                # nas medidas actuais. Evita que medidas antigas (já removidas da lista)
+                # continuem a aparecer nos resultados indefinidamente.
+                _sol_current_medidas = [m for m, _, _ in targets]
+                if _sol_current_medidas:
+                    _conn_cleanup = await _pg_connect()
+                    try:
+                        _placeholders = ','.join(f'${i + 2}' for i in range(len(_sol_current_medidas)))
+                        _deleted_obs = await _conn_cleanup.fetchval(
+                            f"WITH d AS (DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida NOT IN ({_placeholders}) RETURNING id) SELECT COUNT(*) FROM d",
+                            supplier['name'], *_sol_current_medidas,
+                        )
+                        if _deleted_obs:
+                            print(f"  [Soledad] Limpeza: {_deleted_obs} registos de medidas obsoletas apagados")
+                    finally:
+                        await _conn_cleanup.close()
+
                 for medida, marca, modelo in targets:
                     _sol_page = await _sol_ctx.new_page()
                     await _sol_page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
