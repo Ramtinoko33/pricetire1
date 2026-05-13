@@ -631,16 +631,35 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
             const root = panel || document;
 
             function parseDesc(txt) {
-                // Remove "desm" (desmontado) em qualquer posição
+                // Remove "desm" (desmontado) e normaliza espaços
                 txt = txt.replace(/\\bdesm\\b/gi, '').replace(/\\s+/g, ' ').trim();
-                const parts = txt.split(/\\s+/);
-                if (parts.length < 1) return { brand: '', model: '' };
-                const brand = parts[0].toUpperCase();
-                // Saltar medida (ex: "215/55R18") e índice (ex: "99V", "95H", "91T")
-                let i = 1;
-                if (i < parts.length && /^\\d{3}\\/\\d{2}[RrBb]\\d{2}/.test(parts[i])) i++;
-                if (i < parts.length && /^\\d{2,3}[A-Z]{1,2}$/.test(parts[i])) i++;
-                const model = parts.slice(i).join(' ').trim();
+                if (!txt) return { brand: '', model: '' };
+
+                // A célula Descrição pode conter texto duplicado:
+                //   "P7 CINTURATO (P7C2) XL PIRELLI 215/55R18 99V P7 CINTURATO (P7C2) XL"
+                // (parte visível + tooltip/hidden com a descrição completa)
+                // Fix: usar a medida como âncora posicional.
+                //   - MARCA  = última palavra ANTES da medida
+                //   - MODELO = tudo DEPOIS do índice de carga (99V, 95H, ...)
+                const medidaRe = /\\d{3}\\/\\d{2}[RrBb]\\d{2}/;
+                const medidaMatch = txt.match(medidaRe);
+                if (!medidaMatch) {
+                    // Sem medida: primeiro token = marca, resto = modelo
+                    const parts = txt.split(/\\s+/);
+                    return { brand: parts[0].toUpperCase(), model: parts.slice(1).join(' ').trim() };
+                }
+
+                // Última palavra antes da medida = marca
+                const beforeMedida = txt.slice(0, medidaMatch.index).trim();
+                const beforeParts  = beforeMedida.split(/\\s+/).filter(p => p);
+                const brand = (beforeParts[beforeParts.length - 1] || '').toUpperCase();
+
+                // Após a medida: saltar índice (ex: 99V, 95H, 91T, 94W), resto = modelo
+                const afterMedida = txt.slice(medidaMatch.index + medidaMatch[0].length).trim();
+                const afterParts  = afterMedida.split(/\\s+/).filter(p => p);
+                const idxStart    = (afterParts.length > 0 && /^\\d{2,3}[A-Za-z]{1,2}$/.test(afterParts[0])) ? 1 : 0;
+                const model       = afterParts.slice(idxStart).join(' ').trim();
+
                 return { brand, model };
             }
 
