@@ -578,7 +578,14 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
         # O campo aceita formato normalizado: "1956515" (sem barras, sem R)
         medida_norm = normalize_medida(medida)
         print(f"  [S. José] Navigating to search: {url_search}")
-        await page.goto(url_search, wait_until="domcontentloaded", timeout=60000)
+        try:
+            await page.goto(url_search, wait_until="domcontentloaded", timeout=30000)
+        except Exception:
+            await page.goto(url_search, wait_until="commit", timeout=30000)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
         await asyncio.sleep(2)
 
         search_page_url = page.url
