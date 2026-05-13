@@ -618,15 +618,49 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
 
         # ── Extracção de produtos da tabela GridView ──────────────────────────
         # O S. José tem UMA coluna "Descrição" com formato:
-        #   "MICHELIN 195/65R15 91H PRIMACY 4"
-        #   "MICHELIN 195/65R15 95H PRIMACY 4 XL"
-        # Estrutura: MARCA  MEDIDA  ÍNDICE  MODELO
+        #   "BRIDGESTONE 215/55R18 95H TURANZA T005A"
+        #   "YOKOHAMA 215/55R18 99V GEOLANDAR CV G058 XL"
+        # Estrutura: MARCA  MEDIDA  ÍNDICE  MODELO  [sufixos]
+        # "desm" = desmontado — removido do modelo
         # A coluna de preço chama-se "PR. COMPRA" (contém "compra")
-        products = await page.evaluate('''() => {
+        _SJOSE_EXTRACT_JS = '''() => {
             const products = [];
 
             const panel = document.getElementById('ContentPlaceHolder1_UpdatePanelResults');
             const root = panel || document;
+
+            function parseDesc(txt) {
+                // Remove "desm" (desmontado) e normaliza espaços
+                txt = txt.replace(/\\bdesm\\b/gi, '').replace(/\\s+/g, ' ').trim();
+                if (!txt) return { brand: '', model: '' };
+
+                // A célula Descrição pode conter texto duplicado:
+                //   "P7 CINTURATO (P7C2) XL PIRELLI 215/55R18 99V P7 CINTURATO (P7C2) XL"
+                // (parte visível + tooltip/hidden com a descrição completa)
+                // Fix: usar a medida como âncora posicional.
+                //   - MARCA  = última palavra ANTES da medida
+                //   - MODELO = tudo DEPOIS do índice de carga (99V, 95H, ...)
+                const medidaRe = /\\d{3}\\/\\d{2}[RrBb]\\d{2}/;
+                const medidaMatch = txt.match(medidaRe);
+                if (!medidaMatch) {
+                    // Sem medida: primeiro token = marca, resto = modelo
+                    const parts = txt.split(/\\s+/);
+                    return { brand: parts[0].toUpperCase(), model: parts.slice(1).join(' ').trim() };
+                }
+
+                // Última palavra antes da medida = marca
+                const beforeMedida = txt.slice(0, medidaMatch.index).trim();
+                const beforeParts  = beforeMedida.split(/\\s+/).filter(p => p);
+                const brand = (beforeParts[beforeParts.length - 1] || '').toUpperCase();
+
+                // Após a medida: saltar índice (ex: 99V, 95H, 91T, 94W), resto = modelo
+                const afterMedida = txt.slice(medidaMatch.index + medidaMatch[0].length).trim();
+                const afterParts  = afterMedida.split(/\\s+/).filter(p => p);
+                const idxStart    = (afterParts.length > 0 && /^\\d{2,3}[A-Za-z]{1,2}$/.test(afterParts[0])) ? 1 : 0;
+                const model       = afterParts.slice(idxStart).join(' ').trim();
+
+                return { brand, model };
+            }
 
             for (const table of root.querySelectorAll("table")) {
                 const rows = table.querySelectorAll("tr");
@@ -651,33 +685,25 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                     let brand = "", model = "", price = null;
 
                     if (descCol >= 0 && descCol < cells.length) {
-                        // Parsear coluna Descrição: "MICHELIN 195/65R15 91H PRIMACY 4"
-                        const parts = cells[descCol].textContent.trim().split(/\s+/);
-                        // parts[0] = MARCA, parts[1] = MEDIDA, parts[2+] = ÍNDICE + MODELO
-                        brand = parts[0] ? parts[0].toUpperCase() : '';
-                        // Saltar parts[1] (medida) e encontrar onde começa o modelo
-                        // Índice = token que corresponde a /^\d+[A-Z]+$/  (ex: "91H", "94W")
-                        let modelStart = 2;
-                        if (parts.length > 2 && /^\d+[A-Z]+$/i.test(parts[2])) {
-                            modelStart = 3; // saltar o índice
-                            // "XL" pode aparecer após o índice
-                            if (parts.length > 3 && parts[3] === 'XL') modelStart = 4;
-                        }
-                        model = parts.slice(modelStart).join(' ');
+                        // Estrutura confirmada: <a style="visibility:hidden;display:none;">TEXT</a>
+                        //                      <span id="...lblDescription_N" style="visibility:visible;">TEXT</span>
+                        // textContent concatena ambos → texto duplicado. Usar só o span.
+                        const spanEl = cells[descCol].querySelector('span[id*="lblDescription"]');
+                        const rawTxt = spanEl ? spanEl.textContent.trim()
+                                              : cells[descCol].textContent.trim();
+                        const parsed = parseDesc(rawTxt);
+                        brand = parsed.brand;
+                        model = parsed.model;
                     } else {
-                        // Fallback: cabeçalho "Descrição" não encontrado —
-                        // varrer todas as células à procura de texto com marca conhecida
+                        // Fallback: varrer células à procura de marca conhecida
                         for (const cell of cells) {
-                            const txt = cell.textContent.trim();
-                            const parts = txt.split(/\s+/);
-                            if (parts.length >= 2 && KNOWN_BRANDS.test(parts[0])) {
-                                brand = parts[0].toUpperCase();
-                                let modelStart = 2;
-                                if (parts.length > 2 && /^\d+[A-Z]+$/i.test(parts[2])) {
-                                    modelStart = 3;
-                                    if (parts.length > 3 && parts[3] === 'XL') modelStart = 4;
-                                }
-                                model = parts.slice(modelStart).join(' ');
+                            const spanEl = cell.querySelector('span[id*="lblDescription"]');
+                            const txt = spanEl ? spanEl.textContent.trim()
+                                               : cell.textContent.trim();
+                            if (txt.split(/\\s+/).length >= 2 && KNOWN_BRANDS.test(txt.split(/\\s+/)[0])) {
+                                const parsed = parseDesc(txt);
+                                brand = parsed.brand;
+                                model = parsed.model;
                                 break;
                             }
                         }
@@ -685,14 +711,14 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
 
                     // Preço da coluna PR. COMPRA
                     if (priceCol >= 0 && priceCol < cells.length) {
-                        const m = cells[priceCol].textContent.match(/(\d+[,\.]\d{2})/);
+                        const m = cells[priceCol].textContent.match(/(\\d+[,\\.]\\d{2})/);
                         if (m) price = parseFloat(m[1].replace(",", "."));
                     }
 
                     // Fallback preço: varrer todas as células
                     if (!price) {
                         for (const cell of cells) {
-                            const m = cell.textContent.replace(/\s/g,'').match(/^€?(\d+[,\.]\d{2})€?$/);
+                            const m = cell.textContent.replace(/\\s/g,'').match(/^€?(\\d+[,\\.]\\d{2})€?$/);
                             if (m) {
                                 const p = parseFloat(m[1].replace(",", "."));
                                 if (p > 15 && p < 500) { price = p; break; }
@@ -707,9 +733,42 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                 if (products.length > 0) break;
             }
             return products;
-        }''')
+        }'''
 
-        print(f"  [S. José] Raw products extracted: {len(products)}")
+        products = await page.evaluate(_SJOSE_EXTRACT_JS)
+        print(f"  [S. José] Página 1: {len(products)} produtos")
+
+        # ── Paginação: loop por todas as páginas via btn_Next ─────────────────
+        import re as _re_sj
+        _pager_loc = page.locator('#ContentPlaceHolder1_lblPager')
+        _pager_text = (await _pager_loc.text_content()) if await _pager_loc.count() > 0 else ''
+        _pm = _re_sj.search(r'(\d+)\s+de\s+(\d+)', _pager_text or '')
+        _current_page = int(_pm.group(1)) if _pm else 1
+        _total_pages  = int(_pm.group(2)) if _pm else 1
+        print(f"  [S. José] Paginador: {_pager_text!r} → página {_current_page} de {_total_pages}")
+
+        _MAX_PAGES_SJ = 15
+        while _current_page < _total_pages and _current_page < _MAX_PAGES_SJ:
+            _next_btn = page.locator('#ContentPlaceHolder1_btn_Next')
+            if await _next_btn.count() == 0:
+                print(f"  [S. José] Botão próxima página não encontrado — parando")
+                break
+            await _next_btn.click()
+            try:
+                await page.wait_for_load_state('networkidle', timeout=15000)
+            except Exception:
+                await asyncio.sleep(2)
+            await asyncio.sleep(1)
+
+            _page_prods = await page.evaluate(_SJOSE_EXTRACT_JS)
+            products.extend(_page_prods)
+
+            _pager_text = (await _pager_loc.text_content()) if await _pager_loc.count() > 0 else ''
+            _pm = _re_sj.search(r'(\d+)\s+de\s+(\d+)', _pager_text or '')
+            _current_page = int(_pm.group(1)) if _pm else (_current_page + 1)
+            print(f"  [S. José] Página {_current_page}/{_total_pages}: {len(_page_prods)} produtos")
+
+        print(f"  [S. José] Total: {len(products)} produtos ({_current_page} páginas)")
 
         if products:
             # Deduplicar por marca+modelo mantendo preço mais baixo
@@ -724,7 +783,7 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
             prices_list = [p['price'] for p in products]
             result["price"] = min(prices_list)
             result["all_prices"] = sorted(prices_list)[:10]
-            print(f"  [S. José] {len(products)} produtos. Melhor: €{result['price']}")
+            print(f"  [S. José] {len(products)} produtos únicos. Melhor: €{result['price']}")
             for p in sorted(products, key=lambda x: x['price'])[:5]:
                 print(f"    - {p.get('brand','-')} {p.get('model','-')}: €{p['price']}")
         else:
@@ -1349,11 +1408,21 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         # AR_ prefix pattern (AR_PRECIO, AR_MARCA, AR_DESCRIPCION) used in Spanish B2B systems.
         # NOTE: 'valor' and 'importe' intentionally excluded — too generic:
         #   VALOR appears in filter dropdowns, IMPORTE_SIGUIENTE/CONSEGUIDO in promotions.
-        _PRICE_SUBSTRINGS = ('pvp', 'preco', 'precio', 'price', 'coste',
+        # Soledad API price fields — ordered by priority (most specific first).
+        # PRECIOMOSTRARBUSQUEDA = preço de venda ao cliente na pesquisa (campo confirmado).
+        # PRECIOMOSTRARPEDIDO   = preço de venda ao cliente no pedido.
+        # PRECIOCONDESCUENTO    = preço com desconto aplicado.
+        # PRECIOSINDESCUENTO    = preço sem desconto (bruto).
+        # AR_PVR = Precio de Venta al Público — NÃO usar (é o PVP, não o preço de custo).
+        # Campos ordenados por prioridade: PRECIOMOSTRARBUSQUEDA é o preço de custo confirmado.
+        _PRICE_SUBSTRINGS = ('preciomostrarbusqueda', 'preciomostrarpedido',
+                             'preciocondescuento', 'preciosindescuento', 'prepre',
+                             'pvp', 'preco', 'precio', 'price', 'coste',
                              'tarifa', 'unitprice', 'saleprice', 'netprice', 'preciouni',
                              'precouni', 'pvpfinal', 'pvpnet')
-        _BRAND_SUBSTRINGS = ('marca', 'brand', 'manufacturer', 'fabricante', 'marque')
-        _MODEL_SUBSTRINGS = ('descripcion', 'descricao', 'description', 'modelo',
+        # Soledad API uses AR_MARCA for brand and AR_MODELO for model
+        _BRAND_SUBSTRINGS = ('ar_marca', 'marca', 'brand', 'manufacturer', 'fabricante', 'marque')
+        _MODEL_SUBSTRINGS = ('ar_modelo', 'descripcion', 'descricao', 'description', 'modelo',
                              'model', 'nome', 'designation', 'denominacion', 'referencia')
         # Soledad API uses AR_CARGA (load number e.g. 91) and AR_VELOCIDAD (speed letter e.g. H)
         # Use endswith matching to avoid false positives from field names containing 'ic' etc.
@@ -1472,7 +1541,29 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
         for _r in sorted(api_responses, key=lambda x: len(x['body']), reverse=True)[:3]:
             print(f"  [Soledad] API preview ({_r['url'].split('?')[0][-40:]}): {_r['body'][:300]}")
 
-        for resp in api_responses:
+        # Filtrar respostas para usar apenas as que contêm produtos da medida pesquisada.
+        # O campo AR_NOMBRE tem formato "215/55X18 ..." — o scraper pode capturar respostas
+        # de stock geral (outras medidas) que chegam antes/depois da pesquisa actual.
+        def _response_has_medida(body: str) -> bool:
+            if len(medida_norm) < 7:
+                return True  # medida fora do padrão — não filtrar
+            ancho  = medida_norm[:3]          # "215"
+            perfil = medida_norm[3:5]         # "55"
+            llanta = medida_norm[5:7]         # "18"
+            # Soledad usa "X" em vez de "R" no campo AR_NOMBRE: "215/55X18"
+            medida_x = f"{ancho}/{perfil}X{llanta}"   # "215/55X18"
+            medida_r = f"{ancho}/{perfil}R{llanta}"   # "215/55R18" (fallback)
+            body_lower = body.lower()
+            return medida_x.lower() in body_lower or medida_r.lower() in body_lower
+
+        _relevant = [r for r in api_responses if _response_has_medida(r['body'])]
+        _responses_to_parse = _relevant if _relevant else api_responses
+        if not _relevant:
+            print(f"  [Soledad] Aviso: nenhuma resposta contém medida {medida_norm} — usando todas ({len(api_responses)})")
+        else:
+            print(f"  [Soledad] Filtro medida: {len(_relevant)}/{len(api_responses)} respostas relevantes para {medida_norm}")
+
+        for resp in _responses_to_parse:
             try:
                 data = json.loads(resp['body'])
                 before = len(products)
@@ -1514,8 +1605,9 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                     _diag_printed = True
             except Exception:
                 pass
-        else:
-            # Secondary: DOM extraction
+
+        if not products:
+            # Secondary: DOM extraction (only when API interception found nothing)
             print(f"  [Soledad] No API products — trying DOM extraction")
             products = await page.evaluate(r'''() => {
                 const products = [];
@@ -2848,7 +2940,14 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                     parts.shift();
                 }
 
-                // Saltar token que parece medida (ex: "205/55R16")
+                // Se a coluna Fabricante tinha texto, o produto repete a marca em parts[0]
+                // ex: fab="YOKOHAMA", produto="YOKOHAMA 215/55R18 GEOLANDAR CV G058 91V"
+                // → saltar o token duplicado antes de checar medida
+                if (brand && parts.length > 0 && parts[0].toUpperCase() === brand) {
+                    parts.shift();
+                }
+
+                // Saltar token que parece medida (ex: "205/55R16", "215/55R18")
                 if (parts.length > 0 && /\d{3}[\/]\d{2}[Rr]\d{2}/.test(parts[0])) {
                     parts.shift();
                 }
@@ -2942,8 +3041,15 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                     del p[k]
 
         if products:
-            # Filtrar linhas sem preço válido
-            products = [p for p in products if p.get('price') and p['price'] > 5]
+            # Filtrar linhas sem preço válido — log de descartados para diagnóstico
+            valid_products = []
+            for _p in products:
+                if not _p.get('price') or _p['price'] <= 5:
+                    print(f"  [CRZ-DESCARTADO] brand={_p.get('brand','')!r} model={_p.get('model','')!r} "
+                          f"price={_p.get('price')!r} motivo='sem preço válido'")
+                else:
+                    valid_products.append(_p)
+            products = valid_products
             # Deduplicar por marca+modelo, manter preço mais baixo
             seen = {}
             for p in products:
@@ -3095,6 +3201,24 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                 _sol_first = True
                 _sol_relogin = False  # set True when session expires mid-scrape
                 _sol_medida_count = 0  # contador para re-login preventivo
+
+                # Limpar medidas obsoletas: apagar registos do Soledad que NÃO estão
+                # nas medidas actuais. Evita que medidas antigas (já removidas da lista)
+                # continuem a aparecer nos resultados indefinidamente.
+                _sol_current_medidas = [m for m, _, _ in targets]
+                if _sol_current_medidas:
+                    _conn_cleanup = await _pg_connect()
+                    try:
+                        _placeholders = ','.join(f'${i + 2}' for i in range(len(_sol_current_medidas)))
+                        _deleted_obs = await _conn_cleanup.fetchval(
+                            f"WITH d AS (DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida NOT IN ({_placeholders}) RETURNING id) SELECT COUNT(*) FROM d",
+                            supplier['name'], *_sol_current_medidas,
+                        )
+                        if _deleted_obs:
+                            print(f"  [Soledad] Limpeza: {_deleted_obs} registos de medidas obsoletas apagados")
+                    finally:
+                        await _conn_cleanup.close()
+
                 for medida, marca, modelo in targets:
                     _sol_page = await _sol_ctx.new_page()
                     await _sol_page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
@@ -3251,6 +3375,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                 _crz_ctx   = await _crz_browser.new_context(**_crz_ctx_kwargs)
                 _crz_first = True
                 _crz_summary = []
+                _crz_deleted_medidas: set = set()  # medidas já limpas na BD nesta sessão
 
                 for medida, marca in _crz_pairs:
                     _crz_page = await _crz_ctx.new_page()
@@ -3279,14 +3404,16 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         conn_save = await _pg_connect()
                         try:
                             if products:
-                                marcas_enc = {p.get('brand', '').upper() for p in products}
-                                for m_brand in marcas_enc:
+                                # Apagar TODOS os registos antigos desta medida na primeira
+                                # pesquisa bem-sucedida — evita mistura de datas/marcas antigas.
+                                # Cada medida tem múltiplas pesquisas (uma por marca), por isso
+                                # rastreamos quais medidas já foram limpas nesta sessão.
+                                if medida not in _crz_deleted_medidas:
                                     await conn_save.execute(
-                                        """DELETE FROM scraped_prices
-                                           WHERE supplier_name=$1 AND medida=$2
-                                             AND COALESCE(marca,'')=$3""",
-                                        supplier['name'], medida, m_brand,
+                                        "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
+                                        supplier['name'], medida,
                                     )
+                                    _crz_deleted_medidas.add(medida)
                                 for prod in products:
                                     await conn_save.execute(
                                         """INSERT INTO scraped_prices
