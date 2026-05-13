@@ -735,6 +735,31 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
             return products;
         }'''
 
+        # DIAGNÓSTICO TEMPORÁRIO: imprimir innerHTML das primeiras 3 células Descrição
+        # (visível nos logs Railway — remover após identificar estrutura HTML)
+        _raw_cells = await page.evaluate('''() => {
+            const panel = document.getElementById('ContentPlaceHolder1_UpdatePanelResults');
+            const root = panel || document;
+            const results = [];
+            for (const table of root.querySelectorAll("table")) {
+                const rows = table.querySelectorAll("tr");
+                if (rows.length < 2) continue;
+                let descCol = -1;
+                const hdr = rows[0].querySelectorAll("th, td");
+                hdr.forEach((h, i) => { if (/descri/i.test(h.textContent)) descCol = i; });
+                if (descCol < 0) continue;
+                for (let i = 1; i < Math.min(rows.length, 4); i++) {
+                    const cells = rows[i].querySelectorAll("td");
+                    if (descCol < cells.length)
+                        results.push(cells[descCol].innerHTML.replace(/\\s+/g, ' ').substring(0, 400));
+                }
+                break;
+            }
+            return results;
+        }''')
+        for _ci, _rc in enumerate(_raw_cells):
+            print(f"  [S. José DIAG] RAW_CELL[{_ci}]: {_rc}")
+
         products = await page.evaluate(_SJOSE_EXTRACT_JS)
         print(f"  [S. José] Página 1: {len(products)} produtos")
 
