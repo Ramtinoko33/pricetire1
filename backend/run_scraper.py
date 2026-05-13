@@ -686,20 +686,21 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                     let brand = "", model = "", price = null;
 
                     if (descCol >= 0 && descCol < cells.length) {
-                        // A célula tem um <a hidden> + <span visible> com o mesmo texto.
-                        // textContent concatena ambos → texto duplicado → modelo errado.
-                        // Preferir o span visível; fallback para célula inteira.
-                        const descEl = cells[descCol].querySelector('span[id*="lblDescription"]')
-                                    || cells[descCol].querySelector('span[style*="visibility:visible"]')
-                                    || cells[descCol].querySelector('span:not([style*="hidden"]):not([style*="none"])')
-                                    || cells[descCol];
-                        const parsed = parseDesc(descEl.textContent.trim());
+                        // Estrutura confirmada: <a style="visibility:hidden;display:none;">TEXT</a>
+                        //                      <span id="...lblDescription_N" style="visibility:visible;">TEXT</span>
+                        // textContent concatena ambos → texto duplicado. Usar só o span.
+                        const spanEl = cells[descCol].querySelector('span[id*="lblDescription"]');
+                        const rawTxt = spanEl ? spanEl.textContent.trim()
+                                              : cells[descCol].textContent.trim();
+                        const parsed = parseDesc(rawTxt);
                         brand = parsed.brand;
                         model = parsed.model;
                     } else {
                         // Fallback: varrer células à procura de marca conhecida
                         for (const cell of cells) {
-                            const txt = cell.textContent.trim();
+                            const spanEl = cell.querySelector('span[id*="lblDescription"]');
+                            const txt = spanEl ? spanEl.textContent.trim()
+                                               : cell.textContent.trim();
                             if (txt.split(/\\s+/).length >= 2 && KNOWN_BRANDS.test(txt.split(/\\s+/)[0])) {
                                 const parsed = parseDesc(txt);
                                 brand = parsed.brand;
@@ -808,7 +809,7 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
             prices_list = [p['price'] for p in products]
             result["price"] = min(prices_list)
             result["all_prices"] = sorted(prices_list)[:10]
-            print(f"  [S. José] {len(products)} produtos. Melhor: €{result['price']}")
+            print(f"  [S. José] {len(products)} produtos únicos. Melhor: €{result['price']}")
             for p in sorted(products, key=lambda x: x['price'])[:5]:
                 print(f"    - {p.get('brand','-')} {p.get('model','-')}: €{p['price']}")
         else:
@@ -3348,8 +3349,15 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                     brand = parts.shift().toUpperCase();
                 }
 
-                // 2. Saltar token de medida (ex: "205/55R16")
-                if (parts.length > 0 && /\d{3}\/\d{2}[Rr]\d{2}/.test(parts[0])) {
+                // Se a coluna Fabricante tinha texto, o produto repete a marca em parts[0]
+                // ex: fab="YOKOHAMA", produto="YOKOHAMA 215/55R18 GEOLANDAR CV G058 91V"
+                // → saltar o token duplicado antes de checar medida
+                if (brand && parts.length > 0 && parts[0].toUpperCase() === brand) {
+                    parts.shift();
+                }
+
+                // Saltar token que parece medida (ex: "205/55R16", "215/55R18")
+                if (parts.length > 0 && /\d{3}[\/]\d{2}[Rr]\d{2}/.test(parts[0])) {
                     parts.shift();
                 }
 
