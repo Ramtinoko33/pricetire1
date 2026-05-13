@@ -619,15 +619,30 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
 
         # ── Extracção de produtos da tabela GridView ──────────────────────────
         # O S. José tem UMA coluna "Descrição" com formato:
-        #   "MICHELIN 195/65R15 91H PRIMACY 4"
-        #   "MICHELIN 195/65R15 95H PRIMACY 4 XL"
-        # Estrutura: MARCA  MEDIDA  ÍNDICE  MODELO
+        #   "BRIDGESTONE 215/55R18 95H TURANZA T005A"
+        #   "YOKOHAMA 215/55R18 99V GEOLANDAR CV G058 XL"
+        # Estrutura: MARCA  MEDIDA  ÍNDICE  MODELO  [sufixos]
+        # "desm" = desmontado — removido do modelo
         # A coluna de preço chama-se "PR. COMPRA" (contém "compra")
-        products = await page.evaluate('''() => {
+        _SJOSE_EXTRACT_JS = '''() => {
             const products = [];
 
             const panel = document.getElementById('ContentPlaceHolder1_UpdatePanelResults');
             const root = panel || document;
+
+            function parseDesc(txt) {
+                // Remove "desm" (desmontado) em qualquer posição
+                txt = txt.replace(/\\bdesm\\b/gi, '').replace(/\\s+/g, ' ').trim();
+                const parts = txt.split(/\\s+/);
+                if (parts.length < 1) return { brand: '', model: '' };
+                const brand = parts[0].toUpperCase();
+                // Saltar medida (ex: "215/55R18") e índice (ex: "99V", "95H", "91T")
+                let i = 1;
+                if (i < parts.length && /^\\d{3}\\/\\d{2}[RrBb]\\d{2}/.test(parts[i])) i++;
+                if (i < parts.length && /^\\d{2,3}[A-Z]{1,2}$/.test(parts[i])) i++;
+                const model = parts.slice(i).join(' ').trim();
+                return { brand, model };
+            }
 
             for (const table of root.querySelectorAll("table")) {
                 const rows = table.querySelectorAll("tr");
@@ -652,33 +667,17 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                     let brand = "", model = "", price = null;
 
                     if (descCol >= 0 && descCol < cells.length) {
-                        // Parsear coluna Descrição: "MICHELIN 195/65R15 91H PRIMACY 4"
-                        const parts = cells[descCol].textContent.trim().split(/\s+/);
-                        // parts[0] = MARCA, parts[1] = MEDIDA, parts[2+] = ÍNDICE + MODELO
-                        brand = parts[0] ? parts[0].toUpperCase() : '';
-                        // Saltar parts[1] (medida) e encontrar onde começa o modelo
-                        // Índice = token que corresponde a /^\d+[A-Z]+$/  (ex: "91H", "94W")
-                        let modelStart = 2;
-                        if (parts.length > 2 && /^\d+[A-Z]+$/i.test(parts[2])) {
-                            modelStart = 3; // saltar o índice
-                            // "XL" pode aparecer após o índice
-                            if (parts.length > 3 && parts[3] === 'XL') modelStart = 4;
-                        }
-                        model = parts.slice(modelStart).join(' ');
+                        const parsed = parseDesc(cells[descCol].textContent.trim());
+                        brand = parsed.brand;
+                        model = parsed.model;
                     } else {
-                        // Fallback: cabeçalho "Descrição" não encontrado —
-                        // varrer todas as células à procura de texto com marca conhecida
+                        // Fallback: varrer células à procura de marca conhecida
                         for (const cell of cells) {
                             const txt = cell.textContent.trim();
-                            const parts = txt.split(/\s+/);
-                            if (parts.length >= 2 && KNOWN_BRANDS.test(parts[0])) {
-                                brand = parts[0].toUpperCase();
-                                let modelStart = 2;
-                                if (parts.length > 2 && /^\d+[A-Z]+$/i.test(parts[2])) {
-                                    modelStart = 3;
-                                    if (parts.length > 3 && parts[3] === 'XL') modelStart = 4;
-                                }
-                                model = parts.slice(modelStart).join(' ');
+                            if (txt.split(/\\s+/).length >= 2 && KNOWN_BRANDS.test(txt.split(/\\s+/)[0])) {
+                                const parsed = parseDesc(txt);
+                                brand = parsed.brand;
+                                model = parsed.model;
                                 break;
                             }
                         }
@@ -686,14 +685,14 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
 
                     // Preço da coluna PR. COMPRA
                     if (priceCol >= 0 && priceCol < cells.length) {
-                        const m = cells[priceCol].textContent.match(/(\d+[,\.]\d{2})/);
+                        const m = cells[priceCol].textContent.match(/(\\d+[,\\.]\\d{2})/);
                         if (m) price = parseFloat(m[1].replace(",", "."));
                     }
 
                     // Fallback preço: varrer todas as células
                     if (!price) {
                         for (const cell of cells) {
-                            const m = cell.textContent.replace(/\s/g,'').match(/^€?(\d+[,\.]\d{2})€?$/);
+                            const m = cell.textContent.replace(/\\s/g,'').match(/^€?(\\d+[,\\.]\\d{2})€?$/);
                             if (m) {
                                 const p = parseFloat(m[1].replace(",", "."));
                                 if (p > 15 && p < 500) { price = p; break; }
@@ -708,9 +707,42 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                 if (products.length > 0) break;
             }
             return products;
-        }''')
+        }'''
 
-        print(f"  [S. José] Raw products extracted: {len(products)}")
+        products = await page.evaluate(_SJOSE_EXTRACT_JS)
+        print(f"  [S. José] Página 1: {len(products)} produtos")
+
+        # ── Paginação: loop por todas as páginas via btn_Next ─────────────────
+        import re as _re_sj
+        _pager_loc = page.locator('#ContentPlaceHolder1_lblPager')
+        _pager_text = (await _pager_loc.text_content()) if await _pager_loc.count() > 0 else ''
+        _pm = _re_sj.search(r'(\d+)\s+de\s+(\d+)', _pager_text or '')
+        _current_page = int(_pm.group(1)) if _pm else 1
+        _total_pages  = int(_pm.group(2)) if _pm else 1
+        print(f"  [S. José] Paginador: {_pager_text!r} → página {_current_page} de {_total_pages}")
+
+        _MAX_PAGES_SJ = 15
+        while _current_page < _total_pages and _current_page < _MAX_PAGES_SJ:
+            _next_btn = page.locator('#ContentPlaceHolder1_btn_Next')
+            if await _next_btn.count() == 0:
+                print(f"  [S. José] Botão próxima página não encontrado — parando")
+                break
+            await _next_btn.click()
+            try:
+                await page.wait_for_load_state('networkidle', timeout=15000)
+            except Exception:
+                await asyncio.sleep(2)
+            await asyncio.sleep(1)
+
+            _page_prods = await page.evaluate(_SJOSE_EXTRACT_JS)
+            products.extend(_page_prods)
+
+            _pager_text = (await _pager_loc.text_content()) if await _pager_loc.count() > 0 else ''
+            _pm = _re_sj.search(r'(\d+)\s+de\s+(\d+)', _pager_text or '')
+            _current_page = int(_pm.group(1)) if _pm else (_current_page + 1)
+            print(f"  [S. José] Página {_current_page}/{_total_pages}: {len(_page_prods)} produtos")
+
+        print(f"  [S. José] Total: {len(products)} produtos ({_current_page} páginas)")
 
         if products:
             # Deduplicar por marca+modelo mantendo preço mais baixo
