@@ -686,7 +686,14 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                     let brand = "", model = "", price = null;
 
                     if (descCol >= 0 && descCol < cells.length) {
-                        const parsed = parseDesc(cells[descCol].textContent.trim());
+                        // A célula tem um <a hidden> + <span visible> com o mesmo texto.
+                        // textContent concatena ambos → texto duplicado → modelo errado.
+                        // Preferir o span visível; fallback para célula inteira.
+                        const descEl = cells[descCol].querySelector('span[id*="lblDescription"]')
+                                    || cells[descCol].querySelector('span[style*="visibility:visible"]')
+                                    || cells[descCol].querySelector('span:not([style*="hidden"]):not([style*="none"])')
+                                    || cells[descCol];
+                        const parsed = parseDesc(descEl.textContent.trim());
                         brand = parsed.brand;
                         model = parsed.model;
                     } else {
