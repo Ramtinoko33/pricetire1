@@ -9,6 +9,7 @@ from typing import List, Optional, Dict
 import uuid
 from datetime import datetime, timezone, timedelta
 import asyncio
+import time as _time
 from io import BytesIO
 import json
 
@@ -37,6 +38,9 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Estado em memória dos scrapers por job — keyed by job_id → supplier_name → stats
+_supplier_run_stats: Dict[str, Dict[str, dict]] = {}
 
 
 @app.on_event("startup")
@@ -489,6 +493,23 @@ async def get_job_progress(job_id: str):
     if not r:
         raise HTTPException(status_code=404, detail="Job not found")
     pct = (r['processed_items'] / r['total_items'] * 100) if r['total_items'] > 0 else 0
+
+    suppliers_status = None
+    if job_id in _supplier_run_stats:
+        now = _time.time()
+        suppliers_status = []
+        for name, info in _supplier_run_stats[job_id].items():
+            dur = info["duration_s"]
+            if dur is None and info["start_time"] is not None:
+                dur = round(now - info["start_time"])
+            suppliers_status.append({
+                "name": name,
+                "status": info["status"],
+                "duration_s": dur,
+                "products": info.get("products"),
+                "best_price": info.get("best_price"),
+            })
+
     return JobProgress(
         job_id=job_id,
         status=JobStatus(r['status']),
@@ -496,6 +517,7 @@ async def get_job_progress(job_id: str):
         processed_items=r['processed_items'],
         found_items=r['found_items'],
         progress_percent=round(pct, 1),
+        suppliers_status=suppliers_status,
     )
 
 
@@ -668,8 +690,18 @@ async def _do_compare(job_id: str, force: bool):
         logger.info(f"A correr scraper em paralelo para {len(supplier_names)} fornecedores, "
                     f"{len(medidas_sem_dados)} medidas...")
 
+        # Inicializar todas as entradas em "waiting" antes de arrancar os processos
+        _supplier_run_stats[job_id] = {
+            name: {"status": "waiting", "start_time": None, "duration_s": None,
+                   "products": None, "best_price": None}
+            for name in supplier_names
+        }
+
         async def _run_supplier_proc(sup_name: str):
             """Lança run_scraper.py filtrado para um único fornecedor e aguarda conclusão."""
+            _supplier_run_stats[job_id][sup_name]["status"] = "running"
+            _supplier_run_stats[job_id][sup_name]["start_time"] = _time.time()
+
             proc = await asyncio.create_subprocess_exec(
                 'python3', '/app/backend/run_scraper.py',
                 '--supplier', sup_name,
@@ -688,8 +720,30 @@ async def _do_compare(job_id: str, force: bool):
                 logger.info(f"[{sup_name}] Scraper concluído.\n{head}")
                 if tail:
                     logger.info(f"[{sup_name}] ...fim:\n{tail}")
+                elapsed = round(_time.time() - _supplier_run_stats[job_id][sup_name]["start_time"])
+                # Contar produtos e melhor preço na BD para este fornecedor+medidas
+                try:
+                    _pool = await get_db()
+                    async with _pool.acquire() as _conn:
+                        _agg = await _conn.fetchrow(
+                            "SELECT COUNT(*) AS cnt, MIN(price) AS best FROM scraped_prices "
+                            "WHERE supplier_name=$1 AND medida=ANY($2)",
+                            sup_name, medidas_sem_dados,
+                        )
+                    _cnt = int(_agg["cnt"]) if _agg else 0
+                    _best = float(_agg["best"]) if _agg and _agg["best"] is not None else None
+                except Exception:
+                    _cnt, _best = 0, None
+                _supplier_run_stats[job_id][sup_name].update({
+                    "status": "done", "duration_s": elapsed,
+                    "products": _cnt, "best_price": _best,
+                })
                 return False  # não houve timeout
             except asyncio.TimeoutError:
+                elapsed = round(_time.time() - _supplier_run_stats[job_id][sup_name]["start_time"])
+                _supplier_run_stats[job_id][sup_name].update({
+                    "status": "timeout", "duration_s": elapsed,
+                })
                 proc.kill()
                 try:
                     out, _ = await proc.communicate()
@@ -697,6 +751,13 @@ async def _do_compare(job_id: str, force: bool):
                 except Exception:
                     logger.warning(f"[{sup_name}] Scraper timeout (sem output)")
                 return True  # houve timeout
+            except Exception as _exc:
+                elapsed = round(_time.time() - _supplier_run_stats[job_id][sup_name]["start_time"])
+                _supplier_run_stats[job_id][sup_name].update({
+                    "status": "error", "duration_s": elapsed,
+                })
+                logger.error(f"[{sup_name}] Erro inesperado: {_exc}")
+                return True
 
         # Correr todos os fornecedores em simultâneo; aguardar que todos terminem
         timeout_flags = await asyncio.gather(*[_run_supplier_proc(n) for n in supplier_names])
