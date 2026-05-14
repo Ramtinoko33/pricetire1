@@ -785,12 +785,21 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
         if products:
             # Deduplicar por marca+modelo+índice de carga mantendo preço mais baixo.
             # O índice (ex: 95H vs 99V) distingue produtos com preços diferentes.
+            discarded = []
             seen = {}
             for p in products:
                 load_idx = p.get('load_index', '') or ''
                 key = f"{p.get('brand','')}|{p.get('model','')}|{load_idx}"
                 if key not in seen or p['price'] < seen[key]['price']:
                     seen[key] = p
+                else:
+                    discarded.append(p)
+
+            for d in discarded[:10]:
+                print(f"  [SJ-DESCARTADO] brand={d.get('brand')!r} "
+                      f"model={d.get('model')!r} price={d.get('price')} "
+                      f"load_index={d.get('load_index')!r}")
+
             products = list(seen.values())
 
             result["products"] = products
