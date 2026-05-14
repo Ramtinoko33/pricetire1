@@ -653,7 +653,7 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                 if (!medidaMatch) {
                     // Sem medida: primeiro token = marca, resto = modelo
                     const parts = txt.split(/\\s+/);
-                    return { brand: parts[0].toUpperCase(), model: parts.slice(1).join(' ').trim() };
+                    return { brand: parts[0].toUpperCase(), model: parts.slice(1).join(' ').trim(), loadIndex: '' };
                 }
 
                 // Última palavra antes da medida = marca
@@ -661,13 +661,15 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                 const beforeParts  = beforeMedida.split(/\\s+/).filter(p => p);
                 const brand = (beforeParts[beforeParts.length - 1] || '').toUpperCase();
 
-                // Após a medida: saltar índice (ex: 99V, 95H, 91T, 94W), resto = modelo
+                // Após a medida: extrair índice de carga (ex: 99V, 95H, 91T, 94W XL), resto = modelo
                 const afterMedida = txt.slice(medidaMatch.index + medidaMatch[0].length).trim();
                 const afterParts  = afterMedida.split(/\\s+/).filter(p => p);
-                const idxStart    = (afterParts.length > 0 && /^\\d{2,3}[A-Za-z]{1,2}$/.test(afterParts[0])) ? 1 : 0;
-                const model       = afterParts.slice(idxStart).join(' ').trim();
+                let loadIndex = '';
+                const idxStart = (afterParts.length > 0 && /^\\d{2,3}[A-Za-z]{1,3}$/.test(afterParts[0])) ? 1 : 0;
+                if (idxStart === 1) loadIndex = afterParts[0];
+                const model = afterParts.slice(idxStart).join(' ').trim();
 
-                return { brand, model };
+                return { brand, model, loadIndex };
             }
 
             for (const table of root.querySelectorAll("table")) {
@@ -690,7 +692,7 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                     const cells = rows[i].querySelectorAll("td");
                     if (cells.length < 2) continue;
 
-                    let brand = "", model = "", price = null;
+                    let brand = "", model = "", loadIndex = "", price = null;
 
                     if (descCol >= 0 && descCol < cells.length) {
                         // Estrutura confirmada: <a style="visibility:hidden;display:none;">TEXT</a>
@@ -702,6 +704,7 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                         const parsed = parseDesc(rawTxt);
                         brand = parsed.brand;
                         model = parsed.model;
+                        loadIndex = parsed.loadIndex || '';
                     } else {
                         // Fallback: varrer células à procura de marca conhecida
                         for (const cell of cells) {
@@ -712,6 +715,7 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                                 const parsed = parseDesc(txt);
                                 brand = parsed.brand;
                                 model = parsed.model;
+                                loadIndex = parsed.loadIndex || '';
                                 break;
                             }
                         }
@@ -735,7 +739,7 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                     }
 
                     if (brand && price && price > 15 && price < 500)
-                        products.push({ brand, model, price });
+                        products.push({ brand, model, load_index: loadIndex, price });
                 }
 
                 if (products.length > 0) break;
@@ -779,10 +783,12 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
         print(f"  [S. José] Total: {len(products)} produtos ({_current_page} páginas)")
 
         if products:
-            # Deduplicar por marca+modelo mantendo preço mais baixo
+            # Deduplicar por marca+modelo+índice de carga mantendo preço mais baixo.
+            # O índice (ex: 95H vs 99V) distingue produtos com preços diferentes.
             seen = {}
             for p in products:
-                key = f"{p.get('brand','')}|{p.get('model','')}"
+                load_idx = p.get('load_index', '') or ''
+                key = f"{p.get('brand','')}|{p.get('model','')}|{load_idx}"
                 if key not in seen or p['price'] < seen[key]['price']:
                     seen[key] = p
             products = list(seen.values())
