@@ -773,78 +773,38 @@ async def _do_compare(job_id: str, force: bool):
                 return True
         return False
 
+    def _norm(s):
+        return (s or '').upper().strip()
+
     for item in items:
         medida_norm = item['medida'].replace('/', '').replace('R', '').replace('r', '')
-        marca_norm  = (item.get('marca')  or '').strip().upper()
-        modelo_norm = (item.get('modelo') or '').strip().upper()
-        indice_norm = (item.get('indice') or '').strip().upper()
-
-        scraped = []
-        match_type = None
         medida_prices = prices_by_medida.get(medida_norm, [])
 
-        if medida_prices:
-            if marca_norm and modelo_norm:
-                marca_prices = [p for p in medida_prices if (p.get('marca') or '').strip().upper() == marca_norm]
-                if marca_prices:
-                    # Nível 1a: modelo exato (descrição = modelo pedido)
-                    # Sem filtro de índice — o modelo já identifica o produto exacto
-                    pat_exact = re.compile(f"^{re.escape(modelo_norm)}$", re.IGNORECASE)
-                    candidates = [p for p in marca_prices if pat_exact.match(p.get('modelo') or '')]
-                    scraped = candidates  # sem _with_index_generic aqui
-                    if scraped:
-                        match_type = "modelo_exato"
+        item_marca  = _norm(item.get('marca') or item.get('brand', ''))
+        item_modelo = _norm(item.get('modelo') or item.get('model', ''))
 
-                    if not scraped:
-                        # Nível 1b: descrição termina com o modelo pedido
-                        pat_end = re.compile(
-                            r'(?:^|\s)' + re.escape(modelo_norm) + r'(\s+\w+)?$',
-                            re.IGNORECASE
-                        )
-                        candidates = [p for p in marca_prices if pat_end.search(p.get('modelo') or '')]
-                        scraped = candidates
-                        if scraped:
-                            match_type = "modelo_exato"
+        # Nível 1: marca + modelo exactos (case-insensitive)
+        scraped = [
+            s for s in medida_prices
+            if _norm(s.get('marca', '')) == item_marca
+            and _norm(s.get('modelo', '')) == item_modelo
+        ]
+        if scraped:
+            match_type = "modelo_exato"
 
-                    if not scraped:
-                        # Nível 1c: modelo parcial — nome no início da descrição
-                        pat_start = re.compile(f"^{re.escape(modelo_norm)}(\\s|$)", re.IGNORECASE)
-                        candidates = [p for p in marca_prices if pat_start.match(p.get('modelo') or '')]
-                        scraped = candidates
-                        if scraped:
-                            match_type = "modelo_parcial"
+        # Nível 2: só marca (qualquer modelo da mesma marca)
+        if not scraped and item_marca:
+            scraped = [
+                s for s in medida_prices
+                if _norm(s.get('marca', '')) == item_marca
+            ]
+            if scraped:
+                match_type = "marca"
 
-                    if not scraped:
-                        # Nível 1d: modelo parcial — nome em qualquer parte da descrição
-                        pat_contains = re.compile(re.escape(modelo_norm), re.IGNORECASE)
-                        candidates = [p for p in marca_prices if pat_contains.search(p.get('modelo') or '')]
-                        scraped = candidates
-                        if scraped:
-                            match_type = "modelo_parcial"
-
-            # Nível 2: sem modelo — qualquer produto da mesma marca com o índice certo
-            # Aqui aplica-se o filtro de índice: sem modelo identificador, não mostrar
-            # produtos onde não sabemos se o índice é o correcto.
-            if not scraped and marca_norm:
-                marca_prices = [p for p in medida_prices if (p.get('marca') or '').strip().upper() == marca_norm]
-                scraped = _with_index_generic(marca_prices)
-                if scraped:
-                    match_type = "marca"
-
-            if not scraped and marca_norm:
-                # Nível 2b: marca parcial (ex: "MICH" → "MICHELIN")
-                pat_marca = re.compile(f"^{marca_norm.replace(' ', '.*')}$", re.IGNORECASE)
-                marca_parcial = [p for p in medida_prices if pat_marca.match(p.get('marca') or '')]
-                scraped = _with_index_generic(marca_parcial)
-                if scraped:
-                    match_type = "marca_parcial"
-
-            # Nível 3: sem marca correspondente — mostra melhor preço da medida como referência
-            # (match_type="medida" → status="no_brand_match", sem cálculo de poupança)
-            if not scraped:
-                scraped = _with_index_generic(medida_prices)
-                if scraped:
-                    match_type = "medida"
+        # Nível 3: melhor preço da medida como referência (sem poupança calculada)
+        if not scraped:
+            scraped = list(medida_prices)
+            match_type = "medida" if scraped else None
 
         if scraped:
             scraped = sorted(scraped, key=_sort_priority)
