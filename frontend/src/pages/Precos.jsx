@@ -287,10 +287,22 @@ const Precos = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {prices.map((item, idx) => {
+                  {(() => {
+                    const modelCounts = {};
+                    prices.forEach(r => {
+                      const key = `${r.marca}|${r.modelo}|${r.medida}`;
+                      modelCounts[key] = (modelCounts[key] || 0) + 1;
+                    });
+                    const isDuplicate = (r) => modelCounts[`${r.marca}|${r.modelo}|${r.medida}`] > 1;
+                    return prices.map((item, idx) => {
                     const isBest = stats && item.price === stats.minPrice;
                     return (
-                      <TableRow key={item.id || idx} className={isBest ? 'bg-emerald-50 hover:bg-emerald-100' : ''}>
+                      <TableRow
+                        key={item.id || idx}
+                        className={isBest ? 'bg-emerald-50 hover:bg-emerald-100' : ''}
+                        style={{ borderLeft: isDuplicate(item) ? '3px solid #F59E0B' : '3px solid transparent' }}
+                        title={isDuplicate(item) ? 'Variante de preço' : ''}
+                      >
                         <TableCell className="font-mono font-medium">{item.medida}</TableCell>
                         <TableCell>
                           <Badge variant="outline" className="font-medium">{item.marca || '-'}</Badge>
@@ -312,7 +324,8 @@ const Precos = () => {
                         <TableCell className="text-slate-500 text-sm">{formatDate(item.scraped_at)}</TableCell>
                       </TableRow>
                     );
-                  })}
+                  });
+                  })()}
                 </TableBody>
               </Table>
             </div>
