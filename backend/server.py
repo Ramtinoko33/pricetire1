@@ -857,17 +857,31 @@ async def _do_compare(job_id: str, force: bool):
 
         item_marca  = _norm(item.get('marca') or item.get('brand', ''))
         item_modelo = _norm(item.get('modelo') or item.get('model', ''))
+        item_indice = _norm(item.get('indice') or item.get('load_index', ''))
 
-        # Nível 1: marca + modelo exactos (case-insensitive)
-        scraped = [
-            s for s in medida_prices
-            if _norm(s.get('marca', '')) == item_marca
-            and _norm(s.get('modelo', '')) == item_modelo
-        ]
-        if scraped:
-            match_type = "modelo_exato"
+        # Nível 1: marca + modelo + índice exacto (quando índice disponível)
+        scraped = []
+        if item_indice:
+            scraped = [
+                s for s in medida_prices
+                if _norm(s.get('marca', '')) == item_marca
+                and _norm(s.get('modelo', '')) == item_modelo
+                and _norm(s.get('load_index', '')) == item_indice
+            ]
+            if scraped:
+                match_type = "modelo_exato"
 
-        # Nível 2: só marca (qualquer modelo da mesma marca)
+        # Nível 2: marca + modelo (sem índice ou sem match com índice)
+        if not scraped:
+            scraped = [
+                s for s in medida_prices
+                if _norm(s.get('marca', '')) == item_marca
+                and _norm(s.get('modelo', '')) == item_modelo
+            ]
+            if scraped:
+                match_type = "modelo_exato"
+
+        # Nível 3: só marca (qualquer modelo da mesma marca)
         if not scraped and item_marca:
             scraped = [
                 s for s in medida_prices
@@ -876,7 +890,7 @@ async def _do_compare(job_id: str, force: bool):
             if scraped:
                 match_type = "marca"
 
-        # Nível 3: melhor preço da medida como referência (sem poupança calculada)
+        # Nível 4: melhor preço da medida como referência (sem poupança calculada)
         if not scraped:
             scraped = list(medida_prices)
             match_type = "medida" if scraped else None
