@@ -651,6 +651,21 @@ async def _do_compare(job_id: str, force: bool):
 
             pairs_sem_dados = list(pairs_sem_dados_set)
 
+    # Obter fornecedores activos e inicializar tracking SEMPRE —
+    # independentemente de haver cache ou não, para que o frontend
+    # veja sempre a lista de fornecedores desde o início.
+    _pool_sup_all = await get_db()
+    async with _pool_sup_all.acquire() as _conn_sup_all:
+        _all_active = rows(await _conn_sup_all.fetch(
+            "SELECT name FROM suppliers WHERE is_active = TRUE ORDER BY name"
+        ))
+    supplier_names = [s['name'] for s in _all_active]
+    _supplier_run_stats[job_id] = {
+        name: {"status": "waiting", "start_time": None, "duration_s": None,
+               "products": None, "best_price": None}
+        for name in supplier_names
+    }
+
     scraper_timed_out = False
     # Scrape pares (medida, marca) em falta (ou todos se force=true)
     if pairs_sem_dados:
@@ -680,22 +695,8 @@ async def _do_compare(job_id: str, force: bool):
         env['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
         medidas_str = ','.join(medidas_sem_dados)
 
-        # Obter lista de fornecedores activos para lançar um processo por fornecedor em paralelo
-        pool_sup = await get_db()
-        async with pool_sup.acquire() as conn_sup:
-            active_suppliers = rows(await conn_sup.fetch(
-                "SELECT name FROM suppliers WHERE is_active = TRUE ORDER BY name"
-            ))
-        supplier_names = [s['name'] for s in active_suppliers]
         logger.info(f"A correr scraper em paralelo para {len(supplier_names)} fornecedores, "
                     f"{len(medidas_sem_dados)} medidas...")
-
-        # Inicializar todas as entradas em "waiting" antes de arrancar os processos
-        _supplier_run_stats[job_id] = {
-            name: {"status": "waiting", "start_time": None, "duration_s": None,
-                   "products": None, "best_price": None}
-            for name in supplier_names
-        }
 
         async def _run_supplier_proc(sup_name: str):
             """Lança run_scraper.py filtrado para um único fornecedor e aguarda conclusão."""
@@ -775,6 +776,19 @@ async def _do_compare(job_id: str, force: bool):
             """,
             unique_medidas,
         ))
+
+    # Fornecedores que ficaram em "waiting" serviram de cache — marcar como "done"
+    if job_id in _supplier_run_stats:
+        for _sname, _sinfo in _supplier_run_stats[job_id].items():
+            if _sinfo["status"] == "waiting":
+                _cached_prods = [p for p in all_scraped if p.get('supplier_name') == _sname]
+                _best_c = min((p['price'] for p in _cached_prods if p.get('price')), default=None)
+                _supplier_run_stats[job_id][_sname].update({
+                    "status": "done",
+                    "duration_s": 0,
+                    "products": len(_cached_prods),
+                    "best_price": float(_best_c) if _best_c is not None else None,
+                })
 
     # Indexar por medida
     prices_by_medida: Dict[str, list] = {}
