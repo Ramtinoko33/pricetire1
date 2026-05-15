@@ -1368,9 +1368,10 @@ async def get_scraped_prices(
         rs = rows(await conn.fetch(
             f"""
             SELECT sp.* FROM scraped_prices sp
-            INNER JOIN suppliers s ON LOWER(s.name) = LOWER(sp.supplier_name) AND s.is_active = TRUE
+            LEFT JOIN suppliers s ON LOWER(s.name) = LOWER(sp.supplier_name)
             WHERE {where}
-            ORDER BY sp.scraped_at DESC LIMIT 500
+              AND (s.id IS NULL OR s.is_active = TRUE)
+            ORDER BY sp.price ASC NULLS LAST, sp.scraped_at DESC LIMIT 500
             """,
             *params,
         ))
