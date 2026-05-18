@@ -737,7 +737,8 @@ async def _do_compare(job_id: str, force: bool):
                 logger.info(f"[{sup_name}] Scraper concluído.\n{head}")
                 if tail:
                     logger.info(f"[{sup_name}] ...fim:\n{tail}")
-                elapsed = round(_time.time() - _supplier_run_stats[job_id][sup_name]["start_time"])
+                _st = _supplier_run_stats[job_id][sup_name].get("start_time")
+                elapsed = round(_time.time() - _st) if _st else 0
                 # Contar produtos e melhor preço na BD para este fornecedor+medidas
                 try:
                     _pool = await get_db()
@@ -757,7 +758,8 @@ async def _do_compare(job_id: str, force: bool):
                 })
                 return False  # não houve timeout
             except asyncio.TimeoutError:
-                elapsed = round(_time.time() - _supplier_run_stats[job_id][sup_name]["start_time"])
+                _st = _supplier_run_stats[job_id][sup_name].get("start_time")
+                elapsed = round(_time.time() - _st) if _st else 0
                 _supplier_run_stats[job_id][sup_name].update({
                     "status": "timeout", "duration_s": elapsed,
                 })
@@ -769,7 +771,8 @@ async def _do_compare(job_id: str, force: bool):
                     logger.warning(f"[{sup_name}] Scraper timeout (sem output)")
                 return True  # houve timeout
             except Exception as _exc:
-                elapsed = round(_time.time() - _supplier_run_stats[job_id][sup_name]["start_time"])
+                _st = _supplier_run_stats[job_id][sup_name].get("start_time")
+                elapsed = round(_time.time() - _st) if _st else 0
                 _supplier_run_stats[job_id][sup_name].update({
                     "status": "error", "duration_s": elapsed,
                 })
