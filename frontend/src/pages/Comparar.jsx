@@ -17,8 +17,7 @@ const Comparar = () => {
   const [job, setJob] = useState(null);
   const [results, setResults] = useState([]);
   const [stats, setStats] = useState(null);
-  const [suppliersStatus, setSuppliersStatus] = useState([]);
-  const [indiceObrigatorio, setIndiceObrigatorio] = useState(true);
+  const [indiceObrigatorio, setIndiceObrigatorio] = useState(false);
   const pollingTimerRef = useRef(null);
 
   // Limpar timer ao desmontar componente
@@ -532,7 +531,7 @@ const Comparar = () => {
                     {(indiceObrigatorio
                       ? results.filter(r => {
                           const itemIndice = (r.indice || '').toUpperCase().trim();
-                          const encontradoIndice = (r.indice_encontrado || '').toUpperCase().trim();
+                          const encontradoIndice = (r.indice_encontrado || r.load_index_found || '').toUpperCase().trim();
                           if (!itemIndice) return true;
                           if (!encontradoIndice) return false;
                           return encontradoIndice === itemIndice;
