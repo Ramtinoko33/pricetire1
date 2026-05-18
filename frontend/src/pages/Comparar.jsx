@@ -17,6 +17,7 @@ const Comparar = () => {
   const [job, setJob] = useState(null);
   const [results, setResults] = useState([]);
   const [stats, setStats] = useState(null);
+  const [indiceObrigatorio, setIndiceObrigatorio] = useState(false);
   const pollingTimerRef = useRef(null);
 
   // Limpar timer ao desmontar componente
@@ -425,6 +426,31 @@ const Comparar = () => {
               <CardTitle>Resultados da Comparação</CardTitle>
             </CardHeader>
             <CardContent>
+              {/* Toggle índice obrigatório */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <span style={{ fontSize: 14, color: '#6B7280' }}>Índice obrigatório</span>
+                <button
+                  onClick={() => setIndiceObrigatorio(!indiceObrigatorio)}
+                  style={{
+                    padding: '4px 12px',
+                    borderRadius: 20,
+                    border: 'none',
+                    cursor: 'pointer',
+                    background: indiceObrigatorio ? '#10B981' : '#D1D5DB',
+                    color: indiceObrigatorio ? 'white' : '#374151',
+                    fontSize: 13,
+                    fontWeight: 600,
+                  }}
+                >
+                  {indiceObrigatorio ? '✓ Activo' : '✗ Inactivo'}
+                </button>
+                <span style={{ fontSize: 12, color: '#9CA3AF' }}>
+                  {indiceObrigatorio
+                    ? 'Só mostra resultados com índice igual ao Excel'
+                    : 'Mostra todos os resultados'}
+                </span>
+              </div>
+
               <div className="max-h-[500px] overflow-auto">
                 <Table>
                   <TableHeader className="sticky top-0 bg-white">
@@ -443,7 +469,16 @@ const Comparar = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {results.map((item, index) => {
+                    {(indiceObrigatorio
+                      ? results.filter(r => {
+                          const itemIndice = (r.indice || '').toUpperCase().trim();
+                          const encontradoIndice = (r.indice_encontrado || r.load_index_found || '').toUpperCase().trim();
+                          if (!itemIndice) return true;
+                          if (!encontradoIndice) return false;
+                          return encontradoIndice === itemIndice;
+                        })
+                      : results
+                    ).map((item, index) => {
                       const hasSavings = item.status === 'found' && item.economia_euro && item.economia_euro > 0;
                       const isOtherBrand = item.status === 'no_brand_match';
                       const matchType = item.match_type;
