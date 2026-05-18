@@ -17,6 +17,7 @@ const Comparar = () => {
   const [job, setJob] = useState(null);
   const [results, setResults] = useState([]);
   const [stats, setStats] = useState(null);
+  const [suppliersStatus, setSuppliersStatus] = useState([]);
   const [indiceObrigatorio, setIndiceObrigatorio] = useState(false);
   const pollingTimerRef = useRef(null);
 
