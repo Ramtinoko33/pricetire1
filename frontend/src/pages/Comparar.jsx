@@ -105,11 +105,10 @@ const Comparar = () => {
   };
 
   const _pollUntilDone = (jobId) => {
-    const INTERVAL_MS = 8000;   // verificar de 8 em 8 segundos
-    const MAX_WAIT_MS = 30 * 60 * 1000; // máx 30 min
+    const INTERVAL_MS = 2500;
+    const MAX_WAIT_MS = 30 * 60 * 1000;
     const started = Date.now();
 
-    // Cancelar qualquer polling anterior antes de iniciar um novo
     if (pollingTimerRef.current) {
       clearTimeout(pollingTimerRef.current);
       pollingTimerRef.current = null;
@@ -120,6 +119,10 @@ const Comparar = () => {
         try {
           const { data: progress } = await jobsAPI.getProgress(jobId);
           const status = progress?.status;
+
+          if (progress?.suppliers_status?.length) {
+            setSuppliersStatus(progress.suppliers_status);
+          }
 
           if (status === 'completed') {
             pollingTimerRef.current = null;
@@ -143,16 +146,13 @@ const Comparar = () => {
             resolve();
             return;
           }
-          // status === 'running' → agendar próxima verificação
           pollingTimerRef.current = setTimeout(tick, INTERVAL_MS);
         } catch (err) {
           console.error('Polling error:', err);
-          // erro de rede temporário → tentar novamente
           pollingTimerRef.current = setTimeout(tick, INTERVAL_MS);
         }
       };
 
-      // Primeira verificação após INTERVAL_MS
       pollingTimerRef.current = setTimeout(tick, INTERVAL_MS);
     });
   };
@@ -213,8 +213,53 @@ const Comparar = () => {
     setJob(null);
     setResults([]);
     setStats(null);
+    setSuppliersStatus([]);
     setComparing(false);
   };
+
+  const statusMeta = {
+    waiting: { icon: '⏳', label: 'A aguardar', cls: 'text-slate-400' },
+    running: { icon: '🔄', label: 'A correr',   cls: 'text-blue-600 animate-pulse' },
+    done:    { icon: '✅', label: 'Concluído',  cls: 'text-emerald-600' },
+    error:   { icon: '❌', label: 'Erro',        cls: 'text-red-600' },
+    timeout: { icon: '⏰', label: 'Timeout',     cls: 'text-orange-500' },
+  };
+
+  const SupplierStatusTable = () => (
+    <div className="mt-4 rounded-lg border border-slate-200 overflow-hidden">
+      <table className="w-full text-sm">
+        <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+          <tr>
+            <th className="px-4 py-2 text-left">Fornecedor</th>
+            <th className="px-4 py-2 text-left">Estado</th>
+            <th className="px-4 py-2 text-right">Tempo</th>
+            <th className="px-4 py-2 text-right">Produtos</th>
+            <th className="px-4 py-2 text-right">Melhor Preço</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {suppliersStatus.map((s) => {
+            const m = statusMeta[s.status] || statusMeta.waiting;
+            return (
+              <tr key={s.name} className="bg-white hover:bg-slate-50">
+                <td className="px-4 py-2 font-medium text-slate-700">{s.name}</td>
+                <td className={`px-4 py-2 ${m.cls}`}>{m.icon} {m.label}</td>
+                <td className="px-4 py-2 text-right text-slate-500">
+                  {s.duration_s != null ? `${s.duration_s}s` : '-'}
+                </td>
+                <td className="px-4 py-2 text-right text-slate-600">
+                  {s.products != null ? s.products : '-'}
+                </td>
+                <td className="px-4 py-2 text-right font-medium text-slate-700">
+                  {s.best_price != null ? `€${s.best_price.toFixed(2)}` : '-'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
 
   return (
     <div className="space-y-6" data-testid="comparar-page">
@@ -364,6 +409,8 @@ const Comparar = () => {
                 </>
               )}
             </Button>
+
+            {suppliersStatus.length > 0 && <SupplierStatusTable />}
           </CardContent>
         </Card>
       )}
@@ -416,6 +463,18 @@ const Comparar = () => {
                     </Button>
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Supplier Status Summary */}
+          {suppliersStatus.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Estado dos Fornecedores</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <SupplierStatusTable />
               </CardContent>
             </Card>
           )}
@@ -571,6 +630,7 @@ const Comparar = () => {
                       );
                     })}
                   </TableBody>
+
                 </Table>
               </div>
             </CardContent>

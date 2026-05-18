@@ -132,3 +132,4 @@ class JobProgress(BaseModel):
     found_items: int
     progress_percent: float
     current_supplier: Optional[str] = None
+    suppliers_status: Optional[List[dict]] = None
