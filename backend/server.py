@@ -46,7 +46,48 @@ _supplier_run_stats: Dict[str, Dict[str, dict]] = {}
 @app.on_event("startup")
 async def startup():
     await init_schema()
+    await _cleanup_orphan_suppliers()
     logger.info("API pronta.")
+
+
+async def _cleanup_orphan_suppliers():
+    """
+    Limpeza preventiva no arranque:
+      1. Normaliza espaços em supplier_name na BD (ex: ' Aguesport' → 'Aguesport')
+      2. Remove registos de scraped_prices cujo supplier_name não existe na
+         tabela suppliers (fornecedores desactivados/renomeados como Grupo Andres,
+         ABTyres, etc.)
+    """
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            # 1. Normalizar espaços em suppliers e scraped_prices
+            trimmed_sup = await conn.fetchval(
+                "WITH u AS (UPDATE suppliers SET name = TRIM(name) WHERE name != TRIM(name) RETURNING id) SELECT COUNT(*) FROM u"
+            )
+            trimmed_sp = await conn.fetchval(
+                "WITH u AS (UPDATE scraped_prices SET supplier_name = TRIM(supplier_name) WHERE supplier_name != TRIM(supplier_name) RETURNING id) SELECT COUNT(*) FROM u"
+            )
+            if trimmed_sup or trimmed_sp:
+                logger.info(f"[cleanup] Normalizados espaços: {trimmed_sup} suppliers, {trimmed_sp} scraped_prices")
+
+            # 2. Apagar scraped_prices de fornecedores que já não existem
+            deleted = await conn.fetchval(
+                """
+                WITH d AS (
+                    DELETE FROM scraped_prices
+                    WHERE TRIM(supplier_name) NOT IN (
+                        SELECT TRIM(name) FROM suppliers
+                    )
+                    RETURNING id
+                )
+                SELECT COUNT(*) FROM d
+                """
+            )
+            if deleted:
+                logger.info(f"[cleanup] Removidos {deleted} registos de fornecedores obsoletos (Grupo Andres, ABTyres, etc.)")
+    except Exception as e:
+        logger.warning(f"[cleanup] Erro na limpeza de arranque: {e}")
 
 
 @app.on_event("shutdown")
@@ -1063,6 +1104,26 @@ async def delete_job(job_id: str):
             await conn.execute("DELETE FROM jobs      WHERE id     = $1", job_id)
     logger.info(f"Job {job_id} e dados relacionados eliminados")
     return {"message": "Job deleted successfully"}
+
+
+@api_router.post("/admin/cleanup-orphan-suppliers")
+async def cleanup_orphan_suppliers():
+    """Remove scraped_prices de fornecedores obsoletos e normaliza espaços nos nomes."""
+    await _cleanup_orphan_suppliers()
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        remaining = rows(await conn.fetch(
+            """
+            SELECT supplier_name, COUNT(*) AS total
+            FROM scraped_prices
+            WHERE TRIM(supplier_name) NOT IN (SELECT TRIM(name) FROM suppliers)
+            GROUP BY supplier_name
+            """
+        ))
+    return {
+        "message": "Limpeza concluída",
+        "orphans_remaining": remaining,
+    }
 
 
 @api_router.get("/jobs/{job_id}/export")
