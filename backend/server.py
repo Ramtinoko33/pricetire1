@@ -597,8 +597,8 @@ async def _do_compare(job_id: str, force: bool):
             #   2. Existe um match exato de modelo nos últimos 12h em TODOS os fornecedores
             #      activos.
             # Em qualquer outro caso → re-scrape para verificar stock actual.
-            CACHE_TTL_H = 12
-            cache_cutoff = datetime.now(timezone.utc) - timedelta(hours=CACHE_TTL_H)
+            CACHE_TTL_MIN = 30
+            cache_cutoff = datetime.now(timezone.utc) - timedelta(minutes=CACHE_TTL_MIN)
 
             active_supplier_names = {
                 r['name'] for r in
@@ -680,7 +680,7 @@ async def _do_compare(job_id: str, force: bool):
                 medidas_sem_dados,
             )
             if marcas_sem_dados:
-                stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=12)
+                stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
                 await conn.execute(
                     """DELETE FROM scraped_prices
                        WHERE medida = ANY($1)
@@ -698,10 +698,18 @@ async def _do_compare(job_id: str, force: bool):
         logger.info(f"A correr scraper em paralelo para {len(supplier_names)} fornecedores, "
                     f"{len(medidas_sem_dados)} medidas...")
 
+        # Timeouts individuais por fornecedor (segundos).
+        # Aguesport é mais lento (API pesada) — timeout mais curto para não bloquear os outros.
+        SUPPLIER_TIMEOUTS: dict = {
+            'Aguesport': 120,
+        }
+        SUPPLIER_TIMEOUT_DEFAULT = 180
+
         async def _run_supplier_proc(sup_name: str):
             """Lança run_scraper.py filtrado para um único fornecedor e aguarda conclusão."""
             _supplier_run_stats[job_id][sup_name]["status"] = "running"
             _supplier_run_stats[job_id][sup_name]["start_time"] = _time.time()
+            _sup_timeout = SUPPLIER_TIMEOUTS.get(sup_name, SUPPLIER_TIMEOUT_DEFAULT)
 
             proc = await asyncio.create_subprocess_exec(
                 'python3', '/app/backend/run_scraper.py',
@@ -714,7 +722,7 @@ async def _do_compare(job_id: str, force: bool):
                 cwd='/app/backend',
             )
             try:
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=1200)
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_sup_timeout)
                 out_str = stdout.decode()
                 head = out_str[:2000]
                 tail = out_str[-1000:] if len(out_str) > 2000 else ""
