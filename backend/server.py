@@ -698,9 +698,20 @@ async def _do_compare(job_id: str, force: bool):
         logger.info(f"A correr scraper em paralelo para {len(supplier_names)} fornecedores, "
                     f"{len(medidas_sem_dados)} medidas...")
 
-        # Timeout por fornecedor. Com 3 lotes × 600s = 30 min máximo total.
-        SUPPLIER_TIMEOUTS: dict = {}
-        SUPPLIER_TIMEOUT_DEFAULT = 600
+        # Timeouts individuais por fornecedor (segundos).
+        # Scrapers lentos (MP24, S José, InterSprint, Aguesport) recebem 900s.
+        # Com 3 lotes × 900s = 45 min máximo no pior caso.
+        SUPPLIER_TIMEOUTS: dict = {
+            'Aguesport':     900,
+            'MP24':          900,
+            'S José Pneus':  900,
+            'InterSprint':   900,
+            'TugaPneus':     600,
+            'Prismanil':     600,
+            'Pneus Cruzeiro':600,
+            'Grupo Soledad': 600,
+        }
+        SUPPLIER_TIMEOUT_DEFAULT = 900
 
         async def _run_supplier_proc(sup_name: str):
             """Lança run_scraper.py filtrado para um único fornecedor e aguarda conclusão."""
