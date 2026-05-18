@@ -698,12 +698,9 @@ async def _do_compare(job_id: str, force: bool):
         logger.info(f"A correr scraper em paralelo para {len(supplier_names)} fornecedores, "
                     f"{len(medidas_sem_dados)} medidas...")
 
-        # Timeouts individuais por fornecedor (segundos).
-        # Aguesport é mais lento (API pesada) — timeout dedicado mais baixo.
-        SUPPLIER_TIMEOUTS: dict = {
-            'Aguesport': 150,
-        }
-        SUPPLIER_TIMEOUT_DEFAULT = 180
+        # Timeout por fornecedor — valor generoso para garantir resultados completos.
+        SUPPLIER_TIMEOUTS: dict = {}
+        SUPPLIER_TIMEOUT_DEFAULT = 1200
 
         async def _run_supplier_proc(sup_name: str):
             """Lança run_scraper.py filtrado para um único fornecedor e aguarda conclusão."""
