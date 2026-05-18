@@ -699,9 +699,9 @@ async def _do_compare(job_id: str, force: bool):
                     f"{len(medidas_sem_dados)} medidas...")
 
         # Timeouts individuais por fornecedor (segundos).
-        # Aguesport é mais lento (API pesada) — timeout mais curto para não bloquear os outros.
+        # Aguesport é mais lento (API pesada) — timeout dedicado mais baixo.
         SUPPLIER_TIMEOUTS: dict = {
-            'Aguesport': 120,
+            'Aguesport': 150,
         }
         SUPPLIER_TIMEOUT_DEFAULT = 180
 
@@ -768,9 +768,20 @@ async def _do_compare(job_id: str, force: bool):
                 logger.error(f"[{sup_name}] Erro inesperado: {_exc}")
                 return True
 
-        # Correr todos os fornecedores em simultâneo; aguardar que todos terminem
-        timeout_flags = await asyncio.gather(*[_run_supplier_proc(n) for n in supplier_names])
-        scraper_timed_out = any(timeout_flags)
+        # Correr fornecedores em lotes de 3 em paralelo — cada lote aguarda antes
+        # de iniciar o seguinte, garantindo que nunca há mais de 3 scrapers
+        # Playwright simultâneos e que nenhum bloqueia indefinidamente os outros.
+        BATCH_SIZE = 3
+        all_timeout_flags: list[bool] = []
+        for _i in range(0, len(supplier_names), BATCH_SIZE):
+            _batch = supplier_names[_i:_i + BATCH_SIZE]
+            logger.info(f"[Compare] Lote {_i // BATCH_SIZE + 1}: {_batch}")
+            _batch_flags = await asyncio.gather(
+                *[_run_supplier_proc(n) for n in _batch],
+                return_exceptions=False,
+            )
+            all_timeout_flags.extend(_batch_flags)
+        scraper_timed_out = any(all_timeout_flags)
 
     pool = await get_db()
     async with pool.acquire() as conn:
