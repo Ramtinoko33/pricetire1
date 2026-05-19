@@ -1281,7 +1281,7 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                     await page.wait_for_url("**/products**", timeout=5000)
                 except Exception:
                     pass
-            await asyncio.sleep(4)  # Angular needs extra time to render product list
+            await asyncio.sleep(2)  # Angular needs extra time to render product list
 
             # Scroll to trigger lazy-loaded product list.
             # Angular CDK virtual scroll uses a specific container — scroll it directly,
@@ -1303,7 +1303,7 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                     if (scroller) { scroller.scrollTop = 600; }
                     window.scrollTo(0, 600);
                 }""")
-                await asyncio.sleep(3)
+                await asyncio.sleep(1)
                 await page.evaluate("""() => {
                     const sel = ['.cdk-virtual-scroll-viewport','app-car-products','app-product-list','main'];
                     for (const s of sel) {
@@ -1312,16 +1312,16 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                     }
                     window.scrollTo(0, 1200);
                 }""")
-                await asyncio.sleep(3)
+                await asyncio.sleep(1)
                 await page.evaluate("window.scrollTo(0, 2000)")
-                await asyncio.sleep(2)
+                await asyncio.sleep(1)
             except Exception:
                 pass
 
             # Wait up to 10s for a 'restBusinessDelegate' response that looks like products
             # (larger than 1KB and contains 'PRECIO' or 'price' in the body, indicating real data)
             print(f"  [Soledad] Waiting for product data API response...")
-            for _pw in range(20):
+            for _pw in range(10):
                 await asyncio.sleep(0.5)
                 _found_products_api = any(
                     len(r['body']) > 1000
