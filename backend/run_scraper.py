@@ -1539,11 +1539,44 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                                     cv_val = _s
                                     break  # only break on success
                         indice_val = (ic_val + cv_val).strip()
-                        # Fallback: regex on model text e.g. "PRIMACY 4 91H XL"
+                        # Second load/speed pair (109T/107T) — e.g. AR_CARGA2 + AR_VELOCIDAD2
+                        ic2_val = cv2_val = ''
+                        _IC2_SUFFIXES = ('_carga2', '_ic2', '_li2', '_loadindex2', '_indcarga2')
+                        _CV2_SUFFIXES = ('_velocidad2', '_cv2', '_si2', '_speedindex2', '_indvel2')
+                        for lk, (orig_k, v) in item_lc.items():
+                            if any(lk == s.lstrip('_') or lk.endswith(s)
+                                   for s in _IC2_SUFFIXES) and v is not None:
+                                _s = str(v).strip()
+                                if _s.isdigit():
+                                    ic2_val = _s
+                                    break
+                        for lk, (orig_k, v) in item_lc.items():
+                            if any(lk == s.lstrip('_') or lk.endswith(s)
+                                   for s in _CV2_SUFFIXES) and v is not None:
+                                _s = str(v).strip().upper()
+                                if len(_s) == 1 and _s.isalpha():
+                                    cv2_val = _s
+                                    break
+                        indice2 = (ic2_val + cv2_val).strip()
+                        if indice2 and indice2 != indice_val:
+                            indice_val = f"{indice_val}/{indice2}"
+                        # Detect run-together dual index in AR_NOMBRE (e.g. "109T107T")
+                        if indice_val and '/' not in indice_val:
+                            _nombre_val = str(item_lc.get('ar_nombre', ('', ''))[1] or '')
+                            _md = _re_idx.search(
+                                r'\b(\d{2,3}[A-Z]{1,2})(\d{2,3}[A-Z]{1,2})\b',
+                                _nombre_val.upper()
+                            )
+                            if _md:
+                                indice_val = f"{_md.group(1)}/{_md.group(2)}"
+                        # Fallback: regex on model text e.g. "PRIMACY 4 91H XL" or "109T107T"
                         if not indice_val and model_val:
-                            _m = _re_idx.search(r'\b(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{1,2})?)(?:\s+XL)?\b', model_val.upper())
+                            _m = _re_idx.search(
+                                r'\b(\d{2,3}[A-Z]{1,2}(?:[/ ]\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\b',
+                                model_val.upper()
+                            )
                             if _m:
-                                indice_val = _m.group(0).strip()
+                                indice_val = _m.group(1).strip()
 
                         print(f"  [Soledad] API product: brand={brand_val!r} "
                               f"model={model_val[:40]!r} price={price_val} "
@@ -1678,7 +1711,7 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         if(!price){for(const c of cells){const m=c.textContent.trim().match(/^[€$]?\s*(\d{2,3}[,.]\d{2})\s*[€$]?$/);if(m){const p=parseFloat(m[1].replace(",","."));if(p>15&&p<2000){price=p;break;}}}}
                         if(!brand){const t=cells.map(c=>c.textContent).join(" ").toUpperCase();const bm=t.match(BRANDS);if(bm)brand=bm[0];}
                         if(price&&price>15&&price<2000){
-                            const idxM=model.match(/\b(\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?)\b/);
+                            const idxM=model.match(/\b(\d{2,3}[A-Z]{1,2}(?:[/ ]\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\b/i);
                             const loadIndex=idxM?idxM[0]:'';
                             if(idxM) model=model.slice(0,idxM.index).trim();
                             products.push({brand,model,load_index:loadIndex,price});
@@ -1709,7 +1742,7 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         }
                         // Accept abbreviated brand format (MICH.PCY4) even if BRANDS regex didn't match
                         if(brand || /[A-Z]{2,8}\.[A-Z0-9]/.test(model.toUpperCase())){
-                            const idxM=model.match(/\b(\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?)\b/);
+                            const idxM=model.match(/\b(\d{2,3}[A-Z]{1,2}(?:[/ ]\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\b/i);
                             const loadIndex=idxM?idxM[0]:'';
                             if(idxM) model=model.slice(0,idxM.index).trim();
                             products.push({brand,model,load_index:loadIndex,price});
