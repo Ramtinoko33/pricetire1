@@ -576,6 +576,8 @@ async def _compare_background(job_id: str, force: bool):
     """
     Tarefa em background: scrape + compare.
     Atualiza o status do job na BD quando termina (completed/failed).
+    O bloco finally garante que o job NUNCA fica suspenso em 'running',
+    mesmo que scrapers dêem timeout ou ocorra excepção inesperada.
     """
     import re
     try:
@@ -591,6 +593,25 @@ async def _compare_background(job_id: str, force: bool):
                 )
         except Exception:
             pass
+    finally:
+        # Garantia de último recurso: se o job ainda estiver 'running'
+        # (ex: excepção no UPDATE final de _do_compare, task cancelada),
+        # marcar como 'completed' para o frontend sair do loop de polling.
+        try:
+            pool = await get_db()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE jobs
+                    SET status      = CASE WHEN status = 'running' THEN 'completed' ELSE status END,
+                        completed_at = CASE WHEN completed_at IS NULL THEN $2 ELSE completed_at END
+                    WHERE id = $1
+                    """,
+                    job_id, datetime.now(timezone.utc),
+                )
+            logger.info(f"[Compare] finally: job {job_id} garantidamente fora de 'running'")
+        except Exception as _fe:
+            logger.error(f"[Compare] finally: erro ao actualizar job {job_id}: {_fe}")
 
 
 async def _do_compare(job_id: str, force: bool):
