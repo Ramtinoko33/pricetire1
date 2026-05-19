@@ -107,7 +107,7 @@ const Comparar = () => {
 
   const _pollUntilDone = (jobId) => {
     const INTERVAL_MS = 2500;
-    const MAX_WAIT_MS = 30 * 60 * 1000;
+    const MAX_WAIT_MS = 60 * 60 * 1000;
     const started = Date.now();
 
     if (pollingTimerRef.current) {
