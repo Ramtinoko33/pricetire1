@@ -771,7 +771,7 @@ async def _do_compare(job_id: str, force: bool):
             'TugaPneus':     600,
             'Prismanil':     600,
             'Pneus Cruzeiro':600,
-            'Grupo Soledad': 600,
+            'Grupo Soledad': 900,
         }
         SUPPLIER_TIMEOUT_DEFAULT = 900
 
