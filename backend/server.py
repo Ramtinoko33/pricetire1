@@ -827,10 +827,13 @@ async def _do_compare(job_id: str, force: bool):
                 })
                 proc.kill()
                 try:
-                    out, _ = await proc.communicate()
+                    # Timeout curto no communicate() após kill — evita pender para
+                    # sempre se o processo não terminar imediatamente (a causa raiz
+                    # do loop infinito no frontend após timeout do último lote).
+                    out, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
                     logger.warning(f"[{sup_name}] Scraper timeout. Output:\n{out.decode()[:2000]}")
                 except Exception:
-                    logger.warning(f"[{sup_name}] Scraper timeout (sem output)")
+                    logger.warning(f"[{sup_name}] Scraper timeout (processo não terminou após kill)")
                 return True  # houve timeout
             except Exception as _exc:
                 _st = _supplier_run_stats[job_id][sup_name].get("start_time")
