@@ -1541,7 +1541,7 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         indice_val = (ic_val + cv_val).strip()
                         # Fallback: regex on model text e.g. "PRIMACY 4 91H XL"
                         if not indice_val and model_val:
-                            _m = _re_idx.search(r'\b(\d{2,3}[A-Z])(?:\s+XL)?\b', model_val.upper())
+                            _m = _re_idx.search(r'\b(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{1,2})?)(?:\s+XL)?\b', model_val.upper())
                             if _m:
                                 indice_val = _m.group(0).strip()
 
@@ -1550,7 +1550,8 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                               f"ic={ic_val!r} cv={cv_val!r} indice={indice_val!r} "
                               f"(field={used_pk})")
                         products.append({'brand': brand_val, 'model': model_val,
-                                         'price': price_val, 'indice': indice_val})
+                                         'price': price_val, 'indice': indice_val,
+                                         'load_index': indice_val})
                     else:
                         _parse_api_json(item, depth + 1)
             elif isinstance(data, dict):
@@ -1676,7 +1677,12 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         if(pC>=0){const m=cells[pC]?.textContent.match(/(\d+[,.]?\d*)/);if(m)price=parseFloat(m[1].replace(",","."));}
                         if(!price){for(const c of cells){const m=c.textContent.trim().match(/^[€$]?\s*(\d{2,3}[,.]\d{2})\s*[€$]?$/);if(m){const p=parseFloat(m[1].replace(",","."));if(p>15&&p<2000){price=p;break;}}}}
                         if(!brand){const t=cells.map(c=>c.textContent).join(" ").toUpperCase();const bm=t.match(BRANDS);if(bm)brand=bm[0];}
-                        if(price&&price>15&&price<2000) products.push({brand,model,price});
+                        if(price&&price>15&&price<2000){
+                            const idxM=model.match(/\b(\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?)\b/);
+                            const loadIndex=idxM?idxM[0]:'';
+                            if(idxM) model=model.slice(0,idxM.index).trim();
+                            products.push({brand,model,load_index:loadIndex,price});
+                        }
                     }
                     if(products.length>0) break;
                 }
@@ -1702,7 +1708,12 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                             if(bm){brand=bm[0];model=ancestor.textContent.trim().substring(0,120);break;}
                         }
                         // Accept abbreviated brand format (MICH.PCY4) even if BRANDS regex didn't match
-                        if(brand || /[A-Z]{2,8}\.[A-Z0-9]/.test(model.toUpperCase())) products.push({brand,model,price});
+                        if(brand || /[A-Z]{2,8}\.[A-Z0-9]/.test(model.toUpperCase())){
+                            const idxM=model.match(/\b(\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?)\b/);
+                            const loadIndex=idxM?idxM[0]:'';
+                            if(idxM) model=model.slice(0,idxM.index).trim();
+                            products.push({brand,model,load_index:loadIndex,price});
+                        }
                     }
                 }
 
@@ -3745,7 +3756,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                         "INSERT INTO scraped_prices (id,supplier_name,medida,marca,modelo,price,load_index,scraped_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
                                         str(uuid.uuid4()), supplier['name'], medida,
                                         prod.get('brand', '').upper(), prod.get('model', ''),
-                                        prod.get('price'), prod.get('indice') or '', datetime.now(timezone.utc),
+                                        prod.get('price'), prod.get('load_index') or prod.get('indice') or '', datetime.now(timezone.utc),
                                     )
                                 print(f"  {medida}: saved {len(products)} products")
                             elif not _is_session_err:
