@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
-import { Download, RefreshCw, TrendingDown, Trash2, Scale, Loader2, RotateCcw } from 'lucide-react';
+import { Download, TrendingDown, Trash2, Loader2, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 
 const Results = () => {
@@ -135,25 +135,8 @@ const Results = () => {
           <p className="text-sm text-slate-600 mt-1">{jobs.length} jobs encontrados</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={loadJobs} data-testid="refresh-btn">
-            <RefreshCw size={18} className="mr-2" />
-            Atualizar
-          </Button>
           {selectedJob && (
             <>
-              <Button
-                variant="outline"
-                onClick={() => handleCompare(selectedJob, false)}
-                disabled={comparing}
-                data-testid="compare-btn"
-              >
-                {comparing ? (
-                  <Loader2 size={18} className="mr-2 animate-spin" />
-                ) : (
-                  <Scale size={18} className="mr-2" />
-                )}
-                Comparar Preços
-              </Button>
               <Button
                 variant="outline"
                 onClick={() => handleCompare(selectedJob, true)}
@@ -250,62 +233,91 @@ const Results = () => {
             ) : results.length === 0 ? (
               <div className="text-center py-12 text-slate-500">Nenhum resultado disponível</div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="max-h-[600px] overflow-auto">
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="sticky top-0 bg-white">
                     <TableRow>
                       <TableHead>Ref</TableHead>
                       <TableHead>Medida</TableHead>
                       <TableHead>Marca</TableHead>
                       <TableHead>Modelo</TableHead>
-                      <TableHead>Meu Preço</TableHead>
-                      <TableHead>Melhor Preço</TableHead>
+                      <TableHead>Índice</TableHead>
+                      <TableHead>Modelo Encontrado</TableHead>
+                      <TableHead>Índice Encontrado</TableHead>
+                      <TableHead className="text-right">Meu Preço</TableHead>
+                      <TableHead className="text-right">Melhor Preço</TableHead>
                       <TableHead>Fornecedor</TableHead>
-                      <TableHead>Economia</TableHead>
-                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Economia €</TableHead>
+                      <TableHead className="text-right">Economia %</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {results.map((item) => (
-                      <TableRow
-                        key={item.id}
-                        className={item.status === 'found' && item.economia_euro > 0 ? 'bg-green-50' : item.status === 'no_brand_match' ? 'bg-amber-50/40' : ''}
-                        data-testid={`result-row-${item.id}`}
-                      >
-                        <TableCell className="font-mono text-sm">{item.ref_id}</TableCell>
-                        <TableCell>{item.medida}</TableCell>
-                        <TableCell>{item.marca}</TableCell>
-                        <TableCell className="max-w-xs truncate">{item.modelo}</TableCell>
-                        <TableCell className="font-mono">{item.meu_preco != null ? `€${item.meu_preco.toFixed(2)}` : '-'}</TableCell>
-                        <TableCell className="font-mono font-bold">
-                          {item.melhor_preco ? (
-                            <div className="flex flex-col">
-                              <span className={item.status === 'no_brand_match' ? 'text-amber-700' : ''}>
-                                €{item.melhor_preco.toFixed(2)}
+                    {results.map((item, index) => {
+                      const hasSavings = item.status === 'found' && item.economia_euro && item.economia_euro > 0;
+                      const isOtherBrand = item.status === 'no_brand_match';
+                      const matchType = item.match_type;
+
+                      const getMatchBadge = () => {
+                        switch(matchType) {
+                          case 'modelo_exato': return <Badge variant="outline" className="text-xs bg-green-100 text-green-800 border-green-300">modelo exato</Badge>;
+                          case 'modelo_parcial': return <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-300">modelo parcial</Badge>;
+                          case 'marca': return <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-300">marca</Badge>;
+                          case 'marca_parcial': return <Badge variant="outline" className="text-xs bg-sky-50 text-sky-700 border-sky-300">marca parcial</Badge>;
+                          case 'medida': return <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-300">só medida</Badge>;
+                          case 'sem_dados': return <Badge variant="outline" className="text-xs bg-red-50 text-red-700 border-red-300">sem dados</Badge>;
+                          default: return null;
+                        }
+                      };
+
+                      return (
+                        <TableRow
+                          key={item.id || index}
+                          className={hasSavings ? 'bg-emerald-50 hover:bg-emerald-100' : isOtherBrand ? 'bg-amber-50/30' : ''}
+                        >
+                          <TableCell className="font-mono text-sm">{item.ref_id}</TableCell>
+                          <TableCell className="font-mono">{item.medida}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <span>{item.marca}</span>
+                              {getMatchBadge()}
+                            </div>
+                          </TableCell>
+                          <TableCell className="max-w-[120px] truncate text-slate-600" title={item.modelo}>{item.modelo || '-'}</TableCell>
+                          <TableCell className="font-mono text-slate-600">{item.indice || '-'}</TableCell>
+                          <TableCell className="max-w-[150px] truncate font-medium" title={item.modelo_encontrado}>{item.modelo_encontrado || '-'}</TableCell>
+                          <TableCell className="font-mono text-slate-500 text-xs">{item.indice_encontrado || '-'}</TableCell>
+                          <TableCell className="text-right font-medium">{item.meu_preco ? `€${item.meu_preco.toFixed(2)}` : '-'}</TableCell>
+                          <TableCell className="text-right font-medium">
+                            {item.melhor_preco ? (
+                              <div className="flex flex-col items-end">
+                                <span className={hasSavings ? 'text-emerald-600' : isOtherBrand ? 'text-amber-700' : ''}>
+                                  €{item.melhor_preco.toFixed(2)}
+                                </span>
+                                {isOtherBrand && item.melhor_marca && (
+                                  <span className="text-xs text-amber-500 font-normal">({item.melhor_marca})</span>
+                                )}
+                              </div>
+                            ) : '-'}
+                          </TableCell>
+                          <TableCell>{item.melhor_fornecedor ? <Badge variant="outline">{item.melhor_fornecedor}</Badge> : '-'}</TableCell>
+                          <TableCell className="text-right">
+                            {hasSavings ? (
+                              <span className="text-emerald-600 font-bold">
+                                <TrendingDown className="inline w-3 h-3 mr-1" />
+                                €{item.economia_euro.toFixed(2)}
                               </span>
-                              {item.status === 'no_brand_match' && item.melhor_marca && (
-                                <span className="text-xs text-amber-500 font-normal">({item.melhor_marca})</span>
-                              )}
-                            </div>
-                          ) : '-'}
-                        </TableCell>
-                        <TableCell>{item.melhor_fornecedor || '-'}</TableCell>
-                        <TableCell>
-                          {item.status === 'found' && item.economia_euro > 0 ? (
-                            <div className="flex items-center gap-1 text-green-700 font-bold">
-                              <TrendingDown size={14} />
-                              <span className="font-mono">€{item.economia_euro.toFixed(2)}</span>
-                              <span className="text-xs">({item.economia_percent?.toFixed(1)}%)</span>
-                            </div>
-                          ) : item.status === 'no_brand_match' ? (
-                            <span className="text-xs text-amber-600 italic">outra marca disponível</span>
-                          ) : (
-                            '-'
-                          )}
-                        </TableCell>
-                        <TableCell>{getStatusBadge(item.status)}</TableCell>
-                      </TableRow>
-                    ))}
+                            ) : isOtherBrand ? (
+                              <span className="text-xs text-amber-600 italic">outra marca</span>
+                            ) : '-'}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {hasSavings ? (
+                              <span className="text-emerald-600 font-bold">{item.economia_percent.toFixed(1)}%</span>
+                            ) : '-'}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>
