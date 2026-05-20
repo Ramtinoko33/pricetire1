@@ -217,11 +217,20 @@ async def scrape_mp24_with_session(page, username: str, password: str, medida: s
                 for tyre in captured_tyres:
                     brand = tyre.get('manufacturer', '').upper()
                     model = tyre.get('profile', '')
-                    
+                    # Extract load/speed index
+                    _li = str(tyre.get('loadIndex') or tyre.get('li') or '').strip()
+                    _si = str(tyre.get('speedIndex') or tyre.get('si') or '').strip().upper()
+                    if _li.isdigit() and _si and len(_si) == 1 and _si.isalpha():
+                        load_index = f"{_li}{_si}"
+                    elif _si and len(_si) == 1 and _si.isalpha():
+                        load_index = _si
+                    else:
+                        load_index = ''
+
                     # Get minimum price from all sources
                     best_prices = tyre.get('bestPricesBySource', {})
                     price = None
-                    
+
                     # Try all price sources and get the minimum
                     for source in ['supplier', 'loadAll', 'central_warehouse', 'my_stock']:
                         source_data = best_prices.get(source, {})
@@ -230,20 +239,21 @@ async def scrape_mp24_with_session(page, username: str, password: str, medida: s
                             source_price = best_price['purchasePrice']
                             if price is None or source_price < price:
                                 price = source_price
-                    
+
                     if brand and model and price and price > 15 and price < 500:
-                        key = f"{brand}|{model}"
-                        if key not in product_map or price < product_map[key]:
-                            product_map[key] = price
-                
+                        key = f"{brand}|{model}|{load_index}"
+                        if key not in product_map or price < product_map[key][0]:
+                            product_map[key] = (price, load_index)
+
                 # Convert map back to list
                 products = []
-                for key, price in product_map.items():
-                    brand, model = key.split('|', 1)
+                for key, (price, load_index) in product_map.items():
+                    parts = key.split('|', 2)
                     products.append({
-                        'brand': brand,
-                        'model': model,
-                        'price': price
+                        'brand': parts[0],
+                        'model': parts[1],
+                        'price': price,
+                        'load_index': parts[2] if len(parts) > 2 else load_index,
                     })
                 
                 if products:
@@ -4225,6 +4235,101 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         await _crz_page.close()
 
                 print(f"  [Cruzeiro] RESUMO: {' | '.join(_crz_summary)}")
+            continue  # Skip the generic per-medida loop below
+
+        # ── MP24: sessão única para todas as medidas ──────────────────────────
+        if 'mp24' in supplier_name:
+            _mp24_ctx_kwargs = dict(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1920, 'height': 1080},
+                locale='pt-PT',
+            )
+            async with async_playwright() as _p_mp24:
+                _mp24_browser = await _p_mp24.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox',
+                          '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                )
+                _mp24_ctx = await _mp24_browser.new_context(**_mp24_ctx_kwargs)
+                _mp24_first = True
+                _mp24_summary = []
+
+                for medida, _, _ in targets:
+                    _mp24_page = await _mp24_ctx.new_page()
+                    await _mp24_page.add_init_script(
+                        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+                    )
+                    try:
+                        result = await asyncio.wait_for(
+                            scrape_mp24_with_session(
+                                _mp24_page,
+                                supplier['username'], supplier['password'],
+                                medida,
+                                already_logged_in=(not _mp24_first),
+                            ),
+                            timeout=120,
+                        )
+                        _mp24_first = False
+                        result["medida"] = medida
+                        results.append(result)
+
+                        products = result.get('products', [])
+                        now = datetime.now(timezone.utc)
+                        conn_save = await _pg_connect()
+                        try:
+                            await conn_save.execute(
+                                "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
+                                supplier['name'], medida,
+                            )
+                            if products:
+                                for prod in products:
+                                    await conn_save.execute(
+                                        """INSERT INTO scraped_prices
+                                               (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
+                                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        prod.get('brand', '').upper(),
+                                        prod.get('model', ''),
+                                        prod.get('price'),
+                                        prod.get('load_index', ''),
+                                        now,
+                                    )
+                                print(f"  [MP24] {medida}: guardados {len(products)} produtos")
+                            elif result.get('price') is not None:
+                                await conn_save.execute(
+                                    """INSERT INTO scraped_prices
+                                           (id, supplier_name, medida, price, scraped_at)
+                                       VALUES ($1,$2,$3,$4,$5)""",
+                                    str(uuid.uuid4()), supplier['name'], medida,
+                                    result['price'], now,
+                                )
+                                print(f"  [MP24] {medida}: €{result['price']} (sem dados marca)")
+                            else:
+                                print(f"  [MP24] {medida}: sem produtos")
+                        finally:
+                            await conn_save.close()
+
+                        _err = result.get('error') or ''
+                        _np = len(result.get('products', []))
+                        _mp24_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+
+                    except asyncio.TimeoutError:
+                        print(f"  [MP24] Timeout em {medida}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                        _mp24_summary.append(f"{medida}:TIMEOUT")
+                        _mp24_first = True  # forçar re-login na próxima medida
+                    except Exception as _e_mp24:
+                        print(f"  [MP24] Erro em {medida}: {_e_mp24}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_mp24)})
+                        _mp24_summary.append(f"{medida}:ERR")
+                    finally:
+                        try:
+                            await _mp24_page.close()
+                        except Exception:
+                            pass
+
+                print(f"  [MP24] RESUMO: {' | '.join(_mp24_summary)}")
+                await _mp24_browser.close()
             continue  # Skip the generic per-medida loop below
 
         for medida, marca, modelo in targets:
