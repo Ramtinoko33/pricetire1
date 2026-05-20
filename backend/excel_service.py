@@ -90,6 +90,8 @@ class ExcelService:
                     'Modelo': item['modelo'],
                     'Indice': item['indice'],
                     'MeuPreço': item['meu_preco'],
+                    'ModeloEncontrado': item.get('modelo_encontrado', ''),
+                    'IndiceEncontrado': item.get('indice_encontrado', ''),
                     'MelhorPreço': item.get('melhor_preco', ''),
                     'Fornecedor': item.get('melhor_fornecedor', ''),
                     'Economia€': item.get('economia_euro', ''),
@@ -166,10 +168,12 @@ class ExcelService:
                     'D': 20,  # Modelo
                     'E': 12,  # Indice
                     'F': 12,  # MeuPreço
-                    'G': 12,  # MelhorPreço
-                    'H': 20,  # Fornecedor
-                    'I': 12,  # Economia€
-                    'J': 12,  # Economia%
+                    'G': 25,  # ModeloEncontrado
+                    'H': 15,  # IndiceEncontrado
+                    'I': 12,  # MelhorPreço
+                    'J': 20,  # Fornecedor
+                    'K': 12,  # Economia€
+                    'L': 12,  # Economia%
                 }
                 
                 for col, width in column_widths.items():
