@@ -3178,8 +3178,9 @@ def _parse_cruzeiro_html(html: str) -> list:
 
         # 3. Modelo = tudo antes do primeiro índice de carga+velocidade
         remaining = ' '.join(parts)
-        idx_m = re.search(r'\b\d{2,3}[A-Z]{1,2}\b', remaining)
+        idx_m = re.search(r'\b(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\b', remaining, re.IGNORECASE)
         model = remaining[:idx_m.start()].strip() if idx_m else remaining.strip()
+        load_index = idx_m.group(1).strip().upper() if idx_m else ''
 
         # Preço (coluna 7)
         m_price = re.search(r'(\d+[,.]\d{2})', cells[7])
@@ -3192,7 +3193,7 @@ def _parse_cruzeiro_html(html: str) -> list:
         if price <= 5:
             continue
 
-        products.append({'brand': brand, 'model': model, 'price': price})
+        products.append({'brand': brand, 'model': model, 'load_index': load_index, 'price': price})
 
     return products
 
@@ -3416,7 +3417,8 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                 // ex: "PRIMACY 5 91V" → "PRIMACY 5"
                 // ex: "EFFICIENTGRIP PERFORMANCE 2 99V XL" → "EFFICIENTGRIP PERFORMANCE 2"
                 const remainingStr = parts.join(' ');
-                const idxMatch = remainingStr.match(/\b\d{2,3}[A-Z]{1,2}\b/);
+                const idxMatch = remainingStr.match(/\b(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\b/i);
+                const loadIndex = idxMatch ? idxMatch[1].trim().toUpperCase() : '';
                 model = (idxMatch ? remainingStr.slice(0, idxMatch.index) : remainingStr).trim();
 
                 // ── Coluna Preço (índice 7) ───────────────────────────────
@@ -3427,7 +3429,7 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                 // DEBUG: emitir para diagnóstico
                 const fabTxt = cells[1].textContent.trim().replace(/\s+/g, ' ').toUpperCase();
                 products.push({
-                    brand, model, price,
+                    brand, model, load_index: loadIndex, price,
                     _raw_fabricante: fabTxt,
                     _raw_produto: produtoTxt,
                     _raw_preco: precoTxt,
@@ -3464,7 +3466,8 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                 }
 
                 const remainingStr = parts.join(' ');
-                const idxMatch = remainingStr.match(/\b\d{2,3}[A-Z]{1,2}\b/);
+                const idxMatch = remainingStr.match(/\b(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\b/i);
+                const loadIndex = idxMatch ? idxMatch[1].trim().toUpperCase() : '';
                 model = (idxMatch ? remainingStr.slice(0, idxMatch.index) : remainingStr).trim();
 
                 const precoTxt = cells[7].textContent.trim();
@@ -3472,7 +3475,7 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                 if (m) price = parseFloat(m[1].replace(',', '.'));
 
                 if (brand && price) {
-                    products.push({brand, model, price,
+                    products.push({brand, model, load_index: loadIndex, price,
                         _raw_produto: produtoTxt, _raw_preco: precoTxt});
                 }
             }
@@ -4199,7 +4202,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                         str(uuid.uuid4()), supplier['name'], medida,
                                         prod.get('brand', '').upper(),
                                         prod.get('model', ''),
-                                        prod.get('price'), '', now,
+                                        prod.get('price'), prod.get('load_index', ''), now,
                                     )
                                 print(f"  [Cruzeiro] {medida}: guardados {len(products)} produtos")
                             else:
