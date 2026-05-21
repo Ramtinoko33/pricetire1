@@ -919,9 +919,12 @@ async def _do_compare(job_id: str, force: bool):
     def _index_matches(scraped_idx: str, want_idx: str) -> bool:
         """True if the scraped load/speed index satisfies the requested index.
 
-        The Soledad API only returns the speed category letter (e.g. 'H', 'V', 'W').
-        The Excel has the full combined index (e.g. '94H', '91V', '95W XL').
-        We extract the speed letter from whichever side has the full form and compare.
+        Suporta:
+          - Índice simples:  '91V' == '91V'
+          - XL:              '94H XL' satisfaz '94H'
+          - Só letra:        'H' satisfaz '94H' e vice-versa
+          - Índice duplo:    '109T/107T' satisfaz '109T107T', '109T/107T', '109T'
+          - Duplo sem barra: '109T107T' satisfaz '109T/107T'
         """
         if not want_idx:
             return True
@@ -929,18 +932,45 @@ async def _do_compare(job_id: str, force: bool):
         w = want_idx.upper().strip()
         if not s:
             return False
-        # Exact, or scraped starts with wanted ("94H XL" satisfies want "94H")
-        if s == w or s.startswith(w):
+
+        # Normalizar: remover '/' e espaços para comparação (109T/107T → 109T107T)
+        def _norm_idx(v):
+            return v.replace('/', '').replace(' ', '')
+
+        s_norm = _norm_idx(s)
+        w_norm = _norm_idx(w)
+
+        # Exact match (normalizado)
+        if s_norm == w_norm:
             return True
-        # Scraped has only the speed letter (e.g. 'H') — extract it from wanted ('94H' → 'H')
+
+        # Scraped começa com wanted (ex: "94H XL" satisfaz "94H")
+        if s.startswith(w):
+            return True
+
+        # Extrair primeiro índice do duplo (ex: "109T/107T" → "109T")
+        def _first_idx(v):
+            m = re.match(r'^(\d{2,3}[A-Z]{1,2})', v)
+            return m.group(1) if m else v
+
+        s_first = _first_idx(s)
+        w_first = _first_idx(w)
+
+        # Primeiro índice do duplo coincide
+        if s_first == w_first:
+            return True
+
+        # Scraped tem só letra de velocidade (ex: 'H') — extrair de wanted ('94H' → 'H')
         _speed_m = re.match(r'^\d{2,3}([A-Z])', w)
         if _speed_m and s == _speed_m.group(1):
             return True
-        # Wanted has only the speed letter ('H') — extract from scraped ('91H' → 'H')
+
+        # Wanted tem só letra de velocidade ('H') — extrair de scraped ('91H' → 'H')
         if len(w) == 1 and w.isalpha():
             _speed_m2 = re.match(r'^\d{2,3}([A-Z])', s)
             if _speed_m2 and _speed_m2.group(1) == w:
                 return True
+
         return False
 
     def _norm(s):
