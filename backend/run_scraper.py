@@ -348,14 +348,20 @@ async def scrape_prismanil(page, username: str, password: str, medida: str) -> d
                         // Parse produto string: "BRIDGESTONE 205/55R16 EP150 91V"
                         const parts = produtoStr.trim().split(' ');
                         const brand = parts[0] || '';
-                        const model = parts.slice(2).join(' ') || '';
-                        
+                        const remaining = parts.slice(2).join(' ');
+
+                        const idxMatch = remaining.match(/\b(\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\b/i);
+                        const loadIndex = idxMatch ? idxMatch[1].trim().toUpperCase() : '';
+                        let model = (idxMatch ? remaining.slice(0, idxMatch.index) : remaining).trim();
+                        model = model.replace(/\b(DOT\d*|TL|TT|RFT|MO|AO|VOL|BMW|ROF|SSR|FP)\b/gi, '').trim();
+
                         const price = parseFloat(precoStr.replace(',', '.'));
-                        
+
                         if (brand && price > 15 && price < 500) {
                             products.push({
                                 brand: brand.toUpperCase(),
                                 model: model,
+                                load_index: loadIndex,
                                 price: price
                             });
                         }
