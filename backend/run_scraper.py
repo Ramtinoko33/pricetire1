@@ -378,7 +378,8 @@ async def scrape_prismanil(page, username: str, password: str, medida: str) -> d
                 result["all_prices"] = sorted(prices)[:10]
                 print(f"  [Prismanil] Found {len(products)} products with brand/model")
                 for p in products[:3]:
-                    print(f"    - {p['brand']} {p['model']}: €{p['price']}")
+                    for p in products[:3]:
+                      print(f"    - {p['brand']} {p.get('model','')} [{p.get('load_index','VAZIO')}]: €{p['price']}")
             else:
                 # Fallback to simple price extraction
                 content = await page.content()
