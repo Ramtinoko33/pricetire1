@@ -371,15 +371,9 @@ async def scrape_prismanil(page, username: str, password: str, medida: str) -> d
                 return products;
             }''')
             
-            if products and len(products) > 0:
-                result["products"] = products
-                prices = [p['price'] for p in products]
-                result["price"] = min(prices)
-                result["all_prices"] = sorted(prices)[:10]
                 print(f"  [Prismanil] Found {len(products)} products with brand/model")
-                    for p in products[:3]:
-                    Get-Content "C:\Users\Utilizador\OneDrive\Documentos\pricetire1-deploy\backend\run_scraper.py" | Select-Object -Skip 379 -First 5  print(f"    - {p['brand']} {p.get('model','')} [{p.get('load_index','VAZIO')}]: €{p['price']}")
-            else:
+                for p in products[:3]:
+                    print(f"    - {p['brand']} {p.get('model','')} [{p.get('load_index','VAZIO')}]: €{p['price']}")
                 # Fallback to simple price extraction
                 content = await page.content()
                 prices = extract_prices(content)
