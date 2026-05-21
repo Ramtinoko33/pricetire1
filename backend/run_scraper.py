@@ -349,7 +349,7 @@ async def scrape_prismanil(page, username: str, password: str, medida: str) -> d
                         const parts = produtoStr.trim().split(' ');
                         const brand = parts[0] || '';
                         const remaining = parts.slice(2).join(' ');
-
+                        if (products.length < 2) console.log('RAW:', produtoStr, '| REM:', remaining);
                         const idxMatch = remaining.match(/\b(\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\b/i);
                         const loadIndex = idxMatch ? idxMatch[1].trim().toUpperCase() : '';
                         let model = (idxMatch ? remaining.slice(0, idxMatch.index) : remaining).trim();
@@ -377,9 +377,8 @@ async def scrape_prismanil(page, username: str, password: str, medida: str) -> d
                 result["price"] = min(prices)
                 result["all_prices"] = sorted(prices)[:10]
                 print(f"  [Prismanil] Found {len(products)} products with brand/model")
-                for p in products[:3]:
                     for p in products[:3]:
-                      print(f"    - {p['brand']} {p.get('model','')} [{p.get('load_index','VAZIO')}]: €{p['price']}")
+                    Get-Content "C:\Users\Utilizador\OneDrive\Documentos\pricetire1-deploy\backend\run_scraper.py" | Select-Object -Skip 379 -First 5  print(f"    - {p['brand']} {p.get('model','')} [{p.get('load_index','VAZIO')}]: €{p['price']}")
             else:
                 # Fallback to simple price extraction
                 content = await page.content()
