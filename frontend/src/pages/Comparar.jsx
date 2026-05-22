@@ -548,6 +548,8 @@ const Comparar = () => {
                         switch(matchType) {
                           case 'modelo_exato':
                             return <Badge variant="outline" className="text-xs bg-green-100 text-green-800 border-green-300">modelo exato</Badge>;
+                          case 'modelo_sem_indice':
+                            return <Badge variant="outline" className="text-xs bg-yellow-100 text-yellow-800 border-yellow-300">sem índice</Badge>;
                           case 'modelo_parcial':
                             return <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-300">modelo parcial</Badge>;
                           case 'marca':
