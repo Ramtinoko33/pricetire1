@@ -349,7 +349,8 @@ async def scrape_prismanil(page, username: str, password: str, medida: str) -> d
                         const parts = produtoStr.trim().split(' ');
                         const brand = parts[0] || '';
                         const remaining = parts.slice(2).join(' ');
-                        const idxMatch = remaining.match(/\b(\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\b/i);
+                        const allMatches = [...remaining.matchAll(/(\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?)/gi)];
+                        const idxMatch = allMatches.length > 0 ? allMatches[allMatches.length - 1] : null;
                         const loadIndex = idxMatch ? idxMatch[1].trim().toUpperCase() : '';
                         let model = (idxMatch ? remaining.slice(0, idxMatch.index) : remaining).trim();
                         model = model.replace(/\b(DOT\d*|TL|TT|RFT|MO|AO|VOL|BMW|ROF|SSR|FP)\b/gi, '').trim();
