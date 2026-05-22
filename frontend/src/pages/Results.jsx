@@ -15,6 +15,8 @@ const Results = () => {
   const [loadingResults, setLoadingResults] = useState(false);
   const [comparing, setComparing] = useState(false);
   const [indiceObrigatorio, setIndiceObrigatorio] = useState(false);
+  const [sortOrder, setSortOrder] = useState('original');
+  const [originalResults, setOriginalResults] = useState([]);
 
   useEffect(() => {
     loadJobs();
@@ -40,6 +42,7 @@ const Results = () => {
     setLoadingResults(true);
     try {
       const { data } = await jobsAPI.getResults(jobId);
+      setOriginalResults(data);
       setResults(data);
     } catch (error) {
       console.error('Error loading results:', error);
@@ -127,6 +130,25 @@ const Results = () => {
   }
 
   const currentJob = jobs.find(j => j.id === selectedJob);
+
+  const getSortedResults = (list) => {
+    switch(sortOrder) {
+      case 'economia_desc':
+        return [...list].sort((a, b) => (b.economia_euro || -99999) - (a.economia_euro || -99999));
+      case 'economia_asc':
+        return [...list].sort((a, b) => (a.economia_euro || 99999) - (b.economia_euro || 99999));
+      case 'original':
+        return originalResults.filter(r => list.includes(r));
+      case 'medida_asc':
+        return [...list].sort((a, b) => {
+          const ma = (a.medida || '').replace(/\D/g, '');
+          const mb = (b.medida || '').replace(/\D/g, '');
+          return parseInt(ma) - parseInt(mb);
+        });
+      default:
+        return list;
+    }
+  };
 
   return (
     <div className="space-y-6" data-testid="results-page">
@@ -255,6 +277,16 @@ const Results = () => {
                           </button>
                           <span className="text-xs text-slate-400">
                             {indiceObrigatorio ? 'Só mostra resultados com índice igual ao Excel' : 'Mostra todos os resultados'}
+                            <select
+                          value={sortOrder}
+                          onChange={e => setSortOrder(e.target.value)}
+                          className="ml-4 text-xs border border-slate-200 rounded px-2 py-0.5 bg-white text-slate-700"
+                        >
+                          <option value="original">Ordem original</option>
+                          <option value="economia_desc">↓ Maior economia</option>
+                          <option value="economia_asc">↑ Menor economia</option>
+                          <option value="medida_asc">Medida (menor → maior)</option>
+                        </select>
                           </span>
                         </div>
                       </TableHead>
@@ -274,7 +306,7 @@ const Results = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                  {(indiceObrigatorio ? results.filter(r => r.match_type === 'modelo_exato') : results).map((item, index) => {
+                  {getSortedResults(indiceObrigatorio ? results.filter(r => r.match_type === 'modelo_exato') : results).map((item, index) => {
                       const hasSavings = item.status === 'found' && item.economia_euro && item.economia_euro > 0;
                       const isOtherBrand = item.status === 'no_brand_match';
                       const matchType = item.match_type;

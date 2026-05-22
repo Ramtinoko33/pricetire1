@@ -162,8 +162,9 @@ const Comparar = () => {
     try {
       const { data } = await jobsAPI.getResults(job.id);
       // Sort by economia_euro descending
+      setOriginalOrder(data.map((_, i) => i));
       const sorted = [...data].sort((a, b) => (b.economia_euro || 0) - (a.economia_euro || 0));
-      setResults(sorted);
+      setResults(data);
       
       // Calculate stats if not set
       if (!stats) {
@@ -261,6 +262,25 @@ const Comparar = () => {
       </table>
     </div>
   );
+
+  const getSortedResults = (list) => {
+    switch(sortOrder) {
+      case 'economia_desc':
+        return [...list].sort((a, b) => (b.economia_euro || -99999) - (a.economia_euro || -99999));
+      case 'economia_asc':
+        return [...list].sort((a, b) => (a.economia_euro || 99999) - (b.economia_euro || 99999));
+      case 'original':
+        return list;
+      case 'medida_asc':
+        return [...list].sort((a, b) => {
+          const ma = (a.medida || '').replace(/\D/g, '');
+          const mb = (b.medida || '').replace(/\D/g, '');
+          return parseInt(ma) - parseInt(mb);
+        });
+      default:
+        return list;
+    }
+  };
 
   return (
     <div className="space-y-6" data-testid="comparar-page">
@@ -505,9 +525,17 @@ const Comparar = () => {
                   {indiceObrigatorio ? '✓ Activo' : '✗ Inactivo'}
                 </button>
                 <span style={{ fontSize: 12, color: '#9CA3AF' }}>
-                  {indiceObrigatorio
-                    ? 'Só mostra resultados com índice igual ao Excel'
-                    : 'Mostra todos os resultados'}
+                  {indiceObrigatorio ? 'Só mostra resultados com índice igual ao Excel' : 'Mostra todos os resultados'}
+                  <select
+                    value={sortOrder}
+                    onChange={e => setSortOrder(e.target.value)}
+                    className="ml-4 text-xs border border-slate-200 rounded px-2 py-0.5 bg-white text-slate-700"
+                  >
+                    <option value="economia_desc">↓ Maior economia</option>
+                    <option value="economia_asc">↑ Menor economia</option>
+                    <option value="original">Ordem original</option>
+                    <option value="medida_asc">Medida (menor → maior)</option>
+                  </select>
                 </span>
               </div>
 
@@ -529,10 +557,7 @@ const Comparar = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                  {(indiceObrigatorio
-                      ? results.filter(r => r.match_type === 'modelo_exato')
-                      : results
-                    ).map((item, index) => {
+                  {getSortedResults(indiceObrigatorio ? results.filter(r => r.match_type === 'modelo_exato') : results).map((item, index) => {
                       const hasSavings = item.status === 'found' && item.economia_euro && item.economia_euro > 0;
                       const isOtherBrand = item.status === 'no_brand_match';
                       const matchType = item.match_type;
