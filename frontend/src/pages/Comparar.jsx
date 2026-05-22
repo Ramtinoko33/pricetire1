@@ -529,14 +529,8 @@ const Comparar = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(indiceObrigatorio
-                      ? results.filter(r => {
-                          const itemIndice = (r.indice || '').toUpperCase().trim();
-                          const encontradoIndice = (r.indice_encontrado || r.load_index_found || '').toUpperCase().trim();
-                          if (!itemIndice) return true;
-                          if (!encontradoIndice) return false;
-                          return encontradoIndice === itemIndice;
-                        })
+                  {(indiceObrigatorio
+                      ? results.filter(r => r.match_type === 'modelo_exato')
                       : results
                     ).map((item, index) => {
                       const hasSavings = item.status === 'found' && item.economia_euro && item.economia_euro > 0;

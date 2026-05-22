@@ -14,6 +14,7 @@ const Results = () => {
   const [loading, setLoading] = useState(true);
   const [loadingResults, setLoadingResults] = useState(false);
   const [comparing, setComparing] = useState(false);
+  const [indiceObrigatorio, setIndiceObrigatorio] = useState(false);
 
   useEffect(() => {
     loadJobs();
@@ -238,6 +239,27 @@ const Results = () => {
                   <TableHeader className="sticky top-0 bg-white">
                     <TableRow>
                       <TableHead>Ref</TableHead>
+                      <TableHead colSpan={11}>
+                        <div className="flex items-center gap-2 py-1">
+                          <span className="text-xs text-slate-500">Índice obrigatório</span>
+                          <button
+                            onClick={() => setIndiceObrigatorio(!indiceObrigatorio)}
+                            className="text-xs px-2 py-0.5 rounded-full border"
+                            style={{
+                              background: indiceObrigatorio ? '#10B981' : '#D1D5DB',
+                              color: indiceObrigatorio ? 'white' : '#374151',
+                              borderColor: indiceObrigatorio ? '#10B981' : '#D1D5DB',
+                            }}
+                          >
+                            {indiceObrigatorio ? '✓ Activo' : '✗ Inactivo'}
+                          </button>
+                          <span className="text-xs text-slate-400">
+                            {indiceObrigatorio ? 'Só mostra resultados com índice igual ao Excel' : 'Mostra todos os resultados'}
+                          </span>
+                        </div>
+                      </TableHead>
+                    </TableRow>
+                    <TableRow>
                       <TableHead>Medida</TableHead>
                       <TableHead>Marca</TableHead>
                       <TableHead>Modelo</TableHead>
@@ -252,7 +274,7 @@ const Results = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {results.map((item, index) => {
+                  {(indiceObrigatorio ? results.filter(r => r.match_type === 'modelo_exato') : results).map((item, index) => {
                       const hasSavings = item.status === 'found' && item.economia_euro && item.economia_euro > 0;
                       const isOtherBrand = item.status === 'no_brand_match';
                       const matchType = item.match_type;
@@ -260,6 +282,7 @@ const Results = () => {
                       const getMatchBadge = () => {
                         switch(matchType) {
                           case 'modelo_exato': return <Badge variant="outline" className="text-xs bg-green-100 text-green-800 border-green-300">modelo exato</Badge>;
+                          case 'modelo_sem_indice': return <Badge variant="outline" className="text-xs bg-yellow-100 text-yellow-800 border-yellow-300">sem índice</Badge>;
                           case 'modelo_parcial': return <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-300">modelo parcial</Badge>;
                           case 'marca': return <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-300">marca</Badge>;
                           case 'marca_parcial': return <Badge variant="outline" className="text-xs bg-sky-50 text-sky-700 border-sky-300">marca parcial</Badge>;
