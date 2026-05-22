@@ -349,7 +349,6 @@ async def scrape_prismanil(page, username: str, password: str, medida: str) -> d
                         const parts = produtoStr.trim().split(' ');
                         const brand = parts[0] || '';
                         const remaining = parts.slice(2).join(' ');
-                        if (products.length < 2) console.log('RAW:', produtoStr, '| REM:', remaining);
                         const idxMatch = remaining.match(/\b(\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\b/i);
                         const loadIndex = idxMatch ? idxMatch[1].trim().toUpperCase() : '';
                         let model = (idxMatch ? remaining.slice(0, idxMatch.index) : remaining).trim();
@@ -368,8 +367,11 @@ async def scrape_prismanil(page, username: str, password: str, medida: str) -> d
                     }
                 });
                 
+                if (products.length > 0) products[0]._debug_raw = items[0] ? items[0].getAttribute('data-produto') : 'N/A';
                 return products;
             }''')
+            if products:
+                print(f"  [Prismanil] DEBUG RAW: {products[0].get('_debug_raw', 'N/A')}")
             if products and len(products) > 0:
                 result["products"] = products
                 prices = [p['price'] for p in products]
