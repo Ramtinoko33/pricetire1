@@ -768,7 +768,7 @@ async def _do_compare(job_id: str, force: bool):
             'MP24':          900,
             'S José Pneus':  900,
             'InterSprint':   900,
-            'TugaPneus':     600,
+            'TugaPneus':     900,
             'Prismanil':     600,
             'Pneus Cruzeiro':600,
             'Grupo Soledad': 900,

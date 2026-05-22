@@ -19,6 +19,8 @@ const Comparar = () => {
   const [stats, setStats] = useState(null);
   const [suppliersStatus, setSuppliersStatus] = useState([]);
   const [indiceObrigatorio, setIndiceObrigatorio] = useState(false);
+  const [sortOrder, setSortOrder] = useState('economia_desc');
+  const [originalOrder, setOriginalOrder] = useState([]);
   const pollingTimerRef = useRef(null);
 
   // Limpar timer ao desmontar componente
