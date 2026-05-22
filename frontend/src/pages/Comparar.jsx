@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
-import { Upload as UploadIcon, FileSpreadsheet, Loader2, Scale, Download, TrendingDown, CheckCircle, ArrowRight, RefreshCw } from 'lucide-react';
+import { Upload as UploadIcon, FileSpreadsheet, Loader2, Scale, Download, TrendingDown, CheckCircle, ArrowRight, RefreshCw, Clock, CheckCircle2, XCircle, AlertCircle, RotateCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 const Comparar = () => {
@@ -219,11 +219,11 @@ const Comparar = () => {
   };
 
   const statusMeta = {
-    waiting: { icon: '⏳', label: 'A aguardar', cls: 'text-slate-400' },
-    running: { icon: '🔄', label: 'A correr',   cls: 'text-blue-600 animate-pulse' },
-    done:    { icon: '✅', label: 'Concluído',  cls: 'text-emerald-600' },
-    error:   { icon: '❌', label: 'Erro',        cls: 'text-red-600' },
-    timeout: { icon: '⏰', label: 'Timeout',     cls: 'text-orange-500' },
+    waiting: { icon: <Clock size={14} />,         label: 'A aguardar', cls: 'text-slate-400' },
+    running: { icon: <RotateCw size={14} className="animate-spin" />, label: 'A correr', cls: 'text-blue-600' },
+    done:    { icon: <CheckCircle2 size={14} />,  label: 'Concluído',  cls: 'text-emerald-600' },
+    error:   { icon: <XCircle size={14} />,       label: 'Erro',       cls: 'text-red-600' },
+    timeout: { icon: <AlertCircle size={14} />,   label: 'Timeout',    cls: 'text-orange-500' },
   };
 
   const SupplierStatusTable = () => (
@@ -244,7 +244,7 @@ const Comparar = () => {
             return (
               <tr key={s.name} className="bg-white hover:bg-slate-50">
                 <td className="px-4 py-2 font-medium text-slate-700">{s.name}</td>
-                <td className={`px-4 py-2 ${m.cls}`}>{m.icon} {m.label}</td>
+                <td className={`px-4 py-2 ${m.cls}`}><span className="flex items-center gap-1">{m.icon} {m.label}</span></td>
                 <td className="px-4 py-2 text-right text-slate-500">
                   {s.duration_s != null ? `${s.duration_s}s` : '-'}
                 </td>
