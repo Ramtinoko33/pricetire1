@@ -26,8 +26,8 @@ const Layout = ({ children }) => {
   ];
 
   return (
-    <div className="flex h-screen bg-slate-50 dark:bg-slate-900" data-testid="app-layout">
-      <aside className="w-64 bg-slate-900 dark:bg-slate-950 text-slate-100 flex flex-col" data-testid="sidebar">
+    <div className="flex h-screen bg-background text-foreground" data-testid="app-layout">
+      <aside className="w-64 bg-slate-900 dark:bg-zinc-900 text-slate-100 flex flex-col" data-testid="sidebar">
         <div className="p-6 border-b border-slate-700">
           <h1 className="text-xl font-bold tracking-tight" style={{ fontFamily: 'Chivo, sans-serif' }}>
             Pneu Price Scout
@@ -80,7 +80,7 @@ const Layout = ({ children }) => {
         </div>
       </aside>
       <main className="flex-1 flex flex-col overflow-hidden">
-        <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 px-8 py-4" data-testid="header">
+        <header className="bg-card border-b border-border px-8 py-4" data-testid="header">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100" style={{ fontFamily: 'Chivo, sans-serif' }}>
               {menuItems.find(item => item.path === location.pathname)?.label || 'Pneu Price Scout'}
@@ -90,7 +90,7 @@ const Layout = ({ children }) => {
             </div>
           </div>
         </header>
-        <div className="flex-1 overflow-auto p-8 bg-slate-50 dark:bg-slate-900">
+        <div className="flex-1 overflow-auto p-8 bg-background">
           {children}
         </div>
       </main>
