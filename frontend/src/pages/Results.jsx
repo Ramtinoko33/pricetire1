@@ -110,7 +110,7 @@ const Results = () => {
       return <Badge variant="outline" className="text-amber-700 border-amber-400 bg-amber-50">OUTRA MARCA</Badge>;
     }
     if (status === 'no_data') {
-      return <Badge variant="outline" className="text-slate-500">SEM DADOS</Badge>;
+      return <Badge variant="outline" className="text-muted-foreground">SEM DADOS</Badge>;
     }
     const variants = {
       completed: 'default',
@@ -155,7 +155,7 @@ const Results = () => {
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>Resultados</h2>
-          <p className="text-sm text-slate-600 mt-1">{jobs.length} jobs encontrados</p>
+          <p className="text-sm text-muted-foreground mt-1">{jobs.length} jobs encontrados</p>
         </div>
         <div className="flex gap-2">
           {selectedJob && (
@@ -186,7 +186,7 @@ const Results = () => {
       </div>
 
       {/* Jobs List */}
-      <Card className="border-slate-200">
+      <Card className="border-border">
         <CardHeader>
           <CardTitle>Selecionar Job</CardTitle>
         </CardHeader>
@@ -197,8 +197,8 @@ const Results = () => {
                 key={job.id}
                 className={`flex items-center gap-3 p-4 border rounded-sm transition-colors ${
                   selectedJob === job.id
-                    ? 'border-slate-900 bg-slate-50'
-                    : 'border-slate-200 hover:border-slate-400'
+                    ? 'border-primary bg-muted'
+                    : 'border-border hover:border-muted-foreground'
                 }`}
               >
                 <button
@@ -209,7 +209,7 @@ const Results = () => {
                   <div className="flex items-center justify-between">
                     <div className="flex-1">
                       <p className="font-medium text-sm">{job.filename}</p>
-                      <p className="text-xs text-slate-500 mt-1">
+                      <p className="text-xs text-muted-foreground mt-1">
                         {new Date(job.created_at).toLocaleString('pt-PT')} • {job.total_items} itens
                       </p>
                     </div>
@@ -218,7 +218,7 @@ const Results = () => {
                         <p className="text-sm font-mono font-bold text-green-700">
                           €{job.total_savings?.toFixed(2) || '0.00'}
                         </p>
-                        <p className="text-xs text-slate-500">economia</p>
+                        <p className="text-xs text-muted-foreground">economia</p>
                       </div>
                       {getStatusBadge(job.status)}
                     </div>
@@ -241,7 +241,7 @@ const Results = () => {
 
       {/* Results Table */}
       {selectedJob && (
-        <Card className="border-slate-200">
+        <Card className="border-border">
           <CardHeader>
             <div className="flex justify-between items-center">
               <CardTitle>Detalhes - {currentJob?.filename}</CardTitle>
@@ -252,18 +252,18 @@ const Results = () => {
           </CardHeader>
           <CardContent className="p-0">
             {loadingResults ? (
-              <div className="text-center py-12 text-slate-500">A carregar resultados...</div>
+              <div className="text-center py-12 text-muted-foreground">A carregar resultados...</div>
             ) : results.length === 0 ? (
-              <div className="text-center py-12 text-slate-500">Nenhum resultado disponível</div>
+              <div className="text-center py-12 text-muted-foreground">Nenhum resultado disponível</div>
             ) : (
               <div className="max-h-[600px] overflow-auto">
                 <Table>
-                  <TableHeader className="sticky top-0 bg-white">
+                  <TableHeader className="sticky top-0 bg-card">
                     <TableRow>
                       <TableHead>Ref</TableHead>
                       <TableHead colSpan={11}>
                         <div className="flex items-center gap-2 py-1">
-                          <span className="text-xs text-slate-500">Índice obrigatório</span>
+                          <span className="text-xs text-muted-foreground">Índice obrigatório</span>
                           <button
                             onClick={() => setIndiceObrigatorio(!indiceObrigatorio)}
                             className="text-xs px-2 py-0.5 rounded-full border"
@@ -280,7 +280,7 @@ const Results = () => {
                             <select
                           value={sortOrder}
                           onChange={e => setSortOrder(e.target.value)}
-                          className="ml-4 text-xs border border-slate-200 rounded px-2 py-0.5 bg-white text-slate-700"
+                          className="ml-4 text-xs border border-border rounded px-2 py-0.5 bg-background text-foreground"
                         >
                           <option value="original">Ordem original</option>
                           <option value="economia_desc">↓ Maior economia</option>
@@ -313,13 +313,13 @@ const Results = () => {
 
                       const getMatchBadge = () => {
                         switch(matchType) {
-                          case 'modelo_exato': return <Badge variant="outline" className="text-xs bg-green-100 text-green-800 border-green-300">modelo exato</Badge>;
-                          case 'modelo_sem_indice': return <Badge variant="outline" className="text-xs bg-yellow-100 text-yellow-800 border-yellow-300">sem índice</Badge>;
-                          case 'modelo_parcial': return <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-300">modelo parcial</Badge>;
-                          case 'marca': return <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-300">marca</Badge>;
-                          case 'marca_parcial': return <Badge variant="outline" className="text-xs bg-sky-50 text-sky-700 border-sky-300">marca parcial</Badge>;
-                          case 'medida': return <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-300">só medida</Badge>;
-                          case 'sem_dados': return <Badge variant="outline" className="text-xs bg-red-50 text-red-700 border-red-300">sem dados</Badge>;
+                          case 'modelo_exato': return <Badge variant="outline" className="text-xs bg-green-500/15 text-green-700 dark:text-green-400 border-green-500/30">modelo exato</Badge>;
+                          case 'modelo_sem_indice': return <Badge variant="outline" className="text-xs bg-yellow-500/15 text-yellow-700 dark:text-yellow-400 border-yellow-500/30">sem índice</Badge>;
+                          case 'modelo_parcial': return <Badge variant="outline" className="text-xs bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30">modelo parcial</Badge>;
+                          case 'marca': return <Badge variant="outline" className="text-xs bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30">marca</Badge>;
+                          case 'marca_parcial': return <Badge variant="outline" className="text-xs bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/30">marca parcial</Badge>;
+                          case 'medida': return <Badge variant="outline" className="text-xs bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30">só medida</Badge>;
+                          case 'sem_dados': return <Badge variant="outline" className="text-xs bg-red-500/15 text-red-700 dark:text-red-400 border-red-500/30">sem dados</Badge>;
                           default: return null;
                         }
                       };
@@ -327,7 +327,7 @@ const Results = () => {
                       return (
                         <TableRow
                           key={item.id || index}
-                          className={hasSavings ? 'bg-emerald-50 hover:bg-emerald-100' : isOtherBrand ? 'bg-amber-50/30' : ''}
+                          className={hasSavings ? 'bg-emerald-500/10 hover:bg-emerald-500/20' : isOtherBrand ? 'bg-amber-500/10' : ''}
                         >
                           <TableCell className="font-mono text-sm">{item.ref_id}</TableCell>
                           <TableCell className="font-mono">{item.medida}</TableCell>
@@ -337,10 +337,10 @@ const Results = () => {
                               {getMatchBadge()}
                             </div>
                           </TableCell>
-                          <TableCell className="max-w-[120px] truncate text-slate-600" title={item.modelo}>{item.modelo || '-'}</TableCell>
-                          <TableCell className="font-mono text-slate-600">{item.indice || '-'}</TableCell>
+                          <TableCell className="max-w-[120px] truncate text-muted-foreground" title={item.modelo}>{item.modelo || '-'}</TableCell>
+                          <TableCell className="font-mono text-muted-foreground">{item.indice || '-'}</TableCell>
                           <TableCell className="max-w-[150px] truncate font-medium" title={item.modelo_encontrado}>{item.modelo_encontrado || '-'}</TableCell>
-                          <TableCell className="font-mono text-slate-500 text-xs">{item.indice_encontrado || '-'}</TableCell>
+                          <TableCell className="font-mono text-muted-foreground text-xs">{item.indice_encontrado || '-'}</TableCell>
                           <TableCell className="text-right font-medium">{item.meu_preco ? `€${item.meu_preco.toFixed(2)}` : '-'}</TableCell>
                           <TableCell className="text-right font-medium">
                             {item.melhor_preco ? (

@@ -7,9 +7,9 @@ import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 
 const LEVEL_CONFIG = {
-  INFO:    { bg: 'bg-slate-50',  border: 'border-l-4 border-blue-400',  badge: 'bg-blue-100 text-blue-800',    icon: <Info size={14} className="text-blue-500" /> },
-  WARNING: { bg: 'bg-amber-50',  border: 'border-l-4 border-amber-400', badge: 'bg-amber-100 text-amber-800',  icon: <AlertTriangle size={14} className="text-amber-500" /> },
-  ERROR:   { bg: 'bg-red-50',    border: 'border-l-4 border-red-400',   badge: 'bg-red-100 text-red-800',      icon: <AlertCircle size={14} className="text-red-500" /> },
+  INFO:    { bg: 'bg-blue-500/10 dark:bg-blue-500/15',   border: 'border-l-4 border-blue-400',  badge: 'bg-blue-500/15 text-blue-700 dark:text-blue-300',   icon: <Info size={14} className="text-blue-500" /> },
+  WARNING: { bg: 'bg-amber-500/10 dark:bg-amber-500/15', border: 'border-l-4 border-amber-400', badge: 'bg-amber-500/15 text-amber-700 dark:text-amber-300', icon: <AlertTriangle size={14} className="text-amber-500" /> },
+  ERROR:   { bg: 'bg-red-500/10 dark:bg-red-500/15',     border: 'border-l-4 border-red-400',   badge: 'bg-red-500/15 text-red-700 dark:text-red-300',     icon: <AlertCircle size={14} className="text-red-500" /> },
 };
 
 const LogEntry = ({ log }) => {
@@ -25,11 +25,11 @@ const LogEntry = ({ log }) => {
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2 mb-1">
             <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${cfg.badge}`}>{log.level}</span>
-            <span className="text-xs text-slate-400 font-mono">{new Date(log.created_at).toLocaleString('pt-PT')}</span>
-            {log.job_id && <span className="text-xs text-slate-400 font-mono">Job: {log.job_id.substring(0, 8)}</span>}
-            {log.supplier_id && <span className="text-xs text-slate-400 font-mono">Sup: {log.supplier_id.substring(0, 8)}</span>}
+            <span className="text-xs text-muted-foreground font-mono">{new Date(log.created_at).toLocaleString('pt-PT')}</span>
+            {log.job_id && <span className="text-xs text-muted-foreground font-mono">Job: {log.job_id.substring(0, 8)}</span>}
+            {log.supplier_id && <span className="text-xs text-muted-foreground font-mono">Sup: {log.supplier_id.substring(0, 8)}</span>}
           </div>
-          <pre className="text-xs text-slate-700 whitespace-pre-wrap break-all font-mono leading-relaxed">{displayMsg}</pre>
+          <pre className="text-xs text-foreground whitespace-pre-wrap break-all font-mono leading-relaxed">{displayMsg}</pre>
           {isLong && (
             <button onClick={() => setExpanded(!expanded)} className="text-xs text-blue-500 mt-1 flex items-center gap-1 hover:underline">
               {expanded ? <><ChevronUp size={12} /> Colapsar</> : <><ChevronDown size={12} /> Ver tudo ({log.message.length} chars)</>}
@@ -101,7 +101,7 @@ const Logs = () => {
       <div className="flex flex-wrap justify-between items-center gap-3">
         <div>
           <h2 className="text-2xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>Logs</h2>
-          <p className="text-xs text-slate-500 mt-0.5">{filtered.length} de {logs.length} entradas{lastRefresh ? ` · actualizado ${lastRefresh.toLocaleTimeString('pt-PT')}` : ''}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{filtered.length} de {logs.length} entradas{lastRefresh ? ` · actualizado ${lastRefresh.toLocaleTimeString('pt-PT')}` : ''}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <input
@@ -109,9 +109,9 @@ const Logs = () => {
             placeholder="Pesquisar..."
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="text-xs border border-slate-200 rounded px-2 py-1 w-40"
+            className="text-xs border border-border rounded px-2 py-1 w-40 bg-background text-foreground"
           />
-          <select value={levelFilter} onChange={e => setLevelFilter(e.target.value)} className="text-xs border border-slate-200 rounded px-2 py-1">
+          <select value={levelFilter} onChange={e => setLevelFilter(e.target.value)} className="text-xs border border-border rounded px-2 py-1 bg-background text-foreground">
             <option value="ALL">Todos ({logs.length})</option>
             <option value="INFO">INFO ({counts.INFO})</option>
             <option value="WARNING">WARNING ({counts.WARNING})</option>
@@ -120,12 +120,12 @@ const Logs = () => {
         </div>
       </div>
 
-      <Card className="border-slate-200">
+      <Card className="border-border">
         <CardContent className="p-0">
           {filtered.length === 0 ? (
-            <div className="text-center py-12 text-slate-400 text-sm">Nenhum log encontrado</div>
+            <div className="text-center py-12 text-muted-foreground text-sm">Nenhum log encontrado</div>
           ) : (
-            <div className="divide-y divide-slate-100 max-h-[70vh] overflow-y-auto">
+            <div className="divide-y divide-border max-h-[70vh] overflow-y-auto">
               {filtered.map(log => <LogEntry key={log.id} log={log} />)}
             </div>
           )}

@@ -32,29 +32,29 @@ const Dashboard = () => {
       title: 'Economia Total',
       value: `€${stats?.total_savings?.toFixed(2) || '0.00'}`,
       icon: TrendingUp,
-      color: 'text-green-700',
-      bg: 'bg-green-50',
+      color: 'text-green-600 dark:text-green-400',
+      bg: 'bg-green-100 dark:bg-green-900/30',
     },
     {
       title: 'Jobs Completos',
       value: stats?.completed_jobs || 0,
       icon: CheckCircle,
-      color: 'text-blue-700',
-      bg: 'bg-blue-50',
+      color: 'text-blue-600 dark:text-blue-400',
+      bg: 'bg-blue-100 dark:bg-blue-900/30',
     },
     {
       title: 'Total Jobs',
       value: stats?.total_jobs || 0,
       icon: Package,
-      color: 'text-slate-700',
-      bg: 'bg-slate-50',
+      color: 'text-foreground',
+      bg: 'bg-muted',
     },
     {
       title: 'Fornecedores Ativos',
       value: stats?.active_suppliers || 0,
       icon: Database,
-      color: 'text-indigo-700',
-      bg: 'bg-indigo-50',
+      color: 'text-indigo-600 dark:text-indigo-400',
+      bg: 'bg-indigo-100 dark:bg-indigo-900/30',
     },
   ];
 
@@ -65,11 +65,11 @@ const Dashboard = () => {
         {statCards.map((stat, index) => {
           const Icon = stat.icon;
           return (
-            <Card key={index} className="border-slate-200">
+            <Card key={index} className="border-border">
               <CardContent className="pt-6">
                 <div className="flex items-start justify-between">
                   <div>
-                    <p className="text-sm text-slate-600 mb-1">{stat.title}</p>
+                    <p className="text-sm text-muted-foreground mb-1">{stat.title}</p>
                     <p className="text-2xl font-bold" style={{ fontFamily: 'JetBrains Mono, monospace' }}>
                       {stat.value}
                     </p>
@@ -85,7 +85,7 @@ const Dashboard = () => {
       </div>
 
       {/* Recent Jobs */}
-      <Card className="border-slate-200">
+      <Card className="border-border">
         <CardHeader>
           <CardTitle>Jobs Recentes</CardTitle>
         </CardHeader>
@@ -95,12 +95,12 @@ const Dashboard = () => {
               {stats.recent_jobs.map((job) => (
                 <div
                   key={job.id}
-                  className="flex items-center justify-between p-4 border border-slate-200 rounded-sm hover:bg-slate-50 transition-colors"
+                  className="flex items-center justify-between p-4 border border-slate-200 rounded-sm hover:bg-muted/50 transition-colors"
                   data-testid={`job-${job.id}`}
                 >
                   <div className="flex-1">
                     <p className="font-medium text-sm">{job.filename}</p>
-                    <p className="text-xs text-slate-500 mt-1">
+                    <p className="text-xs text-muted-foreground mt-1">
                       {job.total_items} itens • {job.found_items} encontrados
                     </p>
                   </div>
@@ -109,7 +109,7 @@ const Dashboard = () => {
                       <p className="text-sm font-mono font-bold text-green-700">
                         {job.total_savings ? `€${job.total_savings.toFixed(2)}` : '€0.00'}
                       </p>
-                      <p className="text-xs text-slate-500">economia</p>
+                      <p className="text-xs text-muted-foreground">economia</p>
                     </div>
                     <Badge
                       variant={job.status === 'completed' ? 'default' : job.status === 'running' ? 'secondary' : 'outline'}
@@ -125,7 +125,7 @@ const Dashboard = () => {
               ))}
             </div>
           ) : (
-            <p className="text-center text-slate-500 py-8">Nenhum job encontrado</p>
+            <p className="text-center text-muted-foreground py-8">Nenhum job encontrado</p>
           )}
         </CardContent>
       </Card>
