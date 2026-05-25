@@ -153,10 +153,6 @@ const Precos = () => {
 
   return (
     <div className="space-y-6" data-testid="precos-page">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Pesquisa de Preços</h1>
-        <p className="text-slate-500">Pesquise preços nos fornecedores ou no banco de dados local</p>
-      </div>
 
       {/* Search Bar */}
       <Card>
@@ -221,10 +217,10 @@ const Precos = () => {
 
           {/* Scraping progress */}
           {scraping && (
-            <div className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+            <div className="flex items-center gap-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-sm text-amber-400">
               <Loader2 className="w-4 h-4 animate-spin shrink-0" />
               <span className="font-mono truncate">{scrapeProgress || 'A iniciar...'}</span>
-              <span className="ml-auto text-xs text-amber-600 shrink-0">pode demorar alguns minutos</span>
+              <span className="ml-auto text-xs text-amber-400/80 shrink-0">pode demorar alguns minutos</span>
             </div>
           )}
         </CardContent>
@@ -232,29 +228,29 @@ const Precos = () => {
 
       {/* Stats */}
       {stats && (
-        <Card className="bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-200">
+        <Card className="border-border">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between flex-wrap gap-6">
               <div className="flex items-center gap-8">
                 <div>
-                  <p className="text-sm text-slate-600">Melhor Preço</p>
-                  <p className="text-3xl font-bold text-emerald-600">€{stats.minPrice.toFixed(2)}</p>
-                  <p className="text-sm text-slate-500">{stats.bestSupplier} · {stats.bestBrand}</p>
+                  <p className="text-sm text-muted-foreground">Melhor Preço</p>
+                  <p className="text-3xl font-bold text-emerald-500">€{stats.minPrice.toFixed(2)}</p>
+                  <p className="text-sm text-muted-foreground">{stats.bestSupplier} · {stats.bestBrand}</p>
                 </div>
-                <div className="h-16 w-px bg-slate-200" />
+                <div className="h-16 w-px bg-border" />
                 <div>
-                  <p className="text-sm text-slate-600">Pior Preço</p>
-                  <p className="text-2xl font-semibold text-red-500">€{stats.maxPrice.toFixed(2)}</p>
+                  <p className="text-sm text-muted-foreground">Pior Preço</p>
+                  <p className="text-2xl font-semibold text-red-400">€{stats.maxPrice.toFixed(2)}</p>
                 </div>
-                <div className="h-16 w-px bg-slate-200" />
+                <div className="h-16 w-px bg-border" />
                 <div>
-                  <p className="text-sm text-slate-600">Diferença</p>
-                  <p className="text-2xl font-semibold text-amber-600">€{stats.difference.toFixed(2)}</p>
+                  <p className="text-sm text-muted-foreground">Diferença</p>
+                  <p className="text-2xl font-semibold text-amber-400">€{stats.difference.toFixed(2)}</p>
                 </div>
               </div>
               <div className="text-right">
-                <p className="text-sm text-slate-600">Total Produtos</p>
-                <p className="text-2xl font-semibold text-slate-700">{stats.total}</p>
+                <p className="text-sm text-muted-foreground">Total Produtos</p>
+                <p className="text-2xl font-semibold text-foreground">{stats.total}</p>
               </div>
             </div>
           </CardContent>
@@ -268,7 +264,7 @@ const Precos = () => {
         </CardHeader>
         <CardContent>
           {prices.length === 0 ? (
-            <div className="text-center py-12 text-slate-500">
+            <div className="text-center py-12 text-muted-foreground">
               <Search className="w-12 h-12 mx-auto mb-4 opacity-30" />
               <p>Nenhum resultado.</p>
               <p className="text-sm mt-2">Use "Pesquisar nos Fornecedores" para uma pesquisa ao vivo, ou "Banco Local" para dados guardados.</p>
@@ -276,7 +272,7 @@ const Precos = () => {
           ) : (
             <div className="max-h-[600px] overflow-auto">
               <Table>
-                <TableHeader className="sticky top-0 bg-white z-10">
+                <TableHeader className="sticky top-0 bg-card z-10">
                   <TableRow>
                     <TableHead>Medida</TableHead>
                     <TableHead>Marca</TableHead>
@@ -299,29 +295,29 @@ const Precos = () => {
                     return (
                       <TableRow
                         key={item.id || idx}
-                        className={isBest ? 'bg-emerald-50 hover:bg-emerald-100' : ''}
-                        style={{ borderLeft: isDuplicate(item) ? '3px solid #F59E0B' : '3px solid transparent' }}
+                        className={isBest ? 'bg-emerald-500/10 hover:bg-emerald-500/15' : ''}
+                        style={{ borderLeft: isDuplicate(item) ? '3px solid #D97706' : '3px solid transparent' }}
                         title={isDuplicate(item) ? 'Variante de preço' : ''}
                       >
                         <TableCell className="font-mono font-medium">{item.medida}</TableCell>
                         <TableCell>
                           <Badge variant="outline" className="font-medium">{item.marca || '-'}</Badge>
                         </TableCell>
-                        <TableCell className="max-w-[200px] truncate text-slate-600" title={item.modelo}>
+                        <TableCell className="max-w-[200px] truncate text-muted-foreground" title={item.modelo}>
                           {item.modelo || '-'}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={isBest ? 'default' : 'secondary'} className={isBest ? 'bg-emerald-600' : ''}>
+                          <Badge variant={isBest ? 'default' : 'secondary'} className={isBest ? 'bg-emerald-500/80' : ''}>
                             {item.supplier_name}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right">
-                          <span className={`font-bold ${isBest ? 'text-emerald-600 text-lg' : ''}`}>
+                          <span className={`font-bold ${isBest ? 'text-emerald-500 text-lg' : 'text-foreground'}`}>
                             {isBest && <TrendingDown className="inline w-4 h-4 mr-1" />}
                             €{item.price?.toFixed(2) ?? '-'}
                           </span>
                         </TableCell>
-                        <TableCell className="text-slate-500 text-sm">{formatDate(item.scraped_at)}</TableCell>
+                        <TableCell className="text-muted-foreground text-sm">{formatDate(item.scraped_at)}</TableCell>
                       </TableRow>
                     );
                   });
