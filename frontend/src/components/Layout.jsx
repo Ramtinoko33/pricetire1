@@ -57,13 +57,26 @@ const Layout = ({ children }) => {
         </nav>
         <div className="p-4 border-t border-slate-700 flex items-center justify-between">
           <span className="text-xs text-slate-400">v1.0.0 MVP</span>
-          <button
-            onClick={() => setDark(!dark)}
-            className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
-            title={dark ? 'Modo claro' : 'Modo escuro'}
-          >
-            {dark ? <Sun size={15} /> : <Moon size={15} />}
-          </button>
+          <div className="flex items-center bg-slate-700/50 border border-slate-600 rounded-full p-1">
+            <button
+              onClick={() => setDark(false)}
+              className={`flex items-center justify-center w-7 h-7 rounded-full transition-all ${
+                !dark ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="Modo claro"
+            >
+              <Sun size={14} />
+            </button>
+            <button
+              onClick={() => setDark(true)}
+              className={`flex items-center justify-center w-7 h-7 rounded-full transition-all ${
+                dark ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="Modo escuro"
+            >
+              <Moon size={14} />
+            </button>
+          </div>
         </div>
       </aside>
       <main className="flex-1 flex flex-col overflow-hidden">
