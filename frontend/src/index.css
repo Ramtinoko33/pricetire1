@@ -42,8 +42,28 @@ code {
         --warning: 38 92% 50%;
         --info: 199 89% 48%;
     }
+    .dark {
+        --background: 222 47% 11%;
+        --foreground: 213 31% 91%;
+        --card: 222 47% 15%;
+        --card-foreground: 213 31% 91%;
+        --popover: 222 47% 15%;
+        --popover-foreground: 213 31% 91%;
+        --primary: 213 31% 91%;
+        --primary-foreground: 222 47% 11%;
+        --secondary: 222 47% 20%;
+        --secondary-foreground: 213 31% 91%;
+        --muted: 222 47% 18%;
+        --muted-foreground: 215 16% 60%;
+        --accent: 222 47% 20%;
+        --accent-foreground: 213 31% 91%;
+        --destructive: 0 84% 60%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 222 47% 22%;
+        --input: 222 47% 22%;
+        --ring: 213 31% 91%;
+    }
 }
-
 @layer base {
     * {
         @apply border-border;
