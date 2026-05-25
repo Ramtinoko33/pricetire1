@@ -1,22 +1,61 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { logsAPI } from '../lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { Card, CardContent } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, ChevronDown, ChevronUp, AlertCircle, Info, AlertTriangle } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
+
+const LEVEL_CONFIG = {
+  INFO:    { bg: 'bg-slate-50',  border: 'border-l-4 border-blue-400',  badge: 'bg-blue-100 text-blue-800',    icon: <Info size={14} className="text-blue-500" /> },
+  WARNING: { bg: 'bg-amber-50',  border: 'border-l-4 border-amber-400', badge: 'bg-amber-100 text-amber-800',  icon: <AlertTriangle size={14} className="text-amber-500" /> },
+  ERROR:   { bg: 'bg-red-50',    border: 'border-l-4 border-red-400',   badge: 'bg-red-100 text-red-800',      icon: <AlertCircle size={14} className="text-red-500" /> },
+};
+
+const LogEntry = ({ log }) => {
+  const [expanded, setExpanded] = useState(false);
+  const cfg = LEVEL_CONFIG[log.level] || LEVEL_CONFIG.INFO;
+  const isLong = log.message && log.message.length > 200;
+  const displayMsg = isLong && !expanded ? log.message.slice(0, 200) + '...' : log.message;
+
+  return (
+    <div className={`p-3 ${cfg.bg} ${cfg.border} hover:brightness-95 transition-all`}>
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex-shrink-0">{cfg.icon}</div>
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${cfg.badge}`}>{log.level}</span>
+            <span className="text-xs text-slate-400 font-mono">{new Date(log.created_at).toLocaleString('pt-PT')}</span>
+            {log.job_id && <span className="text-xs text-slate-400 font-mono">Job: {log.job_id.substring(0, 8)}</span>}
+            {log.supplier_id && <span className="text-xs text-slate-400 font-mono">Sup: {log.supplier_id.substring(0, 8)}</span>}
+          </div>
+          <pre className="text-xs text-slate-700 whitespace-pre-wrap break-all font-mono leading-relaxed">{displayMsg}</pre>
+          {isLong && (
+            <button onClick={() => setExpanded(!expanded)} className="text-xs text-blue-500 mt-1 flex items-center gap-1 hover:underline">
+              {expanded ? <><ChevronUp size={12} /> Colapsar</> : <><ChevronDown size={12} /> Ver tudo ({log.message.length} chars)</>}
+            </button>
+          )}
+          {log.screenshot_path && (
+            <p className="text-xs text-blue-500 mt-1">📎 {log.screenshot_path}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const Logs = () => {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [levelFilter, setLevelFilter] = useState('ALL');
+  const [limit, setLimit] = useState(100);
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [search, setSearch] = useState('');
+  const intervalRef = useRef(null);
 
-  useEffect(() => {
-    loadLogs();
-  }, []);
-
-  const loadLogs = async () => {
+  const loadLogs = async (lim = limit) => {
     try {
-      const { data } = await logsAPI.getAll();
+      const { data } = await logsAPI.getAll(null, lim);
       setLogs(data);
     } catch (error) {
       console.error('Error loading logs:', error);
@@ -26,62 +65,78 @@ const Logs = () => {
     }
   };
 
-  const getLevelBadge = (level) => {
-    const variants = {
-      INFO: 'default',
-      WARNING: 'secondary',
-      ERROR: 'destructive',
-    };
-    return <Badge variant={variants[level] || 'outline'}>{level}</Badge>;
+  useEffect(() => { loadLogs(); }, []);
+
+  useEffect(() => {
+    if (autoRefresh) {
+      intervalRef.current = setInterval(() => loadLogs(), 10000);
+    } else {
+      clearInterval(intervalRef.current);
+    }
+    return () => clearInterval(intervalRef.current);
+  }, [autoRefresh, limit]);
+
+  const handleLimitChange = (newLimit) => {
+    setLimit(newLimit);
+    loadLogs(newLimit);
   };
 
-  if (loading) {
-    return <div className="text-center py-12" data-testid="loading">A carregar...</div>;
-  }
+  const filtered = logs.filter(l => {
+    const matchLevel = levelFilter === 'ALL' || l.level === levelFilter;
+    const matchSearch = !search || l.message?.toLowerCase().includes(search.toLowerCase());
+    return matchLevel && matchSearch;
+  });
+
+  const counts = { INFO: 0, WARNING: 0, ERROR: 0 };
+  logs.forEach(l => { if (counts[l.level] !== undefined) counts[l.level]++; });
+
+  if (loading) return <div className="text-center py-12">A carregar...</div>;
 
   return (
-    <div className="space-y-6" data-testid="logs-page">
-      <div className="flex justify-between items-center">
+    <div className="space-y-4">
+      <div className="flex flex-wrap justify-between items-center gap-3">
         <div>
           <h2 className="text-2xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>Logs</h2>
-          <p className="text-sm text-slate-600 mt-1">{logs.length} entradas</p>
+          <p className="text-xs text-slate-500 mt-0.5">{filtered.length} de {logs.length} entradas</p>
         </div>
-        <Button variant="outline" onClick={loadLogs} data-testid="refresh-logs-btn">
-          <RefreshCw size={18} className="mr-2" />
-          Atualizar
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            placeholder="Pesquisar..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="text-xs border border-slate-200 rounded px-2 py-1 w-40"
+          />
+          <select value={levelFilter} onChange={e => setLevelFilter(e.target.value)} className="text-xs border border-slate-200 rounded px-2 py-1">
+            <option value="ALL">Todos ({logs.length})</option>
+            <option value="INFO">INFO ({counts.INFO})</option>
+            <option value="WARNING">WARNING ({counts.WARNING})</option>
+            <option value="ERROR">ERROR ({counts.ERROR})</option>
+          </select>
+          <select value={limit} onChange={e => handleLimitChange(Number(e.target.value))} className="text-xs border border-slate-200 rounded px-2 py-1">
+            <option value={100}>100</option>
+            <option value={200}>200</option>
+            <option value={500}>500</option>
+          </select>
+          <button
+            onClick={() => setAutoRefresh(!autoRefresh)}
+            className={`text-xs px-3 py-1 rounded-full border ${autoRefresh ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-white text-slate-600 border-slate-300'}`}
+          >
+            {autoRefresh ? 'Auto ON' : 'Auto OFF'}
+          </button>
+          <Button variant="outline" size="sm" onClick={() => loadLogs()}>
+            <RefreshCw size={14} className="mr-1" /> Atualizar
+          </Button>
+        </div>
       </div>
 
       <Card className="border-slate-200">
         <CardContent className="p-0">
-          {logs.length === 0 ? (
-            <div className="text-center py-12 text-slate-500">Nenhum log encontrado</div>
+          {filtered.length === 0 ? (
+            <div className="text-center py-12 text-slate-400 text-sm">Nenhum log encontrado</div>
           ) : (
-            <div className="divide-y divide-slate-200">
-              {logs.map((log) => (
-                <div key={log.id} className="p-4 hover:bg-slate-50" data-testid={`log-${log.id}`}>
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        {getLevelBadge(log.level)}
-                        <span className="text-xs text-slate-500 font-mono">
-                          {new Date(log.created_at).toLocaleString('pt-PT')}
-                        </span>
-                        {log.supplier_id && (
-                          <span className="text-xs text-slate-500">Supplier: {log.supplier_id.substring(0, 8)}</span>
-                        )}
-                        {log.job_id && (
-                          <span className="text-xs text-slate-500">Job: {log.job_id.substring(0, 8)}</span>
-                        )}
-                      </div>
-                      <p className="text-sm text-slate-700">{log.message}</p>
-                      {log.screenshot_path && (
-                        <p className="text-xs text-blue-600 mt-1">Screenshot: {log.screenshot_path}</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
+            <div className="divide-y divide-slate-100 max-h-[70vh] overflow-y-auto">
+              {filtered.map(log => <LogEntry key={log.id} log={log} />)}
             </div>
           )}
         </CardContent>
