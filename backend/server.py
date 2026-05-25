@@ -984,17 +984,20 @@ async def _do_compare(job_id: str, force: bool):
         item_modelo = _norm(item.get('modelo') or item.get('model', ''))
         item_indice = _norm(item.get('indice') or item.get('load_index', ''))
 
-        # Nível 1: Medida + Marca + Modelo + Índice exacto
+         # Nível 1: Medida + Marca + Modelo + Índice exacto (normalizado)
         scraped = []
         if item_indice:
+            def _norm_idx_strict(v):
+                return (v or '').upper().strip().replace('/', '').replace(' ', '')
             scraped = [
                 s for s in medida_prices
                 if _norm(s.get('marca', '')) == item_marca
                 and _norm(s.get('modelo', '')) == item_modelo
-                and _index_matches(_norm(s.get('load_index', '')), item_indice)
+                and _norm_idx_strict(s.get('load_index', '')) == _norm_idx_strict(item_indice)
             ]
             if scraped:
                 match_type = "modelo_exato"
+
 
         # Nível 2: Medida + Marca + Modelo (qualquer índice)
         if not scraped:

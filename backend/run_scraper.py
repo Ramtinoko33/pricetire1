@@ -1557,6 +1557,19 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                                     cv_val = _s
                                     break  # only break on success
                         indice_val = (ic_val + cv_val).strip()
+                        # Detect XL in API fields or AR_NOMBRE
+                        if indice_val and '/' not in indice_val:
+                            _xl_found = False
+                            for lk, (orig_k, v) in item_lc.items():
+                                if v is not None and 'xl' in str(v).lower():
+                                    _xl_found = True
+                                    break
+                            if not _xl_found:
+                                _nombre_xl = str(item_lc.get('ar_nombre', ('', ''))[1] or '')
+                                if ' XL' in _nombre_xl.upper() or _nombre_xl.upper().endswith('XL'):
+                                    _xl_found = True
+                            if _xl_found and not indice_val.endswith(' XL'):
+                                indice_val = indice_val + ' XL'
                         # Second load/speed pair (109T/107T) — e.g. AR_CARGA2 + AR_VELOCIDAD2
                         ic2_val = cv2_val = ''
                         _IC2_SUFFIXES = ('_carga2', '_ic2', '_li2', '_loadindex2', '_indcarga2')
