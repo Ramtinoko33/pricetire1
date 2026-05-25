@@ -49,7 +49,7 @@ const Logs = () => {
   const [loading, setLoading] = useState(true);
   const [levelFilter, setLevelFilter] = useState('ALL');
   const [limit, setLimit] = useState(100);
-  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [lastRefresh, setLastRefresh] = useState(null);
   const [search, setSearch] = useState('');
   const intervalRef = useRef(null);
 
@@ -68,13 +68,17 @@ const Logs = () => {
   useEffect(() => { loadLogs(); }, []);
 
   useEffect(() => {
-    if (autoRefresh) {
-      intervalRef.current = setInterval(() => loadLogs(), 10000);
-    } else {
+    intervalRef.current = setInterval(() => {
+      loadLogs();
+      setLastRefresh(new Date());
+    }, 30000);
+    const onFocus = () => { loadLogs(); setLastRefresh(new Date()); };
+    window.addEventListener('focus', onFocus);
+    return () => {
       clearInterval(intervalRef.current);
-    }
-    return () => clearInterval(intervalRef.current);
-  }, [autoRefresh, limit]);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, []);
 
   const handleLimitChange = (newLimit) => {
     setLimit(newLimit);
@@ -97,7 +101,7 @@ const Logs = () => {
       <div className="flex flex-wrap justify-between items-center gap-3">
         <div>
           <h2 className="text-2xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>Logs</h2>
-          <p className="text-xs text-slate-500 mt-0.5">{filtered.length} de {logs.length} entradas</p>
+          <p className="text-xs text-slate-500 mt-0.5">{filtered.length} de {logs.length} entradas{lastRefresh ? ` · actualizado ${lastRefresh.toLocaleTimeString('pt-PT')}` : ''}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <input
@@ -113,20 +117,6 @@ const Logs = () => {
             <option value="WARNING">WARNING ({counts.WARNING})</option>
             <option value="ERROR">ERROR ({counts.ERROR})</option>
           </select>
-          <select value={limit} onChange={e => handleLimitChange(Number(e.target.value))} className="text-xs border border-slate-200 rounded px-2 py-1">
-            <option value={100}>100</option>
-            <option value={200}>200</option>
-            <option value={500}>500</option>
-          </select>
-          <button
-            onClick={() => setAutoRefresh(!autoRefresh)}
-            className={`text-xs px-3 py-1 rounded-full border ${autoRefresh ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-white text-slate-600 border-slate-300'}`}
-          >
-            {autoRefresh ? 'Auto ON' : 'Auto OFF'}
-          </button>
-          <Button variant="outline" size="sm" onClick={() => loadLogs()}>
-            <RefreshCw size={14} className="mr-1" /> Atualizar
-          </Button>
         </div>
       </div>
 

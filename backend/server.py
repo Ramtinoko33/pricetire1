@@ -45,9 +45,20 @@ _supplier_run_stats: Dict[str, Dict[str, dict]] = {}
 
 @app.on_event("startup")
 async def startup():
-    await init_schema()
     await _cleanup_orphan_suppliers()
-    logger.info("API pronta.")
+    await _cleanup_old_logs()
+
+async def _cleanup_old_logs():
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            deleted = await conn.fetchval(
+                "DELETE FROM logs WHERE created_at < NOW() - INTERVAL '7 days' RETURNING COUNT(*)"
+            )
+            if deleted:
+                logger.info(f"[cleanup] Removidos {deleted} logs com mais de 7 dias")
+    except Exception as e:
+        logger.warning(f"[cleanup] Erro na limpeza de logs: {e}")
 
 
 async def _cleanup_orphan_suppliers():
