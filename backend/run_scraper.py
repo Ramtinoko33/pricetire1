@@ -66,74 +66,6 @@ def extract_prices(content: str) -> list:
 def normalize_medida(medida: str) -> str:
     return medida.replace('/', '').replace('R', '').replace('r', '')
 
-def normalize_brand(brand: str) -> str:
-    """Normalize brand name for comparison"""
-    if not brand:
-        return ""
-    brand = brand.strip().upper()
-    # Common variations
-    brand = brand.replace('GOODYEAR', 'GOODYEAR')
-    brand = brand.replace('GOOD YEAR', 'GOODYEAR')
-    return brand
-
-async def extract_products_from_page(page) -> list:
-    """Extract all products with brand, model and price from current page"""
-    products = []
-    
-    # Try to get products via JavaScript evaluation
-    try:
-        # Common product container selectors
-        product_data = await page.evaluate('''() => {
-            const products = [];
-            
-            // Try different selectors for product rows/cards
-            const selectors = [
-                '.product-row', '.article-row', '.product-item', 
-                'tr[data-article]', '.tyre-item', '[class*="product"]',
-                '.article', '.item-row'
-            ];
-            
-            for (const selector of selectors) {
-                const items = document.querySelectorAll(selector);
-                if (items.length > 0) {
-                    items.forEach(item => {
-                        const text = item.textContent || '';
-                        
-                        // Extract brand - usually in bold or specific class
-                        let brand = '';
-                        const brandEl = item.querySelector('.brand, .manufacturer, [class*="brand"], strong, b');
-                        if (brandEl) brand = brandEl.textContent.trim();
-                        
-                        // Extract model/profile
-                        let model = '';
-                        const modelEl = item.querySelector('.model, .profile, .description, [class*="model"]');
-                        if (modelEl) model = modelEl.textContent.trim();
-                        
-                        // Extract price
-                        let price = null;
-                        const priceMatch = text.match(/€?\s*(\d+[,\.]\d{2})\s*€?/);
-                        if (priceMatch) {
-                            price = parseFloat(priceMatch[1].replace(',', '.'));
-                        }
-                        
-                        if (price && price > 15 && price < 500) {
-                            products.push({ brand, model, price, text: text.substring(0, 200) });
-                        }
-                    });
-                    break;
-                }
-            }
-            
-            return products;
-        }''')
-        
-        if product_data:
-            products = product_data
-    except Exception as e:
-        print(f"  Error extracting products via JS: {e}")
-    
-    return products
-
 async def scrape_mp24(page, username: str, password: str, medida: str) -> dict:
     """Scrape MP24 (always does full login)"""
     return await scrape_mp24_with_session(page, username, password, medida, already_logged_in=False)
@@ -349,9 +281,9 @@ async def scrape_prismanil(page, username: str, password: str, medida: str) -> d
                         const parts = produtoStr.trim().split(' ');
                         const brand = parts[0] || '';
                         const remaining = parts.slice(2).join(' ');
-                        const allMatches = [...remaining.matchAll(/(\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?)/gi)];
+                        const allMatches = [...remaining.matchAll(/(\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?)(\s+XL)?/gi)];
                         const idxMatch = allMatches.length > 0 ? allMatches[allMatches.length - 1] : null;
-                        const loadIndex = idxMatch ? idxMatch[1].trim().toUpperCase() : '';
+                        const loadIndex = idxMatch ? (idxMatch[1] + (idxMatch[2] || '')).trim().toUpperCase() : '';
                         let model = (idxMatch ? remaining.slice(0, idxMatch.index) : remaining).trim();
                         model = model.replace(/\b(DOT\d*|TL|TT|RFT|MO|AO|VOL|BMW|ROF|SSR|FP)\b/gi, '').trim();
 
@@ -1846,57 +1778,6 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
 
     return result
 
-def _parse_andres_html(html: str) -> list:
-    """Parse product list from Grupo Andres buscador page HTML.
-
-    Each card is separated by result-thumbnail-tooltip="".
-    Brand in <img title="Michelin"> (mixed case — regex deve ser case-insensitive).
-    Description in data-ajax-description="205/55 R16 91V TURANZA 6" (no brand).
-    P. Compre in class="campaign-price"><span> (fallback: class="campaign-base-price").
-    """
-    import html as htmllib
-
-    desc_re       = re.compile(r'data-ajax-description="([^"]+)"')
-    # BUG1 FIX: aceitar mixed case (ex: "Michelin", "BF Goodrich") — .upper() na extracção
-    brand_re      = re.compile(r'<img[^>]*\btitle="([A-Za-z][A-Za-z0-9 \-/]+)"')
-    camp_price_re = re.compile(r'class="campaign-price"><span[^>]*>\s*([\d,.]+)')
-    base_price_re = re.compile(r'class="campaign-base-price">\s*([\d,.]+)')
-    title_re      = re.compile(
-        r'\d{3}/\d{2}\s+R\d{2}\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s+(.*)',
-        re.IGNORECASE,
-    )
-
-    products = []
-    for card in re.split(r'(?=result-thumbnail-tooltip="")', html)[1:]:
-        d = desc_re.search(card)
-        b = brand_re.search(card)
-        if not d or not b:
-            continue
-
-        p = camp_price_re.search(card) or base_price_re.search(card)
-        if not p:
-            continue
-
-        try:
-            price = float(p.group(1).replace(',', '.'))
-        except ValueError:
-            continue
-        if price <= 0:
-            continue
-
-        desc = htmllib.unescape(d.group(1)).strip()
-        m = title_re.match(desc)
-        if not m:
-            continue
-
-        products.append({
-            'brand':      b.group(1).strip().upper(),
-            'model':      m.group(2).strip().upper(),
-            'load_index': m.group(1).strip().upper(),
-            'price':      price,
-        })
-    return products
-
 
 async def scrape_grupo_andres(page, username: str, password: str, medida: str,
                                skip_login: bool = False) -> dict:
@@ -3161,64 +3042,6 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
     return products
 
 
-def _parse_cruzeiro_html(html: str) -> list:
-    """Parse <tr> rows from Cruzeiro HTMX AJAX response HTML.
-
-    Colunas: 0=Imagem 1=Fabricante 2=Produto 3=DOT 4=Stock 5=Etq 6=Qtd 7=Preço 8=PVP
-    Formato Produto: "PNEU MARCA MEDIDA MODELO ÍNDICE"
-      ex.: "PNEU MICHELIN 205/55R16 PRIMACY 5 91V"
-    """
-    tag_re = re.compile(r'<[^>]+>', re.DOTALL)
-    td_re  = re.compile(r'<td\b[^>]*>(.*?)</td>', re.DOTALL | re.IGNORECASE)
-    tr_re  = re.compile(r'<tr\b[^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
-    products = []
-
-    for tr_m in tr_re.finditer(html):
-        cells = [tag_re.sub('', td.group(1)).strip() for td in td_re.finditer(tr_m.group(1))]
-        if len(cells) < 8:
-            continue
-
-        # Coluna 2 (Produto) é a fonte fiável — coluna 1 (Fabricante) pode
-        # conter "PNEU", texto de imagem ou estar vazia.
-        # Formato: "PNEU MARCA MEDIDA MODELO ÍNDICE"
-        #   ex: "PNEU MICHELIN 215/55R16 PRIMACY 5 91V"
-        #   ex: "NEXEN 215/55R18 N'FERA RU1 99V XL"  (sem prefixo PNEU)
-        prod  = ' '.join(cells[2].split())
-        txt   = re.sub(r'^PNEU\s+', '', prod, flags=re.IGNORECASE)
-        parts = [p for p in txt.split() if p]
-
-        if not parts:
-            continue
-
-        # 1. Primeiro token = MARCA (sempre da coluna Produto)
-        brand = parts.pop(0).upper()
-
-        # 2. Ignorar token de medida ("205/55R16")
-        if parts and re.match(r'\d{3}/\d{2}[Rr]\d{2}', parts[0]):
-            parts.pop(0)
-
-        # 3. Modelo = tudo antes do primeiro índice de carga+velocidade
-        remaining = ' '.join(parts)
-        idx_m = re.search(r'\b(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\b', remaining, re.IGNORECASE)
-        model = remaining[:idx_m.start()].strip() if idx_m else remaining.strip()
-        load_index = idx_m.group(1).strip().upper() if idx_m else ''
-
-        # Preço (coluna 7)
-        m_price = re.search(r'(\d+[,.]\d{2})', cells[7])
-        if not m_price:
-            continue
-        try:
-            price = float(m_price.group(1).replace(',', '.'))
-        except ValueError:
-            continue
-        if price <= 5:
-            continue
-
-        products.append({'brand': brand, 'model': model, 'load_index': load_index, 'price': price})
-
-    return products
-
-
 async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                                url_login: str = "https://www.pneuscruzeiro.pt/pt/login",
                                url_search: str = "https://www.pneuscruzeiro.pt/pt/privatearea",
@@ -3630,26 +3453,6 @@ async def get_suppliers_from_db():
                 "url_search": d.get("url_search", ""),
             })
         return suppliers
-    finally:
-        await conn.close()
-
-async def save_price_to_db(supplier_name: str, medida: str, price: float, error: str = None):
-    """Save scraping result to PostgreSQL (upsert by supplier+medida, no brand)"""
-    conn = await _pg_connect()
-    try:
-        # Delete existing record for this supplier+medida with no brand, then insert fresh
-        await conn.execute(
-            "DELETE FROM scraped_prices WHERE supplier_name = $1 AND medida = $2 AND marca IS NULL",
-            supplier_name, medida,
-        )
-        if price is not None:
-            await conn.execute(
-                """
-                INSERT INTO scraped_prices (id, supplier_name, medida, price, scraped_at)
-                VALUES ($1, $2, $3, $4, $5)
-                """,
-                str(uuid.uuid4()), supplier_name, medida, price, datetime.now(timezone.utc),
-            )
     finally:
         await conn.close()
 
@@ -4482,163 +4285,6 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
     print(f"\nResults saved to {result_file}")
     print(f"Scraper finished at {datetime.now()}")
     
-    return results
-
-def run_supplier(supplier_id: str, sizes: list, job_id: str = None):
-    """
-    Synchronous function called by worker.py
-    Runs scraping for a single supplier
-    """
-    print(f"run_supplier called: supplier_id={supplier_id}, sizes={sizes}, job_id={job_id}")
-    
-    # Run async scraper in sync context
-    asyncio.run(_run_supplier_async(supplier_id, sizes, job_id))
-
-async def _run_supplier_async(supplier_id: str, sizes: list, job_id: str = None):
-    """Async implementation of run_supplier"""
-    print(f"Starting scraper for supplier {supplier_id}")
-
-    # Get supplier from PostgreSQL
-    conn = await _pg_connect()
-    row = await conn.fetchrow("SELECT * FROM suppliers WHERE id = $1", supplier_id)
-    if not row:
-        row = await conn.fetchrow(
-            "SELECT * FROM suppliers WHERE LOWER(name) LIKE $1",
-            f"%{supplier_id.lower()}%",
-        )
-
-    if not row:
-        print(f"Supplier not found: {supplier_id}")
-        await conn.close()
-        return
-
-    supplier = dict(row)
-    
-    supplier_name = supplier['name'].lower()
-    username = supplier['username']
-    # Use password_raw (plain text) for scraping, fallback to password if not hashed
-    password = supplier.get('password_raw') or supplier.get('password', '')
-    
-    # Check if password is hashed (bcrypt hashes start with $2)
-    if password.startswith('$2'):
-        print(f"WARNING: Password appears to be hashed for {supplier['name']}. Scraping may fail.")
-    
-    print(f"Found supplier: {supplier['name']}")
-    print(f"Sizes to scrape: {sizes}")
-    
-    results = []
-    
-    # Run scraping with ONE browser for all sizes (reuse session)
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
-        )
-        
-        context = await browser.new_context(
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            viewport={'width': 1920, 'height': 1080},
-            locale='pt-PT',
-        )
-        
-        page = await context.new_page()
-        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
-        
-        # Do login once for the supplier
-        logged_in = False
-        
-        for medida in sizes:
-            try:
-                print(f"Scraping {supplier['name']} for size {medida}...")
-                
-                if 'mp24' in supplier_name:
-                    result = await scrape_mp24_with_session(page, username, password, medida, logged_in)
-                    logged_in = True  # After first scrape, we're logged in
-                elif 'prismanil' in supplier_name:
-                    result = await scrape_prismanil(page, username, password, medida)
-                elif 'dispnal' in supplier_name:
-                    result = await scrape_dispnal(page, username, password, medida)
-                elif 'josé' in supplier_name or 'jose' in supplier_name:
-                    result = await scrape_sjose(page, username, password, medida,
-                                                supplier.get('url_login', ''), supplier.get('url_search', ''))
-                elif 'euromais' in supplier_name or 'eurotyre' in supplier_name:
-                    result = await scrape_euromais(page, username, password, medida)
-                elif 'soledad' in supplier_name:
-                    result = await scrape_grupo_soledad(page, username, password, medida)
-                elif 'aguesport' in supplier_name:
-                    result = await scrape_aguesport(page, username, password, medida)
-                elif 'abt' in supplier_name:
-                    result = await scrape_abtyres(page, username, password, medida)
-                elif 'tugapneus' in supplier_name or 'tuga' in supplier_name:
-                    result = await scrape_tugapneus(page, username, password, medida)
-                elif 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:
-                    result = await scrape_inter_sprint(page, username, password, medida)
-                elif 'cruzeiro' in supplier_name:
-                    result = await scrape_pneus_cruzeiro(page, username, password, medida)
-                else:
-                    result = {"supplier": supplier['name'], "price": None, "error": "Adapter not implemented"}
-                
-                result["medida"] = medida
-                result["job_id"] = job_id
-                results.append(result)
-                
-                # Save to PostgreSQL - save ALL products with brand/model
-                products = result.get('products', [])
-                now = datetime.now(timezone.utc)
-
-                if products:
-                    # Delete old records for this supplier+medida+brand+model, then insert fresh
-                    for prod in products:
-                        marca = prod.get('brand', '').upper()
-                        modelo = prod.get('model', '')
-                        await conn.execute(
-                            """
-                            DELETE FROM scraped_prices
-                            WHERE supplier_name = $1 AND medida = $2
-                              AND COALESCE(marca,'') = $3 AND COALESCE(modelo,'') = $4
-                            """,
-                            supplier['name'], medida, marca, modelo,
-                        )
-                        await conn.execute(
-                            """
-                            INSERT INTO scraped_prices
-                                (id, supplier_name, supplier_id, medida, marca, modelo, price, scraped_at)
-                            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-                            """,
-                            str(uuid.uuid4()), supplier['name'], supplier_id,
-                            medida, marca, modelo, prod.get('price'), now,
-                        )
-                    print(f"  Saved {len(products)} products with brand/model")
-                else:
-                    # Fallback: save single price without brand
-                    await conn.execute(
-                        "DELETE FROM scraped_prices WHERE supplier_name = $1 AND medida = $2 AND marca IS NULL",
-                        supplier['name'], medida,
-                    )
-                    if result.get('price') is not None:
-                        await conn.execute(
-                            """
-                            INSERT INTO scraped_prices
-                                (id, supplier_name, supplier_id, medida, price, scraped_at)
-                            VALUES ($1,$2,$3,$4,$5,$6)
-                            """,
-                            str(uuid.uuid4()), supplier['name'], supplier_id,
-                            medida, result.get('price'), now,
-                        )
-                
-                if result.get('price'):
-                    print(f"  Result: €{result['price']}")
-                else:
-                    print(f"  Result: {result.get('error', 'No price found')}")
-                    
-            except Exception as e:
-                print(f"  Error scraping {medida}: {e}")
-                results.append({"supplier": supplier['name'], "medida": medida, "error": str(e)})
-        
-        await browser.close()
-
-    await conn.close()
-    print(f"Finished scraping {supplier['name']}")
     return results
 
 async def main():
