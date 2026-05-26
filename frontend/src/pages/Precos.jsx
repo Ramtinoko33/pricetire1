@@ -360,7 +360,9 @@ const Precos = () => {
                             <TableRow key={item.id || i} className="bg-muted/20 border-l-2 border-amber-400">
                               <TableCell className="font-mono text-xs text-muted-foreground pl-6">↳</TableCell>
                               <TableCell></TableCell>
-                              <TableCell></TableCell>
+                              <TableCell className="max-w-[200px] truncate text-muted-foreground text-xs" title={item.modelo}>
+                                {item.modelo || '-'}
+                              </TableCell>
                               <TableCell>
                                 <Badge variant="secondary">{item.supplier_name}</Badge>
                               </TableCell>
