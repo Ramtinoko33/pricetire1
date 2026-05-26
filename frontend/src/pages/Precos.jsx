@@ -33,6 +33,12 @@ const Precos = () => {
   const [scraping, setScraping]         = useState(false);
   const [scrapeProgress, setScrapeProgress] = useState('');
   const pollRef = useRef(null);
+  const [expanded, setExpanded] = useState(new Set());
+  const toggleExpand = (key) => setExpanded(prev => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
 
   useEffect(() => {
     api.get('/marcas').then(res => {
@@ -302,43 +308,71 @@ const Precos = () => {
                 </TableHeader>
                 <TableBody>
                   {(() => {
-                    const modelCounts = {};
+                    // Agrupar por marca+modelo+medida
+                    const groups = {};
                     prices.forEach(r => {
-                      const key = `${r.marca}|${r.modelo}|${r.medida}`;
-                      modelCounts[key] = (modelCounts[key] || 0) + 1;
+                      const key = `${r.medida}|${r.marca}|${r.modelo}`;
+                      if (!groups[key]) groups[key] = [];
+                      groups[key].push(r);
                     });
-                    const isDuplicate = (r) => modelCounts[`${r.marca}|${r.modelo}|${r.medida}`] > 1;
-                    return prices.map((item, idx) => {
-                    const isBest = stats && item.price === stats.minPrice;
-                    return (
-                      <TableRow
-                        key={item.id || idx}
-                        className={isBest ? 'bg-emerald-500/10 hover:bg-emerald-500/15' : ''}
-                        style={{ borderLeft: isDuplicate(item) ? '3px solid #D97706' : '3px solid transparent' }}
-                        title={isDuplicate(item) ? 'Variante de preço' : ''}
-                      >
-                        <TableCell className="font-mono font-medium">{item.medida}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="font-medium">{item.marca || '-'}</Badge>
-                        </TableCell>
-                        <TableCell className="max-w-[200px] truncate text-muted-foreground" title={item.modelo}>
-                          {item.modelo || '-'}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={isBest ? 'default' : 'secondary'} className={isBest ? 'bg-emerald-500/80' : ''}>
-                            {item.supplier_name}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <span className={`font-bold ${isBest ? 'text-emerald-500 text-lg' : 'text-foreground'}`}>
-                            {isBest && <TrendingDown className="inline w-4 h-4 mr-1" />}
-                            €{item.price?.toFixed(2) ?? '-'}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-sm">{formatDate(item.scraped_at)}</TableCell>
-                      </TableRow>
-                    );
-                  });
+                    // Ordenar cada grupo por preço
+                    Object.values(groups).forEach(g => g.sort((a, b) => (a.price ?? 999) - (b.price ?? 999)));
+                    const groupEntries = Object.entries(groups);
+                    return groupEntries.map(([key, items]) => {
+                      const best = items[0];
+                      const isBest = stats && best.price === stats.minPrice;
+                      const hasMultiple = items.length > 1;
+                      const isExpanded = expanded.has(key);
+                      return (
+                        <React.Fragment key={key}>
+                          <TableRow
+                            className={`${isBest ? 'bg-emerald-500/10 hover:bg-emerald-500/15' : 'hover:bg-muted/40'} ${hasMultiple ? 'cursor-pointer' : ''}`}
+                            onClick={hasMultiple ? () => toggleExpand(key) : undefined}
+                          >
+                            <TableCell className="font-mono font-medium">{best.medida}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="font-medium">{best.marca || '-'}</Badge>
+                            </TableCell>
+                            <TableCell className="max-w-[200px] truncate text-muted-foreground" title={best.modelo}>
+                              {best.modelo || '-'}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <Badge variant={isBest ? 'default' : 'secondary'} className={isBest ? 'bg-emerald-500/80' : ''}>
+                                  {best.supplier_name}
+                                </Badge>
+                                {hasMultiple && (
+                                  <span className="text-xs text-amber-500 font-medium border border-amber-400 rounded px-1.5 py-0.5">
+                                    +{items.length - 1} {isExpanded ? '▲' : '▼'}
+                                  </span>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <span className={`font-bold ${isBest ? 'text-emerald-500 text-lg' : 'text-foreground'}`}>
+                                {isBest && <TrendingDown className="inline w-4 h-4 mr-1" />}
+                                €{best.price?.toFixed(2) ?? '-'}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground text-sm">{formatDate(best.scraped_at)}</TableCell>
+                          </TableRow>
+                          {hasMultiple && isExpanded && items.slice(1).map((item, i) => (
+                            <TableRow key={item.id || i} className="bg-muted/20 border-l-2 border-amber-400">
+                              <TableCell className="font-mono text-xs text-muted-foreground pl-6">↳</TableCell>
+                              <TableCell></TableCell>
+                              <TableCell></TableCell>
+                              <TableCell>
+                                <Badge variant="secondary">{item.supplier_name}</Badge>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <span className="font-semibold text-muted-foreground">€{item.price?.toFixed(2) ?? '-'}</span>
+                              </TableCell>
+                              <TableCell className="text-muted-foreground text-sm">{formatDate(item.scraped_at)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </React.Fragment>
+                      );
+                    });
                   })()}
                 </TableBody>
               </Table>
