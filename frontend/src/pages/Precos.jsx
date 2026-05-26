@@ -301,6 +301,7 @@ const Precos = () => {
                     <TableHead>Medida</TableHead>
                     <TableHead>Marca</TableHead>
                     <TableHead>Modelo</TableHead>
+                    <TableHead>Índice</TableHead>
                     <TableHead>Fornecedor</TableHead>
                     <TableHead className="text-right">Preço</TableHead>
                     <TableHead>Atualizado</TableHead>
@@ -336,6 +337,9 @@ const Precos = () => {
                             <TableCell className="max-w-[200px] truncate text-muted-foreground" title={best.modelo}>
                               {best.modelo || '-'}
                             </TableCell>
+                            <TableCell className="font-mono text-sm text-muted-foreground">
+                              {best.load_index || '-'}
+                            </TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2">
                                 <Badge variant={isBest ? 'default' : 'secondary'} className={isBest ? 'bg-emerald-500/80' : ''}>
@@ -362,6 +366,9 @@ const Precos = () => {
                               <TableCell></TableCell>
                               <TableCell className="max-w-[200px] truncate text-muted-foreground text-xs" title={item.modelo}>
                                 {item.modelo || '-'}
+                              </TableCell>
+                              <TableCell className="font-mono text-xs text-muted-foreground">
+                                {item.load_index || '-'}
                               </TableCell>
                               <TableCell>
                                 <Badge variant="secondary">{item.supplier_name}</Badge>
