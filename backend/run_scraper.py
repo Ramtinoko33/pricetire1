@@ -3480,561 +3480,252 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
         print(f"Filtered to {len(suppliers)} suppliers matching '{supplier_filter}'")
 
     results = []
+    _sem = asyncio.Semaphore(3)
 
-    # Process each supplier with its own browser instance (like test script)
-    for supplier in suppliers:
-        supplier_name = supplier['name'].lower()
-        print(f"\n--- Scraping {supplier['name']} ---")
-        is_tuga = 'tugapneus' in supplier_name or 'tuga' in supplier_name
-        is_brand_aware = is_tuga or 'inter-sprint' in supplier_name or 'intersprint' in supplier_name
+    async def _run_supplier(supplier):
+        async with _sem:
+            supplier_name = supplier['name'].lower()
+            print(f"\n--- Scraping {supplier['name']} ---")
+            is_tuga = 'tugapneus' in supplier_name or 'tuga' in supplier_name
+            is_brand_aware = is_tuga or 'inter-sprint' in supplier_name or 'intersprint' in supplier_name
 
-        # For TugaPneus: build (medida, marca, modelo) targets for brand-specific searches
-        # For all others: use generic (medida, '', '') targets
-        if is_brand_aware and medida_items:
-            targets: list = []
-            seen_targets: set = set()
-            for medida in medidas:
-                brand_items = medida_items.get(medida, [])
-                if brand_items:
-                    for bi in brand_items:
-                        key = (medida, bi['marca'], bi['modelo'])
+            # For TugaPneus: build (medida, marca, modelo) targets for brand-specific searches
+            # For all others: use generic (medida, '', '') targets
+            if is_brand_aware and medida_items:
+                targets: list = []
+                seen_targets: set = set()
+                for medida in medidas:
+                    brand_items = medida_items.get(medida, [])
+                    if brand_items:
+                        for bi in brand_items:
+                            key = (medida, bi['marca'], bi['modelo'])
+                            if key not in seen_targets:
+                                seen_targets.add(key)
+                                targets.append(key)
+                    else:
+                        key = (medida, '', '')
                         if key not in seen_targets:
                             seen_targets.add(key)
                             targets.append(key)
-                else:
-                    key = (medida, '', '')
-                    if key not in seen_targets:
-                        seen_targets.add(key)
-                        targets.append(key)
-            print(f"  [{supplier['name']}] {len(targets)} pesquisas marca+medida: {targets[:5]}")
-        else:
-            targets = [(m, '', '') for m in medidas]
+                print(f"  [{supplier['name']}] {len(targets)} pesquisas marca+medida: {targets[:5]}")
+            else:
+                targets = [(m, '', '') for m in medidas]
 
-        # ── Grupo Soledad: sessão única para todas as medidas (evita login repetido) ──
-        if 'soledad' in supplier_name:
-            _sol_ctx_kwargs = dict(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                viewport={'width': 1920, 'height': 1080},
-                locale='pt-PT',
-            )
-            async with async_playwright() as _p_sol:
-                _sol_browser = await _p_sol.chromium.launch(
-                    headless=True,
-                    args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+            # ── Grupo Soledad: sessão única para todas as medidas (evita login repetido) ──
+            if 'soledad' in supplier_name:
+                _sol_ctx_kwargs = dict(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    viewport={'width': 1920, 'height': 1080},
+                    locale='pt-PT',
                 )
-                _sol_ctx = await _sol_browser.new_context(**_sol_ctx_kwargs)
-                # Nota: cada medida usa uma página nova no mesmo contexto.
-                # O contexto partilha cookies (sessão autenticada), mas a página é fresca.
-                # Isto evita que um timeout/cancel numa medida corrompa o estado do browser.
-                _sol_first = True
-                _sol_relogin = False  # set True when session expires mid-scrape
-                _sol_medida_count = 0  # contador para re-login preventivo
+                async with async_playwright() as _p_sol:
+                    _sol_browser = await _p_sol.chromium.launch(
+                        headless=True,
+                        args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                    )
+                    _sol_ctx = await _sol_browser.new_context(**_sol_ctx_kwargs)
+                    # Nota: cada medida usa uma página nova no mesmo contexto.
+                    # O contexto partilha cookies (sessão autenticada), mas a página é fresca.
+                    # Isto evita que um timeout/cancel numa medida corrompa o estado do browser.
+                    _sol_first = True
+                    _sol_relogin = False  # set True when session expires mid-scrape
+                    _sol_medida_count = 0  # contador para re-login preventivo
 
-                # Limpar medidas obsoletas: apagar registos do Soledad que NÃO estão
-                # nas medidas actuais. Evita que medidas antigas (já removidas da lista)
-                # continuem a aparecer nos resultados indefinidamente.
-                _sol_current_medidas = [m for m, _, _ in targets]
-                if _sol_current_medidas:
-                    _conn_cleanup = await _pg_connect()
-                    try:
-                        _placeholders = ','.join(f'${i + 2}' for i in range(len(_sol_current_medidas)))
-                        _deleted_obs = await _conn_cleanup.fetchval(
-                            f"WITH d AS (DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida NOT IN ({_placeholders}) RETURNING id) SELECT COUNT(*) FROM d",
-                            supplier['name'], *_sol_current_medidas,
-                        )
-                        if _deleted_obs:
-                            print(f"  [Soledad] Limpeza: {_deleted_obs} registos de medidas obsoletas apagados")
-                    finally:
-                        await _conn_cleanup.close()
+                    # Limpar medidas obsoletas: apagar registos do Soledad que NÃO estão
+                    # nas medidas actuais. Evita que medidas antigas (já removidas da lista)
+                    # continuem a aparecer nos resultados indefinidamente.
+                    _sol_current_medidas = [m for m, _, _ in targets]
+                    if _sol_current_medidas:
+                        _conn_cleanup = await _pg_connect()
+                        try:
+                            _placeholders = ','.join(f'${i + 2}' for i in range(len(_sol_current_medidas)))
+                            _deleted_obs = await _conn_cleanup.fetchval(
+                                f"WITH d AS (DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida NOT IN ({_placeholders}) RETURNING id) SELECT COUNT(*) FROM d",
+                                supplier['name'], *_sol_current_medidas,
+                            )
+                            if _deleted_obs:
+                                print(f"  [Soledad] Limpeza: {_deleted_obs} registos de medidas obsoletas apagados")
+                        finally:
+                            await _conn_cleanup.close()
 
-                for medida, marca, modelo in targets:
-                    _sol_page = await _sol_ctx.new_page()
-                    await _sol_page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
-                    try:
-                        _sol_medida_count += 1
-                        # Re-login preventivo a cada 3 medidas para evitar expiração de sessão
-                        _preventive_relogin = (_sol_medida_count % 3 == 0) and not _sol_first
-                        _is_first = _sol_first or _sol_relogin or _preventive_relogin
-                        if _preventive_relogin:
-                            print(f"  [Soledad] Re-login preventivo (medida #{_sol_medida_count})")
-                        _sol_first = False
-                        _sol_relogin = False
-                        _t0 = datetime.now()
-                        print(f"  [Soledad] Início medida {medida} às {_t0.strftime('%H:%M:%S')} (skip_login={not _is_first})")
-                        # Login em b2b.current (credenciais funcionam aqui).
-                        # b2b.current faz SSO para b2b.new/login?params=TOKEN após auth.
-                        # A sessão é criada no b2b.new — pesquisa usa b2b.new.
-                        _sol_url_login = 'https://b2b.current.gruposoledad.com/login'
-                        _sol_url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
-                        result = await asyncio.wait_for(
-                            scrape_grupo_soledad(
-                                _sol_page, supplier['username'], supplier['password'], medida,
-                                _sol_url_login,
-                                _sol_url_search,
-                                skip_login=(not _is_first),
-                            ),
-                            timeout=90,   # 1.5 min max por medida (fornecedores correm em paralelo)
-                        )
-                        _dt = (datetime.now() - _t0).total_seconds()
-                        print(f"  [Soledad] Fim medida {medida}: {_dt:.0f}s, price={result.get('price')}, products={len(result.get('products',[]))}")
+                    for medida, marca, modelo in targets:
+                        _sol_page = await _sol_ctx.new_page()
+                        await _sol_page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
+                        try:
+                            _sol_medida_count += 1
+                            # Re-login preventivo a cada 3 medidas para evitar expiração de sessão
+                            _preventive_relogin = (_sol_medida_count % 3 == 0) and not _sol_first
+                            _is_first = _sol_first or _sol_relogin or _preventive_relogin
+                            if _preventive_relogin:
+                                print(f"  [Soledad] Re-login preventivo (medida #{_sol_medida_count})")
+                            _sol_first = False
+                            _sol_relogin = False
+                            _t0 = datetime.now()
+                            print(f"  [Soledad] Início medida {medida} às {_t0.strftime('%H:%M:%S')} (skip_login={not _is_first})")
+                            # Login em b2b.current (credenciais funcionam aqui).
+                            # b2b.current faz SSO para b2b.new/login?params=TOKEN após auth.
+                            # A sessão é criada no b2b.new — pesquisa usa b2b.new.
+                            _sol_url_login = 'https://b2b.current.gruposoledad.com/login'
+                            _sol_url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
+                            result = await asyncio.wait_for(
+                                scrape_grupo_soledad(
+                                    _sol_page, supplier['username'], supplier['password'], medida,
+                                    _sol_url_login,
+                                    _sol_url_search,
+                                    skip_login=(not _is_first),
+                                ),
+                                timeout=90,   # 1.5 min max por medida (fornecedores correm em paralelo)
+                            )
+                            _dt = (datetime.now() - _t0).total_seconds()
+                            print(f"  [Soledad] Fim medida {medida}: {_dt:.0f}s, price={result.get('price')}, products={len(result.get('products',[]))}")
 
-                        # Detect session expiry — retry CURRENT medida immediately with re-login
-                        if 'session issue' in (result.get('error') or ''):
-                            print(f"  [Soledad] Sessão expirou em {medida} — retentando imediatamente com re-login")
-                            _sol_retry_page = await _sol_ctx.new_page()
-                            await _sol_retry_page.add_init_script(
-                                "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
-                            try:
-                                result = await asyncio.wait_for(
-                                    scrape_grupo_soledad(
-                                        _sol_retry_page,
-                                        supplier['username'], supplier['password'], medida,
-                                        _sol_url_login, _sol_url_search,
-                                        skip_login=False,  # forçar re-login
-                                    ),
-                                    timeout=120,  # mais tempo para login + pesquisa no retry
-                                )
-                                _dt2 = (datetime.now() - _t0).total_seconds()
-                                print(f"  [Soledad] Retry medida {medida}: {_dt2:.0f}s, products={len(result.get('products',[]))}")
-                            except Exception as _retry_e:
-                                print(f"  [Soledad] Retry falhou ({medida}): {_retry_e}")
-                            finally:
+                            # Detect session expiry — retry CURRENT medida immediately with re-login
+                            if 'session issue' in (result.get('error') or ''):
+                                print(f"  [Soledad] Sessão expirou em {medida} — retentando imediatamente com re-login")
+                                _sol_retry_page = await _sol_ctx.new_page()
+                                await _sol_retry_page.add_init_script(
+                                    "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
                                 try:
-                                    await _sol_retry_page.close()
-                                except Exception:
-                                    pass
-                            # Próxima medida também deve re-autenticar (sessão pode ainda estar inválida)
-                            _sol_relogin = True
-
-                        result["medida"] = medida
-                        results.append(result)
-                        # Save to PostgreSQL
-                        products = result.get('products', [])
-                        _is_session_err = 'session issue' in (result.get('error') or '')
-                        conn_save = await _pg_connect()
-                        try:
-                            if not _is_session_err:
-                                # Clear ALL old entries for this medida — prevents stale prices
-                                # from past (incorrect) runs from polluting future comparisons.
-                                await conn_save.execute(
-                                    "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
-                                    supplier['name'], medida,
-                                )
-                            if products:
-                                for prod in products:
-                                    await conn_save.execute(
-                                        "INSERT INTO scraped_prices (id,supplier_name,medida,marca,modelo,price,load_index,scraped_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-                                        str(uuid.uuid4()), supplier['name'], medida,
-                                        prod.get('brand', '').upper(), prod.get('model', ''),
-                                        prod.get('price'), prod.get('load_index') or prod.get('indice') or '', datetime.now(timezone.utc),
+                                    result = await asyncio.wait_for(
+                                        scrape_grupo_soledad(
+                                            _sol_retry_page,
+                                            supplier['username'], supplier['password'], medida,
+                                            _sol_url_login, _sol_url_search,
+                                            skip_login=False,  # forçar re-login
+                                        ),
+                                        timeout=120,  # mais tempo para login + pesquisa no retry
                                     )
-                                print(f"  {medida}: saved {len(products)} products")
-                            elif not _is_session_err:
-                                if result.get('price') is not None:
-                                    await conn_save.execute(
-                                        "INSERT INTO scraped_prices (id,supplier_name,medida,price,scraped_at) VALUES ($1,$2,$3,$4,$5)",
-                                        str(uuid.uuid4()), supplier['name'], medida, result['price'], datetime.now(timezone.utc),
-                                    )
-                                    print(f"  {medida}: €{result['price']} (no brand data)")
-                                else:
-                                    print(f"  {medida}: no products found — old data cleared")
-                        finally:
-                            await conn_save.close()
-                        print(f"  {medida}: best price €{result.get('price')}" if result.get('price') else f"  {medida}: {result.get('error','No price found')}")
-                    except asyncio.TimeoutError:
-                        _dt = (datetime.now() - _t0).total_seconds()
-                        print(f"  [Soledad] TIMEOUT medida {medida} após {_dt:.0f}s — a avançar para próxima medida")
-                        results.append({"supplier": supplier['name'], "medida": medida, "error": "Timeout 150s"})
-                    except Exception as _e_sol:
-                        print(f"  Error (Soledad {medida}): {_e_sol}")
-                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_sol)})
-                    finally:
-                        try:
-                            await _sol_page.close()
-                        except Exception:
-                            pass
-                await _sol_browser.close()
-            # Sumário compacto de todos os resultados Soledad (visível no fim dos logs)
-            _sol_summary = []
-            for _r in results:
-                if _r.get('supplier', '').lower().startswith('grupo'):
-                    _m = _r.get('medida', '?')
-                    _np = len(_r.get('products', []))
-                    _err = _r.get('error') or ''
-                    _sol_summary.append(f"{_m}:{_np}p{'(ERR)' if _err else ''}")
-            print(f"  [Soledad] RESUMO: {' | '.join(_sol_summary)}")
-            continue  # Skip the generic per-medida loop below
+                                    _dt2 = (datetime.now() - _t0).total_seconds()
+                                    print(f"  [Soledad] Retry medida {medida}: {_dt2:.0f}s, products={len(result.get('products',[]))}")
+                                except Exception as _retry_e:
+                                    print(f"  [Soledad] Retry falhou ({medida}): {_retry_e}")
+                                finally:
+                                    try:
+                                        await _sol_retry_page.close()
+                                    except Exception:
+                                        pass
+                                # Próxima medida também deve re-autenticar (sessão pode ainda estar inválida)
+                                _sol_relogin = True
 
-        # ── Aguesport: sessão única para todas as medidas ──────────────────
-        # Login uma vez; cada medida usa página nova no mesmo contexto.
-        if 'aguesport' in supplier_name:
-            _agu_ctx_kwargs = dict(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                viewport={'width': 1920, 'height': 1080},
-                locale='pt-PT',
-            )
-            async with async_playwright() as _p_agu:
-                _agu_browser = await _p_agu.chromium.launch(
-                    headless=True,
-                    args=['--no-sandbox', '--disable-setuid-sandbox',
-                          '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
-                )
-                _agu_ctx = await _agu_browser.new_context(**_agu_ctx_kwargs)
-                _agu_first = True
-                _agu_summary = []
-
-                for medida in medidas:
-                    _agu_page = await _agu_ctx.new_page()
-                    await _agu_page.add_init_script(
-                        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
-                    )
-                    try:
-                        result = await asyncio.wait_for(
-                            scrape_aguesport(
-                                _agu_page,
-                                supplier['username'], supplier['password'],
-                                medida,
-                                skip_login=(not _agu_first),
-                            ),
-                            timeout=60,
-                        )
-                        _agu_first = False
-                        result["medida"] = medida
-                        results.append(result)
-
-                        products = result.get('products', [])
-                        now = datetime.now(timezone.utc)
-                        conn_save = await _pg_connect()
-                        try:
-                            await conn_save.execute(
-                                "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
-                                supplier['name'], medida,
-                            )
-                            if products:
-                                for prod in products:
-                                    await conn_save.execute(
-                                        """INSERT INTO scraped_prices
-                                               (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
-                                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
-                                        str(uuid.uuid4()), supplier['name'], medida,
-                                        prod.get('brand', '').upper(),
-                                        prod.get('model', ''),
-                                        prod.get('price'),
-                                        prod.get('load_index', ''),
-                                        now,
-                                    )
-                                print(f"  [Aguesport] {medida}: guardados {len(products)} produtos")
-                            elif result.get('price') is not None:
-                                await conn_save.execute(
-                                    """INSERT INTO scraped_prices
-                                           (id, supplier_name, medida, price, scraped_at)
-                                       VALUES ($1,$2,$3,$4,$5)""",
-                                    str(uuid.uuid4()), supplier['name'], medida,
-                                    result['price'], now,
-                                )
-                                print(f"  [Aguesport] {medida}: €{result['price']} (sem dados marca)")
-                            else:
-                                print(f"  [Aguesport] {medida}: sem produtos — registos antigos apagados")
-                        finally:
-                            await conn_save.close()
-
-                        _err = result.get('error') or ''
-                        _np  = len(result.get('products', []))
-                        _agu_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
-
-                    except asyncio.TimeoutError:
-                        print(f"  [Aguesport] Timeout em {medida}")
-                        results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
-                        _agu_summary.append(f"{medida}:TIMEOUT")
-                    except Exception as _e_agu:
-                        print(f"  [Aguesport] Erro em {medida}: {_e_agu}")
-                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_agu)})
-                        _agu_summary.append(f"{medida}:ERR")
-                    finally:
-                        await _agu_page.close()
-
-                print(f"  [Aguesport] RESUMO: {' | '.join(_agu_summary)}")
-                await _agu_browser.close()
-            continue  # Skip the generic per-medida loop below
-
-        # ── Grupo Andres: sessão única para todas as medidas ───────────────
-        # Login uma vez via JS form submit; pesquisa por URL directa.
-        if 'andres' in supplier_name:
-            _and_ctx_kwargs = dict(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                viewport={'width': 1920, 'height': 1080},
-                locale='pt-PT',
-            )
-            async with async_playwright() as _p_and:
-                _and_browser = await _p_and.chromium.launch(
-                    headless=True,
-                    args=['--no-sandbox', '--disable-setuid-sandbox',
-                          '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
-                )
-                _and_ctx = await _and_browser.new_context(**_and_ctx_kwargs)
-                _and_first = True
-                _and_summary = []
-
-                for medida in medidas:
-                    _and_page = await _and_ctx.new_page()
-                    await _and_page.add_init_script(
-                        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
-                    )
-                    try:
-                        result = await asyncio.wait_for(
-                            scrape_grupo_andres(
-                                _and_page,
-                                supplier['username'], supplier['password'],
-                                medida,
-                                skip_login=(not _and_first),
-                            ),
-                            timeout=60,
-                        )
-                        _and_first = False
-                        result["medida"] = medida
-                        results.append(result)
-
-                        products = result.get('products', [])
-                        now = datetime.now(timezone.utc)
-                        conn_save = await _pg_connect()
-                        try:
-                            await conn_save.execute(
-                                "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
-                                supplier['name'], medida,
-                            )
-                            if products:
-                                for prod in products:
-                                    await conn_save.execute(
-                                        """INSERT INTO scraped_prices
-                                               (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
-                                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
-                                        str(uuid.uuid4()), supplier['name'], medida,
-                                        prod.get('brand', '').upper(),
-                                        prod.get('model', ''),
-                                        prod.get('price'),
-                                        prod.get('load_index', ''),
-                                        now,
-                                    )
-                                print(f"  [Andres] {medida}: guardados {len(products)} produtos")
-                            elif result.get('price') is not None:
-                                await conn_save.execute(
-                                    """INSERT INTO scraped_prices
-                                           (id, supplier_name, medida, price, scraped_at)
-                                       VALUES ($1,$2,$3,$4,$5)""",
-                                    str(uuid.uuid4()), supplier['name'], medida,
-                                    result['price'], now,
-                                )
-                                print(f"  [Andres] {medida}: €{result['price']} (sem dados marca)")
-                            else:
-                                print(f"  [Andres] {medida}: sem produtos — registos antigos apagados")
-                        finally:
-                            await conn_save.close()
-
-                        _err = result.get('error') or ''
-                        _np  = len(result.get('products', []))
-                        _and_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
-
-                    except asyncio.TimeoutError:
-                        print(f"  [Andres] Timeout em {medida}")
-                        results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
-                        _and_summary.append(f"{medida}:TIMEOUT")
-                    except Exception as _e_and:
-                        print(f"  [Andres] Erro em {medida}: {_e_and}")
-                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_and)})
-                        _and_summary.append(f"{medida}:ERR")
-                    finally:
-                        await _and_page.close()
-
-                print(f"  [Andres] RESUMO: {' | '.join(_and_summary)}")
-                await _and_browser.close()
-            continue  # Skip the generic per-medida loop below
-
-        # ── ABTyres: sessão única para todas as medidas ─────────────────────
-        # Login uma vez; cada medida navega directamente para /pneus e pesquisa.
-        if 'abtyres' in supplier_name:
-            _abt_ctx_kwargs = dict(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                viewport={'width': 1920, 'height': 1080},
-                locale='pt-PT',
-            )
-            async with async_playwright() as _p_abt:
-                _abt_browser = await _p_abt.chromium.launch(
-                    headless=True,
-                    args=['--no-sandbox', '--disable-setuid-sandbox',
-                          '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
-                )
-                _abt_ctx = await _abt_browser.new_context(**_abt_ctx_kwargs)
-                _abt_first = True
-                _abt_summary = []
-
-                for medida in medidas:
-                    _abt_page = await _abt_ctx.new_page()
-                    await _abt_page.add_init_script(
-                        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
-                    )
-                    try:
-                        result = await asyncio.wait_for(
-                            scrape_abtyres(
-                                _abt_page,
-                                supplier['username'], supplier['password'],
-                                medida,
-                                skip_login=(not _abt_first),
-                            ),
-                            timeout=180,
-                        )
-                        _abt_first = False
-                        result["medida"] = medida
-                        results.append(result)
-
-                        products = result.get('products', [])
-                        now = datetime.now(timezone.utc)
-                        conn_save = await _pg_connect()
-                        try:
-                            await conn_save.execute(
-                                "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
-                                supplier['name'], medida,
-                            )
-                            if products:
-                                for prod in products:
-                                    await conn_save.execute(
-                                        """INSERT INTO scraped_prices
-                                               (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
-                                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
-                                        str(uuid.uuid4()), supplier['name'], medida,
-                                        prod.get('brand', '').upper(),
-                                        prod.get('model', ''),
-                                        prod.get('price'),
-                                        prod.get('load_index', ''),
-                                        now,
-                                    )
-                                print(f"  [ABTyres] {medida}: guardados {len(products)} produtos")
-                            elif result.get('price') is not None:
-                                await conn_save.execute(
-                                    """INSERT INTO scraped_prices
-                                           (id, supplier_name, medida, price, scraped_at)
-                                       VALUES ($1,$2,$3,$4,$5)""",
-                                    str(uuid.uuid4()), supplier['name'], medida,
-                                    result['price'], now,
-                                )
-                                print(f"  [ABTyres] {medida}: €{result['price']} (sem dados marca)")
-                            else:
-                                print(f"  [ABTyres] {medida}: sem produtos — registos antigos apagados")
-                        finally:
-                            await conn_save.close()
-
-                        _err = result.get('error') or ''
-                        _np  = len(result.get('products', []))
-                        _abt_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
-
-                    except asyncio.TimeoutError:
-                        print(f"  [ABTyres] Timeout em {medida}")
-                        results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
-                        _abt_summary.append(f"{medida}:TIMEOUT")
-                    except Exception as _e_abt:
-                        print(f"  [ABTyres] Erro em {medida}: {_e_abt}")
-                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_abt)})
-                        _abt_summary.append(f"{medida}:ERR")
-                    finally:
-                        await _abt_page.close()
-
-                print(f"  [ABTyres] RESUMO: {' | '.join(_abt_summary)}")
-                await _abt_browser.close()
-            continue  # Skip the generic per-medida loop below
-
-        # ── Pneus Cruzeiro: sessão única para todas as medidas ──────────────
-        # Login só uma vez (reCAPTCHA invisible resolve automaticamente);
-        # cada medida usa uma página nova no mesmo contexto autenticado.
-        if 'cruzeiro' in supplier_name:
-            _crz_ctx_kwargs = dict(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                viewport={'width': 1920, 'height': 1080},
-                locale='pt-PT',
-            )
-            _crz_url_login  = supplier.get('url_login')  or 'https://www.pneuscruzeiro.pt/pt/login'
-            _crz_url_search = supplier.get('url_search') or 'https://www.pneuscruzeiro.pt/pt/privatearea'
-
-            # Targets Cruzeiro: um por (medida, marca) — dedupados
-            # O site tem dropdown FABRICANTE, por isso pesquisamos por marca separadamente
-            _crz_pairs: list = []
-            _crz_seen_pairs: set = set()
-            for _m in medidas:
-                _brands = {bi['marca'].upper() for bi in medida_items.get(_m, []) if bi.get('marca')}
-                if _brands:
-                    for _b in sorted(_brands):
-                        if (_m, _b) not in _crz_seen_pairs:
-                            _crz_seen_pairs.add((_m, _b))
-                            _crz_pairs.append((_m, _b))
-                else:
-                    if (_m, '') not in _crz_seen_pairs:
-                        _crz_seen_pairs.add((_m, ''))
-                        _crz_pairs.append((_m, ''))
-            print(f"  [Cruzeiro] {len(_crz_pairs)} pesquisas (medida+fabricante): {_crz_pairs[:8]}")
-
-            async with async_playwright() as _p_crz:
-                _crz_browser = await _p_crz.chromium.launch(
-                    headless=True,
-                    args=['--no-sandbox', '--disable-setuid-sandbox',
-                          '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
-                )
-                _crz_ctx   = await _crz_browser.new_context(**_crz_ctx_kwargs)
-                _crz_first = True
-                _crz_summary = []
-                _crz_deleted_medidas: set = set()  # medidas já limpas na BD nesta sessão
-
-                for medida, marca in _crz_pairs:
-                    _crz_page = await _crz_ctx.new_page()
-                    await _crz_page.add_init_script(
-                        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
-                    )
-                    try:
-                        result = await asyncio.wait_for(
-                            scrape_pneus_cruzeiro(
-                                _crz_page,
-                                supplier['username'], supplier['password'],
-                                medida,
-                                _crz_url_login, _crz_url_search,
-                                skip_login=(not _crz_first),
-                                marca=marca,
-                            ),
-                            timeout=90,
-                        )
-                        _crz_first = False
-                        result["medida"] = medida
-                        results.append(result)
-
-                        # ── Guardar na BD ──────────────────────────────────
-                        products = result.get('products', [])
-                        now = datetime.now(timezone.utc)
-                        conn_save = await _pg_connect()
-                        try:
-                            if products:
-                                # Apagar TODOS os registos antigos desta medida na primeira
-                                # pesquisa bem-sucedida — evita mistura de datas/marcas antigas.
-                                # Cada medida tem múltiplas pesquisas (uma por marca), por isso
-                                # rastreamos quais medidas já foram limpas nesta sessão.
-                                if medida not in _crz_deleted_medidas:
+                            result["medida"] = medida
+                            results.append(result)
+                            # Save to PostgreSQL
+                            products = result.get('products', [])
+                            _is_session_err = 'session issue' in (result.get('error') or '')
+                            conn_save = await _pg_connect()
+                            try:
+                                if not _is_session_err:
+                                    # Clear ALL old entries for this medida — prevents stale prices
+                                    # from past (incorrect) runs from polluting future comparisons.
                                     await conn_save.execute(
                                         "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
                                         supplier['name'], medida,
                                     )
-                                    _crz_deleted_medidas.add(medida)
-                                for prod in products:
-                                    await conn_save.execute(
-                                        """INSERT INTO scraped_prices
-                                               (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
-                                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
-                                        str(uuid.uuid4()), supplier['name'], medida,
-                                        prod.get('brand', '').upper(),
-                                        prod.get('model', ''),
-                                        prod.get('price'), prod.get('load_index', ''), now,
-                                    )
-                                print(f"  [Cruzeiro] {medida}: guardados {len(products)} produtos")
-                            else:
+                                if products:
+                                    for prod in products:
+                                        await conn_save.execute(
+                                            "INSERT INTO scraped_prices (id,supplier_name,medida,marca,modelo,price,load_index,scraped_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+                                            str(uuid.uuid4()), supplier['name'], medida,
+                                            prod.get('brand', '').upper(), prod.get('model', ''),
+                                            prod.get('price'), prod.get('load_index') or prod.get('indice') or '', datetime.now(timezone.utc),
+                                        )
+                                    print(f"  {medida}: saved {len(products)} products")
+                                elif not _is_session_err:
+                                    if result.get('price') is not None:
+                                        await conn_save.execute(
+                                            "INSERT INTO scraped_prices (id,supplier_name,medida,price,scraped_at) VALUES ($1,$2,$3,$4,$5)",
+                                            str(uuid.uuid4()), supplier['name'], medida, result['price'], datetime.now(timezone.utc),
+                                        )
+                                        print(f"  {medida}: €{result['price']} (no brand data)")
+                                    else:
+                                        print(f"  {medida}: no products found — old data cleared")
+                            finally:
+                                await conn_save.close()
+                            print(f"  {medida}: best price €{result.get('price')}" if result.get('price') else f"  {medida}: {result.get('error','No price found')}")
+                        except asyncio.TimeoutError:
+                            _dt = (datetime.now() - _t0).total_seconds()
+                            print(f"  [Soledad] TIMEOUT medida {medida} após {_dt:.0f}s — a avançar para próxima medida")
+                            results.append({"supplier": supplier['name'], "medida": medida, "error": "Timeout 150s"})
+                        except Exception as _e_sol:
+                            print(f"  Error (Soledad {medida}): {_e_sol}")
+                            results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_sol)})
+                        finally:
+                            try:
+                                await _sol_page.close()
+                            except Exception:
+                                pass
+                    await _sol_browser.close()
+                # Sumário compacto de todos os resultados Soledad (visível no fim dos logs)
+                _sol_summary = []
+                for _r in results:
+                    if _r.get('supplier', '').lower().startswith('grupo'):
+                        _m = _r.get('medida', '?')
+                        _np = len(_r.get('products', []))
+                        _err = _r.get('error') or ''
+                        _sol_summary.append(f"{_m}:{_np}p{'(ERR)' if _err else ''}")
+                print(f"  [Soledad] RESUMO: {' | '.join(_sol_summary)}")
+                return  # Skip the generic per-medida loop below
+
+            # ── Aguesport: sessão única para todas as medidas ──────────────────
+            # Login uma vez; cada medida usa página nova no mesmo contexto.
+            if 'aguesport' in supplier_name:
+                _agu_ctx_kwargs = dict(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    viewport={'width': 1920, 'height': 1080},
+                    locale='pt-PT',
+                )
+                async with async_playwright() as _p_agu:
+                    _agu_browser = await _p_agu.chromium.launch(
+                        headless=True,
+                        args=['--no-sandbox', '--disable-setuid-sandbox',
+                              '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                    )
+                    _agu_ctx = await _agu_browser.new_context(**_agu_ctx_kwargs)
+                    _agu_first = True
+                    _agu_summary = []
+
+                    for medida in medidas:
+                        _agu_page = await _agu_ctx.new_page()
+                        await _agu_page.add_init_script(
+                            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+                        )
+                        try:
+                            result = await asyncio.wait_for(
+                                scrape_aguesport(
+                                    _agu_page,
+                                    supplier['username'], supplier['password'],
+                                    medida,
+                                    skip_login=(not _agu_first),
+                                ),
+                                timeout=60,
+                            )
+                            _agu_first = False
+                            result["medida"] = medida
+                            results.append(result)
+
+                            products = result.get('products', [])
+                            now = datetime.now(timezone.utc)
+                            conn_save = await _pg_connect()
+                            try:
                                 await conn_save.execute(
-                                    "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2 AND marca IS NULL",
+                                    "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
                                     supplier['name'], medida,
                                 )
-                                if result.get('price') is not None:
+                                if products:
+                                    for prod in products:
+                                        await conn_save.execute(
+                                            """INSERT INTO scraped_prices
+                                                   (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
+                                               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+                                            str(uuid.uuid4()), supplier['name'], medida,
+                                            prod.get('brand', '').upper(),
+                                            prod.get('model', ''),
+                                            prod.get('price'),
+                                            prod.get('load_index', ''),
+                                            now,
+                                        )
+                                    print(f"  [Aguesport] {medida}: guardados {len(products)} produtos")
+                                elif result.get('price') is not None:
                                     await conn_save.execute(
                                         """INSERT INTO scraped_prices
                                                (id, supplier_name, medida, price, scraped_at)
@@ -4042,240 +3733,552 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                         str(uuid.uuid4()), supplier['name'], medida,
                                         result['price'], now,
                                     )
-                                print(f"  [Cruzeiro] {medida}: €{result.get('price')} (sem dados marca)")
+                                    print(f"  [Aguesport] {medida}: €{result['price']} (sem dados marca)")
+                                else:
+                                    print(f"  [Aguesport] {medida}: sem produtos — registos antigos apagados")
+                            finally:
+                                await conn_save.close()
+
+                            _err = result.get('error') or ''
+                            _np  = len(result.get('products', []))
+                            _agu_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+
+                        except asyncio.TimeoutError:
+                            print(f"  [Aguesport] Timeout em {medida}")
+                            results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                            _agu_summary.append(f"{medida}:TIMEOUT")
+                        except Exception as _e_agu:
+                            print(f"  [Aguesport] Erro em {medida}: {_e_agu}")
+                            results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_agu)})
+                            _agu_summary.append(f"{medida}:ERR")
                         finally:
-                            await conn_save.close()
+                            await _agu_page.close()
 
-                        _err = result.get('error') or ''
-                        _np  = len(result.get('products', []))
-                        _crz_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+                    print(f"  [Aguesport] RESUMO: {' | '.join(_agu_summary)}")
+                    await _agu_browser.close()
+                return  # Skip the generic per-medida loop below
 
-                    except asyncio.TimeoutError:
-                        print(f"  [Cruzeiro] Timeout em {medida}")
-                        results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
-                        _crz_summary.append(f"{medida}:TIMEOUT")
-                    except Exception as e:
-                        print(f"  [Cruzeiro] Erro em {medida}: {e}")
-                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(e)})
-                        _crz_summary.append(f"{medida}:ERR")
-                    finally:
-                        await _crz_page.close()
-
-                print(f"  [Cruzeiro] RESUMO: {' | '.join(_crz_summary)}")
-            continue  # Skip the generic per-medida loop below
-
-        # ── MP24: sessão única para todas as medidas ──────────────────────────
-        if 'mp24' in supplier_name:
-            _mp24_ctx_kwargs = dict(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                viewport={'width': 1920, 'height': 1080},
-                locale='pt-PT',
-            )
-            async with async_playwright() as _p_mp24:
-                _mp24_browser = await _p_mp24.chromium.launch(
-                    headless=True,
-                    args=['--no-sandbox', '--disable-setuid-sandbox',
-                          '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
-                )
-                _mp24_ctx = await _mp24_browser.new_context(**_mp24_ctx_kwargs)
-                _mp24_first = True
-                _mp24_summary = []
-
-                for medida, _, _ in targets:
-                    _mp24_page = await _mp24_ctx.new_page()
-                    await _mp24_page.add_init_script(
-                        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
-                    )
-                    try:
-                        result = await asyncio.wait_for(
-                            scrape_mp24_with_session(
-                                _mp24_page,
-                                supplier['username'], supplier['password'],
-                                medida,
-                                already_logged_in=(not _mp24_first),
-                            ),
-                            timeout=120,
-                        )
-                        _mp24_first = False
-                        result["medida"] = medida
-                        results.append(result)
-
-                        products = result.get('products', [])
-                        now = datetime.now(timezone.utc)
-                        conn_save = await _pg_connect()
-                        try:
-                            await conn_save.execute(
-                                "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
-                                supplier['name'], medida,
-                            )
-                            if products:
-                                for prod in products:
-                                    await conn_save.execute(
-                                        """INSERT INTO scraped_prices
-                                               (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
-                                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
-                                        str(uuid.uuid4()), supplier['name'], medida,
-                                        prod.get('brand', '').upper(),
-                                        prod.get('model', ''),
-                                        prod.get('price'),
-                                        prod.get('load_index', ''),
-                                        now,
-                                    )
-                                print(f"  [MP24] {medida}: guardados {len(products)} produtos")
-                            elif result.get('price') is not None:
-                                await conn_save.execute(
-                                    """INSERT INTO scraped_prices
-                                           (id, supplier_name, medida, price, scraped_at)
-                                       VALUES ($1,$2,$3,$4,$5)""",
-                                    str(uuid.uuid4()), supplier['name'], medida,
-                                    result['price'], now,
-                                )
-                                print(f"  [MP24] {medida}: €{result['price']} (sem dados marca)")
-                            else:
-                                print(f"  [MP24] {medida}: sem produtos")
-                        finally:
-                            await conn_save.close()
-
-                        _err = result.get('error') or ''
-                        _np = len(result.get('products', []))
-                        _mp24_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
-
-                    except asyncio.TimeoutError:
-                        print(f"  [MP24] Timeout em {medida}")
-                        results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
-                        _mp24_summary.append(f"{medida}:TIMEOUT")
-                        _mp24_first = True  # forçar re-login na próxima medida
-                    except Exception as _e_mp24:
-                        print(f"  [MP24] Erro em {medida}: {_e_mp24}")
-                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_mp24)})
-                        _mp24_summary.append(f"{medida}:ERR")
-                    finally:
-                        try:
-                            await _mp24_page.close()
-                        except Exception:
-                            pass
-
-                print(f"  [MP24] RESUMO: {' | '.join(_mp24_summary)}")
-                await _mp24_browser.close()
-            continue  # Skip the generic per-medida loop below
-
-        for medida, marca, modelo in targets:
-            # Create completely fresh browser for each medida
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
-                )
-
-                # InterSprint usa HTTP Basic Auth — definir credenciais no contexto
-                _ctx_kwargs = dict(
+            # ── Grupo Andres: sessão única para todas as medidas ───────────────
+            # Login uma vez via JS form submit; pesquisa por URL directa.
+            if 'andres' in supplier_name:
+                _and_ctx_kwargs = dict(
                     user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                     viewport={'width': 1920, 'height': 1080},
                     locale='pt-PT',
                 )
-                if 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:
-                    _ctx_kwargs['http_credentials'] = {
-                        'username': supplier['username'],
-                        'password': supplier['password'],
-                    }
-                context = await browser.new_context(**_ctx_kwargs)
+                async with async_playwright() as _p_and:
+                    _and_browser = await _p_and.chromium.launch(
+                        headless=True,
+                        args=['--no-sandbox', '--disable-setuid-sandbox',
+                              '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                    )
+                    _and_ctx = await _and_browser.new_context(**_and_ctx_kwargs)
+                    _and_first = True
+                    _and_summary = []
 
-                page = await context.new_page()
-                await page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
-
-                try:
-                    if 'mp24' in supplier_name:
-                        result = await scrape_mp24(page, supplier['username'], supplier['password'], medida)
-                    elif 'prismanil' in supplier_name:
-                        result = await scrape_prismanil(page, supplier['username'], supplier['password'], medida)
-                    elif 'dispnal' in supplier_name:
-                        result = await scrape_dispnal(page, supplier['username'], supplier['password'], medida)
-                    elif 'josé' in supplier_name or 'jose' in supplier_name:
-                        result = await scrape_sjose(page, supplier['username'], supplier['password'], medida,
-                                                    supplier.get('url_login', ''), supplier.get('url_search', ''))
-                    elif 'euromais' in supplier_name or 'eurotyre' in supplier_name:
-                        result = await scrape_euromais(page, supplier['username'], supplier['password'], medida)
-                    elif 'aguesport' in supplier_name:
-                        result = await scrape_aguesport(page, supplier['username'], supplier['password'], medida)
-                    elif 'abt' in supplier_name:
-                        result = await scrape_abtyres(page, supplier['username'], supplier['password'], medida)
-                    elif is_tuga:
-                        result = await scrape_tugapneus(page, supplier['username'], supplier['password'], medida, marca, modelo)
-                    elif 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:
-                        result = await scrape_inter_sprint(page, supplier['username'], supplier['password'], medida, marca, modelo)
-                    elif 'cruzeiro' in supplier_name:
-                        result = await scrape_pneus_cruzeiro(
-                            page, supplier['username'], supplier['password'], medida,
-                            supplier.get('url_login', ''), supplier.get('url_search', ''),
+                    for medida in medidas:
+                        _and_page = await _and_ctx.new_page()
+                        await _and_page.add_init_script(
+                            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
                         )
-                    else:
-                        result = {"supplier": supplier['name'], "price": None, "error": "Adapter not implemented"}
-                    
-                    result["medida"] = medida
-                    results.append(result)
-
-                    # Save to PostgreSQL with full brand/model data
-                    products = result.get('products', [])
-                    now = datetime.now(timezone.utc)
-                    conn_save = await _pg_connect()
-                    try:
-                        if products:
-                            # Apagar TODOS os registos antigos deste fornecedor+medida+marca
-                            # antes de inserir os novos — garante que modelos fora de stock
-                            # não ficam no BD após um re-scrape.
-                            marcas_encontradas = {prod.get('brand', '').upper() for prod in products}
-                            for m_brand in marcas_encontradas:
-                                await conn_save.execute(
-                                    """
-                                    DELETE FROM scraped_prices
-                                    WHERE supplier_name = $1 AND medida = $2
-                                      AND COALESCE(marca,'') = $3
-                                    """,
-                                    supplier['name'], medida, m_brand,
-                                )
-                            for prod in products:
-                                prod_marca = prod.get('brand', '').upper()
-                                prod_modelo = prod.get('model', '')
-                                prod_indice = prod.get('load_index', '') or prod.get('indice') or ''
-                                await conn_save.execute(
-                                    """
-                                    INSERT INTO scraped_prices
-                                        (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
-                                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-                                    """,
-                                    str(uuid.uuid4()), supplier['name'], medida,
-                                    prod_marca, prod_modelo, prod.get('price'), prod_indice, now,
-                                )
-                            print(f"  {medida}: saved {len(products)} products with brand/model")
-                        else:
-                            # Fallback: save single price without brand
-                            await conn_save.execute(
-                                "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2 AND marca IS NULL",
-                                supplier['name'], medida,
+                        try:
+                            result = await asyncio.wait_for(
+                                scrape_grupo_andres(
+                                    _and_page,
+                                    supplier['username'], supplier['password'],
+                                    medida,
+                                    skip_login=(not _and_first),
+                                ),
+                                timeout=60,
                             )
-                            if result.get('price') is not None:
+                            _and_first = False
+                            result["medida"] = medida
+                            results.append(result)
+
+                            products = result.get('products', [])
+                            now = datetime.now(timezone.utc)
+                            conn_save = await _pg_connect()
+                            try:
                                 await conn_save.execute(
-                                    """
-                                    INSERT INTO scraped_prices (id, supplier_name, medida, price, scraped_at)
-                                    VALUES ($1,$2,$3,$4,$5)
-                                    """,
-                                    str(uuid.uuid4()), supplier['name'], medida,
-                                    result['price'], now,
+                                    "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
+                                    supplier['name'], medida,
                                 )
-                            print(f"  {medida}: €{result.get('price')} (no brand data)")
-                    finally:
-                        await conn_save.close()
+                                if products:
+                                    for prod in products:
+                                        await conn_save.execute(
+                                            """INSERT INTO scraped_prices
+                                                   (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
+                                               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+                                            str(uuid.uuid4()), supplier['name'], medida,
+                                            prod.get('brand', '').upper(),
+                                            prod.get('model', ''),
+                                            prod.get('price'),
+                                            prod.get('load_index', ''),
+                                            now,
+                                        )
+                                    print(f"  [Andres] {medida}: guardados {len(products)} produtos")
+                                elif result.get('price') is not None:
+                                    await conn_save.execute(
+                                        """INSERT INTO scraped_prices
+                                               (id, supplier_name, medida, price, scraped_at)
+                                           VALUES ($1,$2,$3,$4,$5)""",
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        result['price'], now,
+                                    )
+                                    print(f"  [Andres] {medida}: €{result['price']} (sem dados marca)")
+                                else:
+                                    print(f"  [Andres] {medida}: sem produtos — registos antigos apagados")
+                            finally:
+                                await conn_save.close()
 
-                    if result.get('price'):
-                        print(f"  {medida}: best price €{result['price']}")
+                            _err = result.get('error') or ''
+                            _np  = len(result.get('products', []))
+                            _and_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+
+                        except asyncio.TimeoutError:
+                            print(f"  [Andres] Timeout em {medida}")
+                            results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                            _and_summary.append(f"{medida}:TIMEOUT")
+                        except Exception as _e_and:
+                            print(f"  [Andres] Erro em {medida}: {_e_and}")
+                            results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_and)})
+                            _and_summary.append(f"{medida}:ERR")
+                        finally:
+                            await _and_page.close()
+
+                    print(f"  [Andres] RESUMO: {' | '.join(_and_summary)}")
+                    await _and_browser.close()
+                return  # Skip the generic per-medida loop below
+
+            # ── ABTyres: sessão única para todas as medidas ─────────────────────
+            # Login uma vez; cada medida navega directamente para /pneus e pesquisa.
+            if 'abtyres' in supplier_name:
+                _abt_ctx_kwargs = dict(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    viewport={'width': 1920, 'height': 1080},
+                    locale='pt-PT',
+                )
+                async with async_playwright() as _p_abt:
+                    _abt_browser = await _p_abt.chromium.launch(
+                        headless=True,
+                        args=['--no-sandbox', '--disable-setuid-sandbox',
+                              '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                    )
+                    _abt_ctx = await _abt_browser.new_context(**_abt_ctx_kwargs)
+                    _abt_first = True
+                    _abt_summary = []
+
+                    for medida in medidas:
+                        _abt_page = await _abt_ctx.new_page()
+                        await _abt_page.add_init_script(
+                            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+                        )
+                        try:
+                            result = await asyncio.wait_for(
+                                scrape_abtyres(
+                                    _abt_page,
+                                    supplier['username'], supplier['password'],
+                                    medida,
+                                    skip_login=(not _abt_first),
+                                ),
+                                timeout=180,
+                            )
+                            _abt_first = False
+                            result["medida"] = medida
+                            results.append(result)
+
+                            products = result.get('products', [])
+                            now = datetime.now(timezone.utc)
+                            conn_save = await _pg_connect()
+                            try:
+                                await conn_save.execute(
+                                    "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
+                                    supplier['name'], medida,
+                                )
+                                if products:
+                                    for prod in products:
+                                        await conn_save.execute(
+                                            """INSERT INTO scraped_prices
+                                                   (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
+                                               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+                                            str(uuid.uuid4()), supplier['name'], medida,
+                                            prod.get('brand', '').upper(),
+                                            prod.get('model', ''),
+                                            prod.get('price'),
+                                            prod.get('load_index', ''),
+                                            now,
+                                        )
+                                    print(f"  [ABTyres] {medida}: guardados {len(products)} produtos")
+                                elif result.get('price') is not None:
+                                    await conn_save.execute(
+                                        """INSERT INTO scraped_prices
+                                               (id, supplier_name, medida, price, scraped_at)
+                                           VALUES ($1,$2,$3,$4,$5)""",
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        result['price'], now,
+                                    )
+                                    print(f"  [ABTyres] {medida}: €{result['price']} (sem dados marca)")
+                                else:
+                                    print(f"  [ABTyres] {medida}: sem produtos — registos antigos apagados")
+                            finally:
+                                await conn_save.close()
+
+                            _err = result.get('error') or ''
+                            _np  = len(result.get('products', []))
+                            _abt_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+
+                        except asyncio.TimeoutError:
+                            print(f"  [ABTyres] Timeout em {medida}")
+                            results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                            _abt_summary.append(f"{medida}:TIMEOUT")
+                        except Exception as _e_abt:
+                            print(f"  [ABTyres] Erro em {medida}: {_e_abt}")
+                            results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_abt)})
+                            _abt_summary.append(f"{medida}:ERR")
+                        finally:
+                            await _abt_page.close()
+
+                    print(f"  [ABTyres] RESUMO: {' | '.join(_abt_summary)}")
+                    await _abt_browser.close()
+                return  # Skip the generic per-medida loop below
+
+            # ── Pneus Cruzeiro: sessão única para todas as medidas ──────────────
+            # Login só uma vez (reCAPTCHA invisible resolve automaticamente);
+            # cada medida usa uma página nova no mesmo contexto autenticado.
+            if 'cruzeiro' in supplier_name:
+                _crz_ctx_kwargs = dict(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    viewport={'width': 1920, 'height': 1080},
+                    locale='pt-PT',
+                )
+                _crz_url_login  = supplier.get('url_login')  or 'https://www.pneuscruzeiro.pt/pt/login'
+                _crz_url_search = supplier.get('url_search') or 'https://www.pneuscruzeiro.pt/pt/privatearea'
+
+                # Targets Cruzeiro: um por (medida, marca) — dedupados
+                # O site tem dropdown FABRICANTE, por isso pesquisamos por marca separadamente
+                _crz_pairs: list = []
+                _crz_seen_pairs: set = set()
+                for _m in medidas:
+                    _brands = {bi['marca'].upper() for bi in medida_items.get(_m, []) if bi.get('marca')}
+                    if _brands:
+                        for _b in sorted(_brands):
+                            if (_m, _b) not in _crz_seen_pairs:
+                                _crz_seen_pairs.add((_m, _b))
+                                _crz_pairs.append((_m, _b))
                     else:
-                        print(f"  {medida}: {result.get('error', 'No price found')}")
+                        if (_m, '') not in _crz_seen_pairs:
+                            _crz_seen_pairs.add((_m, ''))
+                            _crz_pairs.append((_m, ''))
+                print(f"  [Cruzeiro] {len(_crz_pairs)} pesquisas (medida+fabricante): {_crz_pairs[:8]}")
 
-                except Exception as e:
-                    print(f"  Error: {e}")
-                    results.append({"supplier": supplier['name'], "medida": medida, "error": str(e)})
-                finally:
-                    await browser.close()
+                async with async_playwright() as _p_crz:
+                    _crz_browser = await _p_crz.chromium.launch(
+                        headless=True,
+                        args=['--no-sandbox', '--disable-setuid-sandbox',
+                              '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                    )
+                    _crz_ctx   = await _crz_browser.new_context(**_crz_ctx_kwargs)
+                    _crz_first = True
+                    _crz_summary = []
+                    _crz_deleted_medidas: set = set()  # medidas já limpas na BD nesta sessão
+
+                    for medida, marca in _crz_pairs:
+                        _crz_page = await _crz_ctx.new_page()
+                        await _crz_page.add_init_script(
+                            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+                        )
+                        try:
+                            result = await asyncio.wait_for(
+                                scrape_pneus_cruzeiro(
+                                    _crz_page,
+                                    supplier['username'], supplier['password'],
+                                    medida,
+                                    _crz_url_login, _crz_url_search,
+                                    skip_login=(not _crz_first),
+                                    marca=marca,
+                                ),
+                                timeout=90,
+                            )
+                            _crz_first = False
+                            result["medida"] = medida
+                            results.append(result)
+
+                            # ── Guardar na BD ──────────────────────────────────
+                            products = result.get('products', [])
+                            now = datetime.now(timezone.utc)
+                            conn_save = await _pg_connect()
+                            try:
+                                if products:
+                                    # Apagar TODOS os registos antigos desta medida na primeira
+                                    # pesquisa bem-sucedida — evita mistura de datas/marcas antigas.
+                                    # Cada medida tem múltiplas pesquisas (uma por marca), por isso
+                                    # rastreamos quais medidas já foram limpas nesta sessão.
+                                    if medida not in _crz_deleted_medidas:
+                                        await conn_save.execute(
+                                            "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
+                                            supplier['name'], medida,
+                                        )
+                                        _crz_deleted_medidas.add(medida)
+                                    for prod in products:
+                                        await conn_save.execute(
+                                            """INSERT INTO scraped_prices
+                                                   (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
+                                               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+                                            str(uuid.uuid4()), supplier['name'], medida,
+                                            prod.get('brand', '').upper(),
+                                            prod.get('model', ''),
+                                            prod.get('price'), prod.get('load_index', ''), now,
+                                        )
+                                    print(f"  [Cruzeiro] {medida}: guardados {len(products)} produtos")
+                                else:
+                                    await conn_save.execute(
+                                        "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2 AND marca IS NULL",
+                                        supplier['name'], medida,
+                                    )
+                                    if result.get('price') is not None:
+                                        await conn_save.execute(
+                                            """INSERT INTO scraped_prices
+                                                   (id, supplier_name, medida, price, scraped_at)
+                                               VALUES ($1,$2,$3,$4,$5)""",
+                                            str(uuid.uuid4()), supplier['name'], medida,
+                                            result['price'], now,
+                                        )
+                                    print(f"  [Cruzeiro] {medida}: €{result.get('price')} (sem dados marca)")
+                            finally:
+                                await conn_save.close()
+
+                            _err = result.get('error') or ''
+                            _np  = len(result.get('products', []))
+                            _crz_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+
+                        except asyncio.TimeoutError:
+                            print(f"  [Cruzeiro] Timeout em {medida}")
+                            results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                            _crz_summary.append(f"{medida}:TIMEOUT")
+                        except Exception as e:
+                            print(f"  [Cruzeiro] Erro em {medida}: {e}")
+                            results.append({"supplier": supplier['name'], "medida": medida, "error": str(e)})
+                            _crz_summary.append(f"{medida}:ERR")
+                        finally:
+                            await _crz_page.close()
+
+                    print(f"  [Cruzeiro] RESUMO: {' | '.join(_crz_summary)}")
+                return  # Skip the generic per-medida loop below
+
+            # ── MP24: sessão única para todas as medidas ──────────────────────────
+            if 'mp24' in supplier_name:
+                _mp24_ctx_kwargs = dict(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    viewport={'width': 1920, 'height': 1080},
+                    locale='pt-PT',
+                )
+                async with async_playwright() as _p_mp24:
+                    _mp24_browser = await _p_mp24.chromium.launch(
+                        headless=True,
+                        args=['--no-sandbox', '--disable-setuid-sandbox',
+                              '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                    )
+                    _mp24_ctx = await _mp24_browser.new_context(**_mp24_ctx_kwargs)
+                    _mp24_first = True
+                    _mp24_summary = []
+
+                    for medida, _, _ in targets:
+                        _mp24_page = await _mp24_ctx.new_page()
+                        await _mp24_page.add_init_script(
+                            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+                        )
+                        try:
+                            result = await asyncio.wait_for(
+                                scrape_mp24_with_session(
+                                    _mp24_page,
+                                    supplier['username'], supplier['password'],
+                                    medida,
+                                    already_logged_in=(not _mp24_first),
+                                ),
+                                timeout=120,
+                            )
+                            _mp24_first = False
+                            result["medida"] = medida
+                            results.append(result)
+
+                            products = result.get('products', [])
+                            now = datetime.now(timezone.utc)
+                            conn_save = await _pg_connect()
+                            try:
+                                await conn_save.execute(
+                                    "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2",
+                                    supplier['name'], medida,
+                                )
+                                if products:
+                                    for prod in products:
+                                        await conn_save.execute(
+                                            """INSERT INTO scraped_prices
+                                                   (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
+                                               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+                                            str(uuid.uuid4()), supplier['name'], medida,
+                                            prod.get('brand', '').upper(),
+                                            prod.get('model', ''),
+                                            prod.get('price'),
+                                            prod.get('load_index', ''),
+                                            now,
+                                        )
+                                    print(f"  [MP24] {medida}: guardados {len(products)} produtos")
+                                elif result.get('price') is not None:
+                                    await conn_save.execute(
+                                        """INSERT INTO scraped_prices
+                                               (id, supplier_name, medida, price, scraped_at)
+                                           VALUES ($1,$2,$3,$4,$5)""",
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        result['price'], now,
+                                    )
+                                    print(f"  [MP24] {medida}: €{result['price']} (sem dados marca)")
+                                else:
+                                    print(f"  [MP24] {medida}: sem produtos")
+                            finally:
+                                await conn_save.close()
+
+                            _err = result.get('error') or ''
+                            _np = len(result.get('products', []))
+                            _mp24_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
+
+                        except asyncio.TimeoutError:
+                            print(f"  [MP24] Timeout em {medida}")
+                            results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                            _mp24_summary.append(f"{medida}:TIMEOUT")
+                            _mp24_first = True  # forçar re-login na próxima medida
+                        except Exception as _e_mp24:
+                            print(f"  [MP24] Erro em {medida}: {_e_mp24}")
+                            results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_mp24)})
+                            _mp24_summary.append(f"{medida}:ERR")
+                        finally:
+                            try:
+                                await _mp24_page.close()
+                            except Exception:
+                                pass
+
+                    print(f"  [MP24] RESUMO: {' | '.join(_mp24_summary)}")
+                    await _mp24_browser.close()
+                return  # Skip the generic per-medida loop below
+
+            for medida, marca, modelo in targets:
+                # Create completely fresh browser for each medida
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(
+                        headless=True,
+                        args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled']
+                    )
+
+                    # InterSprint usa HTTP Basic Auth — definir credenciais no contexto
+                    _ctx_kwargs = dict(
+                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        viewport={'width': 1920, 'height': 1080},
+                        locale='pt-PT',
+                    )
+                    if 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:
+                        _ctx_kwargs['http_credentials'] = {
+                            'username': supplier['username'],
+                            'password': supplier['password'],
+                        }
+                    context = await browser.new_context(**_ctx_kwargs)
+
+                    page = await context.new_page()
+                    await page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
+
+                    try:
+                        if 'mp24' in supplier_name:
+                            result = await scrape_mp24(page, supplier['username'], supplier['password'], medida)
+                        elif 'prismanil' in supplier_name:
+                            result = await scrape_prismanil(page, supplier['username'], supplier['password'], medida)
+                        elif 'dispnal' in supplier_name:
+                            result = await scrape_dispnal(page, supplier['username'], supplier['password'], medida)
+                        elif 'josé' in supplier_name or 'jose' in supplier_name:
+                            result = await scrape_sjose(page, supplier['username'], supplier['password'], medida,
+                                                        supplier.get('url_login', ''), supplier.get('url_search', ''))
+                        elif 'euromais' in supplier_name or 'eurotyre' in supplier_name:
+                            result = await scrape_euromais(page, supplier['username'], supplier['password'], medida)
+                        elif 'aguesport' in supplier_name:
+                            result = await scrape_aguesport(page, supplier['username'], supplier['password'], medida)
+                        elif 'abt' in supplier_name:
+                            result = await scrape_abtyres(page, supplier['username'], supplier['password'], medida)
+                        elif is_tuga:
+                            result = await scrape_tugapneus(page, supplier['username'], supplier['password'], medida, marca, modelo)
+                        elif 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:
+                            result = await scrape_inter_sprint(page, supplier['username'], supplier['password'], medida, marca, modelo)
+                        elif 'cruzeiro' in supplier_name:
+                            result = await scrape_pneus_cruzeiro(
+                                page, supplier['username'], supplier['password'], medida,
+                                supplier.get('url_login', ''), supplier.get('url_search', ''),
+                            )
+                        else:
+                            result = {"supplier": supplier['name'], "price": None, "error": "Adapter not implemented"}
+                    
+                        result["medida"] = medida
+                        results.append(result)
+
+                        # Save to PostgreSQL with full brand/model data
+                        products = result.get('products', [])
+                        now = datetime.now(timezone.utc)
+                        conn_save = await _pg_connect()
+                        try:
+                            if products:
+                                # Apagar TODOS os registos antigos deste fornecedor+medida+marca
+                                # antes de inserir os novos — garante que modelos fora de stock
+                                # não ficam no BD após um re-scrape.
+                                marcas_encontradas = {prod.get('brand', '').upper() for prod in products}
+                                for m_brand in marcas_encontradas:
+                                    await conn_save.execute(
+                                        """
+                                        DELETE FROM scraped_prices
+                                        WHERE supplier_name = $1 AND medida = $2
+                                          AND COALESCE(marca,'') = $3
+                                        """,
+                                        supplier['name'], medida, m_brand,
+                                    )
+                                for prod in products:
+                                    prod_marca = prod.get('brand', '').upper()
+                                    prod_modelo = prod.get('model', '')
+                                    prod_indice = prod.get('load_index', '') or prod.get('indice') or ''
+                                    await conn_save.execute(
+                                        """
+                                        INSERT INTO scraped_prices
+                                            (id, supplier_name, medida, marca, modelo, price, load_index, scraped_at)
+                                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                                        """,
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        prod_marca, prod_modelo, prod.get('price'), prod_indice, now,
+                                    )
+                                print(f"  {medida}: saved {len(products)} products with brand/model")
+                            else:
+                                # Fallback: save single price without brand
+                                await conn_save.execute(
+                                    "DELETE FROM scraped_prices WHERE supplier_name=$1 AND medida=$2 AND marca IS NULL",
+                                    supplier['name'], medida,
+                                )
+                                if result.get('price') is not None:
+                                    await conn_save.execute(
+                                        """
+                                        INSERT INTO scraped_prices (id, supplier_name, medida, price, scraped_at)
+                                        VALUES ($1,$2,$3,$4,$5)
+                                        """,
+                                        str(uuid.uuid4()), supplier['name'], medida,
+                                        result['price'], now,
+                                    )
+                                print(f"  {medida}: €{result.get('price')} (no brand data)")
+                        finally:
+                            await conn_save.close()
+
+                        if result.get('price'):
+                            print(f"  {medida}: best price €{result['price']}")
+                        else:
+                            print(f"  {medida}: {result.get('error', 'No price found')}")
+
+                    except Exception as e:
+                        print(f"  Error: {e}")
+                        results.append({"supplier": supplier['name'], "medida": medida, "error": str(e)})
+                    finally:
+                        await browser.close()
+
+    await asyncio.gather(*[_run_supplier(s) for s in suppliers])
 
     # Save results to file
     result_file = RESULTS_DIR / f"scrape_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
