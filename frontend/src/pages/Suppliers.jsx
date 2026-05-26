@@ -105,7 +105,7 @@ const Suppliers = () => {
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>Fornecedores</h2>
-          <p className="text-sm text-slate-600 mt-1">{suppliers.length} fornecedores cadastrados</p>
+          <p className="text-sm text-muted-foreground mt-1">{suppliers.length} fornecedores cadastrados</p>
         </div>
         <Button onClick={() => setFormOpen(true)} data-testid="add-supplier-btn">
           <Plus size={18} className="mr-2" />
@@ -113,7 +113,7 @@ const Suppliers = () => {
         </Button>
       </div>
 
-      <Card className="border-slate-200">
+      <Card className="border-border">
         <CardContent className="p-0">
           <Table>
             <TableHeader>
@@ -129,7 +129,7 @@ const Suppliers = () => {
             <TableBody>
               {suppliers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-slate-500">
+                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                     Nenhum fornecedor cadastrado
                   </TableCell>
                 </TableRow>
@@ -137,14 +137,14 @@ const Suppliers = () => {
                 suppliers.map((supplier) => (
                   <TableRow key={supplier.id} data-testid={`supplier-row-${supplier.id}`}>
                     <TableCell className="font-medium">{supplier.name}</TableCell>
-                    <TableCell className="text-sm text-slate-600 max-w-xs truncate">{supplier.url_login}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground max-w-xs truncate">{supplier.url_login}</TableCell>
                     <TableCell className="text-sm font-mono">{supplier.username}</TableCell>
                     <TableCell>
                       <Badge variant={supplier.is_active ? 'default' : 'secondary'}>
                         {supplier.is_active ? 'Ativo' : 'Inativo'}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-sm text-slate-600">
+                    <TableCell className="text-sm text-muted-foreground">
                       {supplier.last_test
                         ? new Date(supplier.last_test).toLocaleDateString('pt-PT')
                         : 'Nunca'}
@@ -179,7 +179,7 @@ const Suppliers = () => {
                           onClick={() => handleToggleActive(supplier.id, supplier.is_active)}
                           data-testid={`toggle-active-btn-${supplier.id}`}
                         >
-                          <Power size={14} className={supplier.is_active ? 'text-green-600' : 'text-slate-400'} />
+                          <Power size={14} className={supplier.is_active ? 'text-green-500' : 'text-muted-foreground'} />
                         </Button>
                         <Button
                           variant="outline"
