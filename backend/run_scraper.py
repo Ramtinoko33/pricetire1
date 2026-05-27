@@ -1554,31 +1554,48 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         if indice2 and indice2 != indice_val:
                             indice_val = f"{indice_val}/{indice2}"
                         # Detect all dual-index formats from AR_NOMBRE:
-                        #   "109T107T"  → colado normal        → "109T/107T"
-                        #   "110R108"   → comercial letra-meio → "110R108"
-                        #   "113R111R"  → comercial colado     → "113R/111R"
-                        # Regex cobre:  NNN[A-Z]{1,2}[/]?NNN[A-Z]{0,2}
+                        #   "109T107T"  → colado normal     → "109T/107T"
+                        #   "110R108"   → comercial         → "110R108"
+                        #   "113R111R"  → comercial colado  → "113R/111R"
+                        # IMPORTANTE: excluir tamanhos de jante (14-22) para não
+                        # capturar a medida (ex: "65R17") como índice.
+                        _JANTE_RE = _re_idx.compile(r'^(?:1[4-9]|2[0-2])$')
                         _nombre_val = str(item_lc.get('ar_nombre', ('', ''))[1] or '')
                         if not indice_val or '/' not in indice_val:
-                            _md = _re_idx.search(
-                                r'\b(\d{2,3}[A-Z]{1,2}/?(\d{2,3}[A-Z]{0,2}))\b',
+                            # Índice duplo normal: 109T107T ou 109T/107T
+                            _md_dual = _re_idx.search(
+                                r'\b(\d{2,3}[A-Z]{1,2})/(\d{2,3}[A-Z]{0,2})\b',
                                 _nombre_val.upper()
                             )
-                            if _md and _md.group(2):
-                                # tem segunda parte → garantir separador
-                                _raw = _md.group(1)
-                                if '/' not in _raw:
-                                    # inserir barra entre primeiro bloco e segundo número
-                                    _split = _re_idx.match(
-                                        r'(\d{2,3}[A-Z]{1,2})(\d{2,3}[A-Z]{0,2})', _raw
-                                    )
-                                    indice_val = f"{_split.group(1)}/{_split.group(2)}" if _split else _raw
-                                else:
-                                    indice_val = _raw
-                        # Fallback: regex on model text
+                            if not _md_dual:
+                                _md_dual = _re_idx.search(
+                                    r'\b(\d{2,3}[A-Z]{1,2})(\d{2,3}[A-Z]{1,2})\b',
+                                    _nombre_val.upper()
+                                )
+                            if _md_dual:
+                                _p1 = _md_dual.group(1)
+                                _p2 = _md_dual.group(2)
+                                # Não é jante se segundo número > 22 ou tem letra
+                                _p2_num = _re_idx.match(r'^(\d+)', _p2)
+                                _p2_digits = _p2_num.group(1) if _p2_num else ''
+                                if not (_p2.isdigit() and _JANTE_RE.match(_p2_digits or _p2)):
+                                    indice_val = f"{_p1}/{_p2}" if '/' not in _nombre_val[_md_dual.start():_md_dual.end()] else f"{_p1}/{_p2}"
+                            # Índice comercial: 110R108 (letra no meio, segundo número sem letra)
+                            if not indice_val:
+                                _md_comm = _re_idx.search(
+                                    r'\b(\d{2,3}[A-Z]\d{2,3})\b',
+                                    _nombre_val.upper()
+                                )
+                                if _md_comm:
+                                    _raw = _md_comm.group(1)
+                                    # Verificar que o número final não é tamanho de jante
+                                    _num_final = _re_idx.search(r'[A-Z](\d+)$', _raw)
+                                    if _num_final and not _JANTE_RE.match(_num_final.group(1)):
+                                        indice_val = _raw
+                        # Fallback: regex no campo model_val (apenas índice simples + XL)
                         if not indice_val and model_val:
                             _m = _re_idx.search(
-                                r'\b(\d{2,3}[A-Z]{1,2}(?:[/ ]\d{2,3}[A-Z]{0,2})?(?:\s+XL)?)\b',
+                                r'\b(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\b',
                                 model_val.upper()
                             )
                             if _m:
