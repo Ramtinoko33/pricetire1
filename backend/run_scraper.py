@@ -1885,7 +1885,16 @@ async def scrape_grupo_andres(page, username: str, password: str, medida: str,
                     model = (item.get('model') or {}).get('name', '').strip().upper()
                     load  = str(item.get('load', '')).strip()
                     speed = str(item.get('speed', '')).strip()
+                    load2  = str(item.get('load2', '') or item.get('load_2', '')).strip()
+                    speed2 = str(item.get('speed2', '') or item.get('speed_2', '')).strip().upper()
                     load_index = (load + speed).upper()
+                    if load2 and speed2:
+                        load_index = f"{load_index}/{load2}{speed2}"
+                    elif load2:
+                        load_index = f"{load_index}/{load2}"
+                    _xl = any('xl' in str(item.get(k, '')).lower() for k in ('extra', 'xl', 'extra_load', 'load_range', 'reinforced'))
+                    if _xl and load_index and 'XL' not in load_index:
+                        load_index = f"{load_index} XL"
                     dist = (item.get('price') or {}).get('distributor_price') or {}
                     price_val = dist.get('campaign_price') or dist.get('base_price')
                     if not price_val or not brand or not model:
@@ -1937,7 +1946,7 @@ def _parse_aguesport_html(html: str) -> list:
         re.DOTALL,
     )
     title_re = re.compile(
-        r'\d{3}/\d{2}\s+R\d{2}\s+(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s+(\S+)\s+(.*)',
+        r'\d{3}/\d{2}\s+R\d{2}\s+(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\s+(\S+)\s+(.*)',
         re.IGNORECASE,
     )
     products = []
@@ -2405,7 +2414,7 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
                 r'PNEU\s+([\w\-]+(?:\s+[\w\-]+)?)\s+(\d{3}/\d{2}R\d{2})\s+(.*)',
                 re.IGNORECASE
             )
-            idx_re = re.compile(r'\b(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\b', re.IGNORECASE)
+            idx_re = re.compile(r'\b(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\b', re.IGNORECASE)
 
             titles = {m.group(1): m.group(2).strip() for m in tit_re.finditer(html)}
             prices: dict = {}
@@ -3291,7 +3300,7 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                 // ex: "PRIMACY 5 91V" → "PRIMACY 5"
                 // ex: "EFFICIENTGRIP PERFORMANCE 2 99V XL" → "EFFICIENTGRIP PERFORMANCE 2"
                 const remainingStr = parts.join(' ');
-                const idxMatch = remainingStr.match(/\b(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\b/i);
+                const idxMatch = remainingStr.match(/\b(\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\b/i);
                 const loadIndex = idxMatch ? idxMatch[1].trim().toUpperCase() : '';
                 model = (idxMatch ? remainingStr.slice(0, idxMatch.index) : remainingStr).trim();
 
@@ -3340,7 +3349,7 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                 }
 
                 const remainingStr = parts.join(' ');
-                const idxMatch = remainingStr.match(/\b(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\b/i);
+                const idxMatch = remainingStr.match(/\b(\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\b/i);
                 const loadIndex = idxMatch ? idxMatch[1].trim().toUpperCase() : '';
                 model = (idxMatch ? remainingStr.slice(0, idxMatch.index) : remainingStr).trim();
 
