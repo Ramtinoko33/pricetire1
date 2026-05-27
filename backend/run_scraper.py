@@ -1553,19 +1553,32 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         indice2 = (ic2_val + cv2_val).strip()
                         if indice2 and indice2 != indice_val:
                             indice_val = f"{indice_val}/{indice2}"
-                        # Detect run-together dual index in AR_NOMBRE (e.g. "109T107T")
-                        if indice_val and '/' not in indice_val:
-                            _nombre_val = str(item_lc.get('ar_nombre', ('', ''))[1] or '')
+                        # Detect all dual-index formats from AR_NOMBRE:
+                        #   "109T107T"  → colado normal        → "109T/107T"
+                        #   "110R108"   → comercial letra-meio → "110R108"
+                        #   "113R111R"  → comercial colado     → "113R/111R"
+                        # Regex cobre:  NNN[A-Z]{1,2}[/]?NNN[A-Z]{0,2}
+                        _nombre_val = str(item_lc.get('ar_nombre', ('', ''))[1] or '')
+                        if not indice_val or '/' not in indice_val:
                             _md = _re_idx.search(
-                                r'\b(\d{2,3}[A-Z]{1,2})(\d{2,3}[A-Z]{1,2})\b',
+                                r'\b(\d{2,3}[A-Z]{1,2}/?(\d{2,3}[A-Z]{0,2}))\b',
                                 _nombre_val.upper()
                             )
-                            if _md:
-                                indice_val = f"{_md.group(1)}/{_md.group(2)}"
-                        # Fallback: regex on model text e.g. "PRIMACY 4 91H XL" or "109T107T"
+                            if _md and _md.group(2):
+                                # tem segunda parte → garantir separador
+                                _raw = _md.group(1)
+                                if '/' not in _raw:
+                                    # inserir barra entre primeiro bloco e segundo número
+                                    _split = _re_idx.match(
+                                        r'(\d{2,3}[A-Z]{1,2})(\d{2,3}[A-Z]{0,2})', _raw
+                                    )
+                                    indice_val = f"{_split.group(1)}/{_split.group(2)}" if _split else _raw
+                                else:
+                                    indice_val = _raw
+                        # Fallback: regex on model text
                         if not indice_val and model_val:
                             _m = _re_idx.search(
-                                r'\b(\d{2,3}[A-Z]{1,2}(?:[/ ]\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\b',
+                                r'\b(\d{2,3}[A-Z]{1,2}(?:[/ ]\d{2,3}[A-Z]{0,2})?(?:\s+XL)?)\b',
                                 model_val.upper()
                             )
                             if _m:
