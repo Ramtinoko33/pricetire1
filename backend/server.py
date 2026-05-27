@@ -855,20 +855,20 @@ async def _do_compare(job_id: str, force: bool):
                 logger.error(f"[{sup_name}] Erro inesperado: {_exc}")
                 return True
 
-        # Correr fornecedores em lotes de 3 em paralelo — cada lote aguarda antes
-        # de iniciar o seguinte, garantindo que nunca há mais de 3 scrapers
-        # Playwright simultâneos e que nenhum bloqueia indefinidamente os outros.
-        BATCH_SIZE = 3
-        all_timeout_flags: list[bool] = []
-        for _i in range(0, len(supplier_names), BATCH_SIZE):
-            _batch = supplier_names[_i:_i + BATCH_SIZE]
-            logger.info(f"[Compare] Lote {_i // BATCH_SIZE + 1}: {_batch}")
-            _batch_flags = await asyncio.gather(
-                *[_run_supplier_proc(n) for n in _batch],
-                return_exceptions=False,
-            )
-            all_timeout_flags.extend(_batch_flags)
+        # Semáforo de 3: assim que um fornecedor termina, o próximo começa imediatamente
+        _sem_sup = asyncio.Semaphore(3)
+
+        async def _run_with_sem(sup_name: str):
+            async with _sem_sup:
+                return await _run_supplier_proc(sup_name)
+
+        logger.info(f"[Compare] A correr {len(supplier_names)} fornecedores com semáforo 3: {supplier_names}")
+        all_timeout_flags = await asyncio.gather(
+            *[_run_with_sem(n) for n in supplier_names],
+            return_exceptions=False,
+        )
         scraper_timed_out = any(all_timeout_flags)
+
 
     pool = await get_db()
     async with pool.acquire() as conn:
