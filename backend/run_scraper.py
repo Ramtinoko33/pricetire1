@@ -1519,6 +1519,20 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                                     cv_val = _s
                                     break  # only break on success
                         indice_val = (ic_val + cv_val).strip()
+                        # Fallback: se ic_val vazio mas cv_val preenchido (ex: AR_CARGA=None, AR_VELOCIDAD='T')
+                        # tentar extrair índice completo do AR_NOMBRE: ex "205/65X16 AGILIS 3 107T/103H"
+                        if not ic_val and cv_val:
+                            _nombre_fb = str(item_lc.get('ar_nombre', ('', ''))[1] or '')
+                            _fb_m = _re_idx.search(
+                                r'\b(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{1,2})?)\b',
+                                _nombre_fb.upper()
+                            )
+                            if _fb_m:
+                                _fb_raw = _fb_m.group(1)
+                                # Garantir que não é tamanho de jante (14-22)
+                                _fb_num = _re_idx.match(r'^(\d+)', _fb_raw)
+                                if _fb_num and not (14 <= int(_fb_num.group(1)) <= 22 and len(_fb_raw) <= 3):
+                                    indice_val = _fb_raw
                         # Detect XL in API fields or AR_NOMBRE
                         if indice_val and '/' not in indice_val:
                             _xl_found = False
