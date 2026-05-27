@@ -152,12 +152,19 @@ async def scrape_mp24_with_session(page, username: str, password: str, medida: s
                     # Extract load/speed index
                     _li = str(tyre.get('loadIndex') or tyre.get('li') or '').strip()
                     _si = str(tyre.get('speedIndex') or tyre.get('si') or '').strip().upper()
+                    _li2 = str(tyre.get('loadIndex2') or tyre.get('li2') or '').strip()
+                    _si2 = str(tyre.get('speedIndex2') or tyre.get('si2') or '').strip().upper()
+                    _xl = any('xl' in str(tyre.get(k, '')).lower() for k in ('extra', 'xl', 'reinforced', 'extraLoad', 'loadRange', 'name', 'profile'))
                     if _li.isdigit() and _si and len(_si) == 1 and _si.isalpha():
                         load_index = f"{_li}{_si}"
+                        if _li2.isdigit() and _si2 and len(_si2) == 1 and _si2.isalpha():
+                            load_index = f"{load_index}/{_li2}{_si2}"
                     elif _si and len(_si) == 1 and _si.isalpha():
                         load_index = _si
                     else:
                         load_index = ''
+                    if _xl and load_index and 'XL' not in load_index:
+                        load_index = f"{load_index} XL"
 
                     # Get minimum price from all sources
                     best_prices = tyre.get('bestPricesBySource', {})
@@ -612,12 +619,35 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                 const brand = (beforeParts[beforeParts.length - 1] || '').toUpperCase();
 
                 // Após a medida: extrair índice de carga (ex: 99V, 95H, 91T, 94W XL), resto = modelo
-                const afterMedida = txt.slice(medidaMatch.index + medidaMatch[0].length).trim();
+                 const afterMedida = txt.slice(medidaMatch.index + medidaMatch[0].length).trim();
                 const afterParts  = afterMedida.split(/\\s+/).filter(p => p);
                 let loadIndex = '';
-                const idxStart = (afterParts.length > 0 && /^\\d{2,3}[A-Za-z]{1,3}$/.test(afterParts[0])) ? 1 : 0;
-                if (idxStart === 1) loadIndex = afterParts[0];
-                const model = afterParts.slice(idxStart).join(' ').trim();
+                let idxStart = 0;
+                // Índice simples ou duplo: ex "91V", "109T107T", "109T/107T"
+                const idxRe = /^(\\d{2,3}[A-Za-z]{1,3}(?:\\/\\d{2,3}[A-Za-z]{1,3})?)$/;
+                const dualRe = /^(\\d{2,3}[A-Za-z]{1,3})(\\d{2,3}[A-Za-z]{1,3})$/;
+                if (afterParts.length > 0 && idxRe.test(afterParts[0])) {
+                    loadIndex = afterParts[0].toUpperCase();
+                    idxStart = 1;
+                    // XL pode seguir imediatamente: "91V XL"
+                    if (idxStart < afterParts.length && afterParts[idxStart].toUpperCase() === 'XL') {
+                        loadIndex = loadIndex + ' XL';
+                        idxStart++;
+                    }
+                } else if (afterParts.length > 0 && dualRe.test(afterParts[0])) {
+                    // índice duplo sem barra: "109T107T" → "109T/107T"
+                    const dm = afterParts[0].match(dualRe);
+                    loadIndex = dm[1].toUpperCase() + '/' + dm[2].toUpperCase();
+                    idxStart = 1;
+                }
+                // Verificar XL noutros tokens quando não apanhado acima
+                const modelParts = afterParts.slice(idxStart);
+                const xlIdx = modelParts.findIndex(t => t.toUpperCase() === 'XL');
+                if (xlIdx !== -1 && loadIndex && !loadIndex.includes('XL')) {
+                    loadIndex = loadIndex + ' XL';
+                    modelParts.splice(xlIdx, 1);
+                }
+                const model = modelParts.join(' ').trim();
 
                 return { brand, model, loadIndex };
             }
