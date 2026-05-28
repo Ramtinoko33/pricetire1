@@ -1620,7 +1620,7 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         print(f"  [Soledad] API product: brand={brand_val!r} "
                               f"model={model_val[:40]!r} price={price_val} "
                               f"ic={ic_val!r} cv={cv_val!r} indice={indice_val!r} "
-                              f"(field={used_pk})")
+                              f"(field={used_pk or 'N/A'})")
                         products.append({'brand': brand_val, 'model': model_val,
                                          'price': price_val, 'indice': indice_val,
                                          'load_index': indice_val})
@@ -1921,7 +1921,10 @@ async def scrape_grupo_andres(page, username: str, password: str, medida: str,
                         break
 
                 items = data.get('search_results', []) if isinstance(data, dict) else []
-                if not items or data.get('empty_result', False):
+                if not items:
+                    print(f"  [Andres] page={page_num} sem items — stop")
+                    break
+                if data.get('empty_result', False):
                     print(f"  [Andres] page={page_num} fim ({len(items)} items, empty_result={data.get('empty_result') if isinstance(data, dict) else '?'})")
                     break
 
@@ -1992,7 +1995,7 @@ def _parse_aguesport_html(html: str) -> list:
         re.DOTALL,
     )
     title_re = re.compile(
-        r'\d{3}/\d{2}\s+R\d{2}\s+(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\s+(\S+)\s+(.*)',
+        r'\d{3}/\d{2}\s+[RCBrcb]\d{2}\s+(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\s+(\S+)\s+(.*)',
         re.IGNORECASE,
     )
     products = []
@@ -2142,12 +2145,10 @@ async def scrape_abtyres(page, username: str, password: str, medida: str,
     try:
         if not skip_login:
             print("  [ABTyres] Login...")
-            # BUG1 FIX: domcontentloaded em vez de networkidle (loading azul mantém rede activa)
             await page.goto("https://b2b.abtyres.pt/menu", wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(1)
             current = page.url
             if 'menu' not in current and 'pneus' not in current:
-                # Need to login
                 await page.goto("https://b2b.abtyres.pt/", wait_until="domcontentloaded", timeout=60000)
                 await asyncio.sleep(1)
                 await page.locator('input[name="user"]').first.fill(username)
@@ -2159,8 +2160,6 @@ async def scrape_abtyres(page, username: str, password: str, medida: str,
                 except Exception:
                     pass
                 print(f"  [ABTyres] URL após login: {page.url}")
-        else:
-            await page.goto("https://b2b.abtyres.pt/pneus", wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(1)
 
         medida_norm = normalize_medida(medida)
