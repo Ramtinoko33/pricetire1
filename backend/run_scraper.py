@@ -66,10 +66,6 @@ def extract_prices(content: str) -> list:
 def normalize_medida(medida: str) -> str:
     return medida.replace('/', '').replace('R', '').replace('r', '')
 
-async def scrape_mp24(page, username: str, password: str, medida: str) -> dict:
-    """Scrape MP24 (always does full login)"""
-    return await scrape_mp24_with_session(page, username, password, medida, already_logged_in=False)
-
 async def scrape_mp24_with_session(page, username: str, password: str, medida: str, already_logged_in: bool = False) -> dict:
     """Scrape MP24 with session reuse support - extracts ALL products with brand/model via API interception"""
     result = {
@@ -856,8 +852,11 @@ async def scrape_euromais(page, username: str, password: str, medida: str) -> di
                 result["error"] = "No prices found"
         else:
             content = await page.content()
-            with open('/app/tmp/euromais_after_login.html', 'w') as f:
-                f.write(content)
+            try:
+                with open('/app/tmp/euromais_after_login.html', 'w') as f:
+                    f.write(content)
+            except Exception:
+                pass
             result["error"] = "Search interface not found"
             
     except Exception as e:
@@ -3072,6 +3071,9 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
         _raw_row = _re.sub(r'\s+', ' ', tag_re.sub(' ', row_inner))
         price_m  = price_re.search(_raw_row)
 
+        # ── Reset contexto se linha não tem preço nem Descricao (linha de separador) ──
+        if not _desc_cell and not price_m:
+            continue
         # ── Actualizar contexto se esta linha tem Descricao ──────────────
         if _desc_cell:
             _dm = medida_re.search(_desc_cell)
@@ -3643,7 +3645,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                 print(f"  [Soledad] Re-login preventivo (medida #{_sol_medida_count})")
                             _sol_first = False
                             _sol_relogin = False
-                            _t0 = datetime.now()
+                            _t0 = datetime.now(timezone.utc)
                             print(f"  [Soledad] Início medida {medida} às {_t0.strftime('%H:%M:%S')} (skip_login={not _is_first})")
                             # Login em b2b.current (credenciais funcionam aqui).
                             # b2b.current faz SSO para b2b.new/login?params=TOKEN após auth.
@@ -3659,7 +3661,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                 ),
                                 timeout=90,   # 1.5 min max por medida (fornecedores correm em paralelo)
                             )
-                            _dt = (datetime.now() - _t0).total_seconds()
+                            _dt = (datetime.now(timezone.utc) - _t0).total_seconds()
                             print(f"  [Soledad] Fim medida {medida}: {_dt:.0f}s, price={result.get('price')}, products={len(result.get('products',[]))}")
 
                             # Detect session expiry — retry CURRENT medida immediately with re-login
@@ -3682,6 +3684,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                     print(f"  [Soledad] Retry medida {medida}: {_dt2:.0f}s, products={len(result.get('products',[]))}")
                                 except Exception as _retry_e:
                                     print(f"  [Soledad] Retry falhou ({medida}): {_retry_e}")
+                                    result = {"supplier": supplier['name'], "medida": medida, "error": f"Retry falhou: {_retry_e}"}
                                 finally:
                                     try:
                                         await _sol_retry_page.close()
@@ -3728,7 +3731,8 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         except asyncio.TimeoutError:
                             _dt = (datetime.now() - _t0).total_seconds()
                             print(f"  [Soledad] TIMEOUT medida {medida} após {_dt:.0f}s — a avançar para próxima medida")
-                            results.append({"supplier": supplier['name'], "medida": medida, "error": "Timeout 150s"})
+                            results.append({"supplier": supplier['name'], "medida": medida, "error": "Timeout 90s"})
+                            _sol_first = True  # forçar re-login na próxima medida (sessão pode estar inválida)
                         except Exception as _e_sol:
                             print(f"  Error (Soledad {medida}): {_e_sol}")
                             results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_sol)})
@@ -4146,7 +4150,9 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                             await _crz_page.close()
 
                     print(f"  [Cruzeiro] RESUMO: {' | '.join(_crz_summary)}")
+                    await _crz_browser.close()
                 return  # Skip the generic per-medida loop below
+
 
             # ── MP24: sessão única para todas as medidas ──────────────────────────
             if 'mp24' in supplier_name:
@@ -4268,30 +4274,37 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                     await page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
 
                     try:
+                        _scrape_fn = None
                         if 'mp24' in supplier_name:
-                            result = await scrape_mp24(page, supplier['username'], supplier['password'], medida)
+                            _scrape_fn = scrape_mp24(page, supplier['username'], supplier['password'], medida)
                         elif 'prismanil' in supplier_name:
-                            result = await scrape_prismanil(page, supplier['username'], supplier['password'], medida)
+                            _scrape_fn = scrape_prismanil(page, supplier['username'], supplier['password'], medida)
                         elif 'dispnal' in supplier_name:
-                            result = await scrape_dispnal(page, supplier['username'], supplier['password'], medida)
+                            _scrape_fn = scrape_dispnal(page, supplier['username'], supplier['password'], medida)
                         elif 'josé' in supplier_name or 'jose' in supplier_name:
-                            result = await scrape_sjose(page, supplier['username'], supplier['password'], medida,
+                            _scrape_fn = scrape_sjose(page, supplier['username'], supplier['password'], medida,
                                                         supplier.get('url_login', ''), supplier.get('url_search', ''))
                         elif 'euromais' in supplier_name or 'eurotyre' in supplier_name:
-                            result = await scrape_euromais(page, supplier['username'], supplier['password'], medida)
+                            _scrape_fn = scrape_euromais(page, supplier['username'], supplier['password'], medida)
                         elif 'aguesport' in supplier_name:
-                            result = await scrape_aguesport(page, supplier['username'], supplier['password'], medida)
+                            _scrape_fn = scrape_aguesport(page, supplier['username'], supplier['password'], medida)
                         elif 'abt' in supplier_name:
-                            result = await scrape_abtyres(page, supplier['username'], supplier['password'], medida)
+                            _scrape_fn = scrape_abtyres(page, supplier['username'], supplier['password'], medida)
                         elif is_tuga:
-                            result = await scrape_tugapneus(page, supplier['username'], supplier['password'], medida, marca, modelo)
+                            _scrape_fn = scrape_tugapneus(page, supplier['username'], supplier['password'], medida, marca, modelo)
                         elif 'inter-sprint' in supplier_name or 'intersprint' in supplier_name:
-                            result = await scrape_inter_sprint(page, supplier['username'], supplier['password'], medida, marca, modelo)
+                            _scrape_fn = scrape_inter_sprint(page, supplier['username'], supplier['password'], medida, marca, modelo)
                         elif 'cruzeiro' in supplier_name:
-                            result = await scrape_pneus_cruzeiro(
+                            _scrape_fn = scrape_pneus_cruzeiro(
                                 page, supplier['username'], supplier['password'], medida,
                                 supplier.get('url_login', ''), supplier.get('url_search', ''),
                             )
+                        if _scrape_fn is not None:
+                            try:
+                                result = await asyncio.wait_for(_scrape_fn, timeout=300)
+                            except asyncio.TimeoutError:
+                                result = {"supplier": supplier['name'], "price": None, "error": "Timeout 300s (loop genérico)"}
+                                print(f"  [{supplier['name']}] Timeout 300s no loop genérico para {medida}")
                         else:
                             result = {"supplier": supplier['name'], "price": None, "error": "Adapter not implemented"}
                     
