@@ -3264,7 +3264,7 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                     const selects = document.querySelectorAll('select');
                     for (const sel of selects) {{
                         for (const opt of sel.options) {{
-                            if (opt.text.trim().toUpperCase() === {marca.upper()!r}) {{
+                            if (opt.text.trim().toUpperCase() === {json.dumps(marca.upper())}) {{
                                 sel.value = opt.value;
                                 sel.dispatchEvent(new Event('change', {{bubbles: true}}));
                                 return opt.text.trim();
@@ -3489,7 +3489,7 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
             # Deduplicar por marca+modelo, manter preço mais baixo
             seen = {}
             for p in products:
-                key = f"{p.get('brand','')}|{p.get('model','')}"
+                key = f"{(p.get('brand') or '').strip().upper()}|{(p.get('model') or '').strip().upper()}|{(p.get('load_index') or '').strip().upper()}"
                 if key not in seen or p['price'] < seen[key]['price']:
                     seen[key] = p
             products = list(seen.values())
@@ -3684,7 +3684,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                         ),
                                         timeout=120,  # mais tempo para login + pesquisa no retry
                                     )
-                                    _dt2 = (datetime.now() - _t0).total_seconds()
+                                    _dt2 = (datetime.now(timezone.utc) - _t0).total_seconds()
                                     print(f"  [Soledad] Retry medida {medida}: {_dt2:.0f}s, products={len(result.get('products',[]))}")
                                 except Exception as _retry_e:
                                     print(f"  [Soledad] Retry falhou ({medida}): {_retry_e}")
@@ -3734,7 +3734,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                 await conn_save.close()
                             print(f"  {medida}: best price €{result.get('price')}" if result.get('price') else f"  {medida}: {result.get('error','No price found')}")
                         except asyncio.TimeoutError:
-                            _dt = (datetime.now() - _t0).total_seconds()
+                            _dt = (datetime.now(timezone.utc) - _t0).total_seconds()
                             print(f"  [Soledad] TIMEOUT medida {medida} após {_dt:.0f}s — a avançar para próxima medida")
                             async with _results_lock:
                                 results.append({"supplier": supplier['name'], "medida": medida, "error": "Timeout 90s"})
@@ -4293,9 +4293,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
 
                     try:
                         _scrape_fn = None
-                        if 'mp24' in supplier_name:
-                            _scrape_fn = scrape_mp24(page, supplier['username'], supplier['password'], medida)
-                        elif 'prismanil' in supplier_name:
+                        if 'prismanil' in supplier_name:
                             _scrape_fn = scrape_prismanil(page, supplier['username'], supplier['password'], medida)
                         elif 'dispnal' in supplier_name:
                             _scrape_fn = scrape_dispnal(page, supplier['username'], supplier['password'], medida)
