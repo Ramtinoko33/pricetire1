@@ -26,12 +26,15 @@ from playwright.async_api import async_playwright
 import re
 import aiohttp
 
-# PostgreSQL connection
-DATABASE_URL = os.environ['DATABASE_URL']
+# PostgreSQL connection — lido em runtime para evitar KeyError no arranque
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
 
 
 async def _pg_connect():
-    conn = await asyncpg.connect(DATABASE_URL)
+    _url = os.environ.get('DATABASE_URL', DATABASE_URL)
+    if not _url:
+        raise RuntimeError("DATABASE_URL não está definida — verificar variáveis de ambiente")
+    conn = await asyncpg.connect(_url)
     await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
     return conn
 
@@ -3565,6 +3568,7 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
         print(f"Filtered to {len(suppliers)} suppliers matching '{supplier_filter}'")
 
     results = []
+    _results_lock = asyncio.Lock()
     _sem = asyncio.Semaphore(3)
 
     async def _run_supplier(supplier):
@@ -3694,7 +3698,8 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                 _sol_relogin = True
 
                             result["medida"] = medida
-                            results.append(result)
+                            async with _results_lock:
+                                results.append(result)
                             # Save to PostgreSQL
                             products = result.get('products', [])
                             _is_session_err = 'session issue' in (result.get('error') or '')
@@ -3731,11 +3736,13 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                         except asyncio.TimeoutError:
                             _dt = (datetime.now() - _t0).total_seconds()
                             print(f"  [Soledad] TIMEOUT medida {medida} após {_dt:.0f}s — a avançar para próxima medida")
-                            results.append({"supplier": supplier['name'], "medida": medida, "error": "Timeout 90s"})
+                            async with _results_lock:
+                                results.append({"supplier": supplier['name'], "medida": medida, "error": "Timeout 90s"})
                             _sol_first = True  # forçar re-login na próxima medida (sessão pode estar inválida)
                         except Exception as _e_sol:
                             print(f"  Error (Soledad {medida}): {_e_sol}")
-                            results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_sol)})
+                            async with _results_lock:
+                                results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_sol)})
                         finally:
                             try:
                                 await _sol_page.close()
@@ -3788,7 +3795,8 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                             )
                             _agu_first = False
                             result["medida"] = medida
-                            results.append(result)
+                            async with _results_lock:
+                                results.append(result)
 
                             products = result.get('products', [])
                             now = datetime.now(timezone.utc)
@@ -3832,11 +3840,13 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
 
                         except asyncio.TimeoutError:
                             print(f"  [Aguesport] Timeout em {medida}")
-                            results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                            async with _results_lock:
+                                results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
                             _agu_summary.append(f"{medida}:TIMEOUT")
                         except Exception as _e_agu:
                             print(f"  [Aguesport] Erro em {medida}: {_e_agu}")
-                            results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_agu)})
+                            async with _results_lock:
+                                results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_agu)})
                             _agu_summary.append(f"{medida}:ERR")
                         finally:
                             await _agu_page.close()
@@ -3924,11 +3934,13 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
 
                         except asyncio.TimeoutError:
                             print(f"  [Andres] Timeout em {medida}")
-                            results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                            async with _results_lock:
+                                results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
                             _and_summary.append(f"{medida}:TIMEOUT")
                         except Exception as _e_and:
                             print(f"  [Andres] Erro em {medida}: {_e_and}")
-                            results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_and)})
+                            async with _results_lock:
+                                results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_and)})
                             _and_summary.append(f"{medida}:ERR")
                         finally:
                             await _and_page.close()
@@ -4016,11 +4028,13 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
 
                         except asyncio.TimeoutError:
                             print(f"  [ABTyres] Timeout em {medida}")
-                            results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                            async with _results_lock:
+                                results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
                             _abt_summary.append(f"{medida}:TIMEOUT")
                         except Exception as _e_abt:
                             print(f"  [ABTyres] Erro em {medida}: {_e_abt}")
-                            results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_abt)})
+                            async with _results_lock:
+                                results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_abt)})
                             _abt_summary.append(f"{medida}:ERR")
                         finally:
                             await _abt_page.close()
@@ -4138,13 +4152,15 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                             _np  = len(result.get('products', []))
                             _crz_summary.append(f"{medida}:{_np}p{'(ERR)' if _err else ''}")
 
-                        except asyncio.TimeoutError:
+                         except asyncio.TimeoutError:
                             print(f"  [Cruzeiro] Timeout em {medida}")
-                            results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                            async with _results_lock:
+                                results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
                             _crz_summary.append(f"{medida}:TIMEOUT")
                         except Exception as e:
                             print(f"  [Cruzeiro] Erro em {medida}: {e}")
-                            results.append({"supplier": supplier['name'], "medida": medida, "error": str(e)})
+                            async with _results_lock:
+                                results.append({"supplier": supplier['name'], "medida": medida, "error": str(e)})
                             _crz_summary.append(f"{medida}:ERR")
                         finally:
                             await _crz_page.close()
@@ -4232,12 +4248,14 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
 
                         except asyncio.TimeoutError:
                             print(f"  [MP24] Timeout em {medida}")
-                            results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
+                            async with _results_lock:
+                                results.append({"supplier": supplier['name'], "medida": medida, "error": "timeout"})
                             _mp24_summary.append(f"{medida}:TIMEOUT")
                             _mp24_first = True  # forçar re-login na próxima medida
                         except Exception as _e_mp24:
                             print(f"  [MP24] Erro em {medida}: {_e_mp24}")
-                            results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_mp24)})
+                            async with _results_lock:
+                                results.append({"supplier": supplier['name'], "medida": medida, "error": str(_e_mp24)})
                             _mp24_summary.append(f"{medida}:ERR")
                         finally:
                             try:
