@@ -27,11 +27,14 @@ import re
 import aiohttp
 
 # PostgreSQL connection
-DATABASE_URL = os.environ['DATABASE_URL']
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
 
 
 async def _pg_connect():
-    conn = await asyncpg.connect(DATABASE_URL)
+    _url = os.environ.get('DATABASE_URL', DATABASE_URL)
+    if not _url:
+        raise RuntimeError("DATABASE_URL não está definida — verificar variáveis de ambiente")
+    conn = await asyncpg.connect(_url)
     await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
     return conn
 
@@ -3522,7 +3525,11 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
 
 async def get_suppliers_from_db():
     """Get active suppliers from PostgreSQL"""
-    conn = await _pg_connect()
+    try:
+        conn = await _pg_connect()
+    except Exception as e:
+        print(f"[get_suppliers_from_db] Erro de ligação à BD: {e}")
+        return []
     try:
         rows = await conn.fetch("SELECT * FROM suppliers WHERE is_active = TRUE")
         suppliers = []
