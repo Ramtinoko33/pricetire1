@@ -2092,15 +2092,19 @@ def _parse_abtyres_html(html: str) -> list:
     → captura índice simples, duplo (110/108R), comercial (16C), sufixos (XL, FR, 10PR)
     """
     # Regex para extrair índice + modelo do campo nome
-    # Estrutura: MEDIDA ÍNDICE MODELO [SUFIXOS]
-    # MEDIDA: dígitos/dígitos R/ZR/CR dígitos[C]
-    # ÍNDICE: NNN[A-Z]{1,2}[/NNN[A-Z]{0,2}]  (simples, duplo com barra, ou comercial)
+    # Formato real: "205/55 R 16 - 91V - RAINSPORT5"
+    #               "195/75 R 16C - 110/108R - DURVAN 10PR"
+    #               "205/55 ZR 16 - 94W - DX390 XL FR"
+    # Estrutura: MEDIDA - ÍNDICE - MODELO [SUFIXOS]
     nome_re = re.compile(
-        r'^\s*\d{3}/\d{2}\s+(?:Z?R|C)\s*\d{2}C?\s+'   # medida (205/55 R 16 ou 195/75 R 16C)
-        r'(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{0,2})?)'  # índice (97V ou 110/108R)
-        r'\s+([\w][\w\s\*\+\-\.]*?)$',                   # modelo + sufixos (TQ901 XL, DURVAN 10PR)
+        r'^\s*\d{3}/\d{2}\s+(?:Z?R|CR?)\s*\d{2}C?'     # medida (205/55 R 16, 195/75 R 16C, 205/55 ZR 16)
+        r'\s*-\s*'                                        # separador " - "
+        r'(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{0,2})?)'  # índice (91V, 110/108R, 94W)
+        r'\s*-\s*'                                        # separador " - "
+        r'([\w][\w\s\*\+\-\.\/]*?)$',                    # modelo + sufixos (RAINSPORT5, DURVAN 10PR, DX390 XL FR)
         re.IGNORECASE,
     )
+
     row_re   = re.compile(r'<tr\b[^>]*role=["\']row["\'][^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
     input_re = re.compile(r'<input\b[^>]*name=["\'](\w+)["\'][^>]*value=["\']([^"\']*)["\']', re.IGNORECASE)
 
@@ -2181,28 +2185,9 @@ async def scrape_abtyres(page, username: str, password: str, medida: str,
         await page.goto("https://b2b.abtyres.pt/pneus", wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(5)  # loading obrigatório do site
 
-        # Debug: logar todos os inputs visíveis para identificar o selector correcto
-        _inputs_debug = await page.evaluate('''() => {
-            const inputs = document.querySelectorAll('input');
-            return Array.from(inputs).map(i => ({
-                name: i.name, id: i.id, placeholder: i.placeholder, type: i.type
-            }));
-        }''')
-        print(f"  [ABTyres] inputs na página /pneus: {_inputs_debug[:10]}")
-
-        # Campo MEDIDA — primeira tentativa por placeholder, fallback por posição
-        _medida_sel = (
-            'input[placeholder="Medida"], input[placeholder="MEDIDA"], '
-            'input[placeholder="medida"], input[name="medida"], input[name="MEDIDA"], '
-            'input[name="pesq"]'
-        )
-        try:
-            medida_input = page.locator(_medida_sel).first
-            await medida_input.wait_for(state='visible', timeout=10000)
-        except Exception:
-            # Fallback: primeiro input de texto visível na página
-            print(f"  [ABTyres] selector primário falhou, a usar primeiro input de texto")
-            medida_input = page.locator('input[type="text"]:visible, input:not([type]):visible').first
+        # Campo de pesquisa identificado: name="pesq"
+        medida_input = page.locator('input[name="pesq"]').first
+        await medida_input.wait_for(state='visible', timeout=15000)
         await medida_input.fill('')
         await asyncio.sleep(0.3)
         await medida_input.fill(medida_fmt)
