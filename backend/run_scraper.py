@@ -2081,87 +2081,80 @@ async def scrape_aguesport(page, username: str, password: str, medida: str,
     return result
 
 def _parse_abtyres_html(html: str) -> list:
-    """Parse product rows from ABTyres results page HTML.
+    """Parse product rows from ABTyres results page HTML usando BeautifulSoup.
 
-    Estrutura real da página (confirmada por inspecção do DOM):
-    <tr role="row" style="background-color:...">
-      <td><img src=".../marcas/BRAND.png" title="Brand" alt="Brand"></td>
-      <td><span style="display:none">BRAND</span></td>
-      <td class="descricao"> "205/55 R 16 " <strong>94V</strong> " DX390 XL FR " </td>
+    Estrutura real confirmada por inspecção do DOM:
+    <tr role="row">
+      <td><img title="Davanti"></td>
+      <td><span style="display:none">Davanti</span></td>
+      <td class="descricao">" 205/55 R 16 "<strong>94V</strong>" DX390 XL FR "</td>
       ...
       <td class="nowr text-right">37.95 €</td>
-      ...
     </tr>
-    Linhas DEMO têm background-color:#C2EBFF (azul claro) ou #FFF63D (amarelo).
+    Linhas DEMO: background-color:#C2EBFF ou #FFF63D
     """
-    from html.parser import HTMLParser
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        print("  [ABTyres] BeautifulSoup não disponível — instalar beautifulsoup4")
+        return []
 
-    _strip_tags = re.compile(r'<[^>]+>')
-    _price_re   = re.compile(r'(\d+[.,]\d+)', re.IGNORECASE)
-    _row_re     = re.compile(r'<tr\b[^>]*role=["\']row["\'][^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
-    _span_re    = re.compile(r'<span[^>]*style=["\'][^"\']*display\s*:\s*none[^"\']*["\'][^>]*>(.*?)</span>', re.DOTALL | re.IGNORECASE)
-    _strong_re  = re.compile(r'<strong[^>]*>(.*?)</strong>', re.DOTALL | re.IGNORECASE)
-    _td_re      = re.compile(r'<td\b([^>]*)>(.*?)</td>', re.DOTALL | re.IGNORECASE)
+    _price_re = re.compile(r'(\d+[.,]\d+)')
+    _idx_re   = re.compile(r'^(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{0,2})?)$', re.IGNORECASE)
 
-    # índice: simples (91V), duplo com barra (110/108R), comercial (107/105S)
-    _idx_re = re.compile(r'(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{0,2})?)', re.IGNORECASE)
-
+    soup = BeautifulSoup(html, 'html.parser')
     products = []
-    for row_m in _row_re.finditer(html):
-        row_html = row_m.group(0)
 
-        # Ignorar linhas DEMO (fundo azul claro ou amarelo)
-        if 'C2EBFF' in row_html or 'c2ebff' in row_html:
-            continue
-        if 'FFF63D' in row_html or 'fff63d' in row_html:
+    for tr in soup.find_all('tr', role='row'):
+        # Ignorar linhas DEMO
+        style = tr.get('style', '')
+        if 'C2EBFF' in style.upper() or 'FFF63D' in style.upper():
             continue
 
-        tds = _td_re.findall(row_html)  # lista de (attrs, conteúdo)
-        if len(tds) < 3:
+        tds = tr.find_all('td', recursive=False)
+        if len(tds) < 4:
             continue
 
-        # Marca: segundo TD tem <span style="display:none">MARCA</span>
+        # Marca: TD com <span style="display:none">
         marca = ''
-        for td_attrs, td_content in tds:
-            span_m = _span_re.search(td_content)
-            if span_m:
-                marca = _strip_tags.sub('', span_m.group(1)).strip().upper()
+        for td in tds:
+            span = td.find('span', style=re.compile(r'display\s*:\s*none', re.I))
+            if span:
+                marca = span.get_text(strip=True).upper()
                 break
-        if not marca:
-            continue
-        if 'DEMO' in marca:
+        if not marca or 'DEMO' in marca:
             continue
 
-        # Descrição: TD com class="descricao"
-        descricao_html = ''
-        for td_attrs, td_content in tds:
-            if 'descricao' in td_attrs:
-                descricao_html = td_content
-                break
-        if not descricao_html:
+        # Descrição: TD com class "descricao"
+        td_desc = tr.find('td', class_='descricao')
+        if not td_desc:
             continue
 
-        # Índice: dentro de <strong> no td.descricao
-        strong_m = _strong_re.search(descricao_html)
-        if not strong_m:
+        # Índice: dentro do <strong>
+        strong = td_desc.find('strong')
+        if not strong:
             continue
-        load_index = _strip_tags.sub('', strong_m.group(1)).strip().upper()
+        load_index = strong.get_text(strip=True).upper()
         if not _idx_re.match(load_index):
             continue
 
-        # Modelo: texto após o <strong>, sem tags
-        after_strong = descricao_html[strong_m.end():]
-        model = _strip_tags.sub('', after_strong).strip().upper()
-        # Remover espaços múltiplos
-        model = re.sub(r'\s+', ' ', model).strip()
+        # Modelo: texto após o <strong>
+        model_parts = []
+        for node in strong.next_siblings:
+            text = node.get_text(strip=True) if hasattr(node, 'get_text') else str(node).strip()
+            if text:
+                model_parts.append(text)
+        model = ' '.join(model_parts).strip().upper()
+        model = re.sub(r'\s+', ' ', model)
         if not model:
             continue
 
-        # Preço: TD com class contendo "nowr" e "right"
+        # Preço: TD com classes "nowr" e "text-right"
         price = None
-        for td_attrs, td_content in tds:
-            if 'nowr' in td_attrs and 'right' in td_attrs:
-                price_m = _price_re.search(_strip_tags.sub('', td_content))
+        for td in tds:
+            classes = td.get('class', [])
+            if 'nowr' in classes and 'text-right' in classes:
+                price_m = _price_re.search(td.get_text())
                 if price_m:
                     try:
                         price = float(price_m.group(1).replace(',', '.'))
