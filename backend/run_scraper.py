@@ -2085,10 +2085,20 @@ def _parse_abtyres_html(html: str) -> list:
 
     Each row is a <tr role="row"> (skipping DEMO rows with yellow bg #FFF63D).
     Data lives in hidden form inputs: marca, nome, preco.
-    nome format: "205/55 R 16 - 91V - TQ021" → load_index=91V, model=TQ021.
+    nome format examples:
+      "205/55 R 16 97V TQ901 XL"
+      "195/75 R 16C 110/108R DURVAN 10PR"
+      "215/55 ZR 16 97W DX390 XL FR"
+    → captura índice simples, duplo (110/108R), comercial (16C), sufixos (XL, FR, 10PR)
     """
+    # Regex para extrair índice + modelo do campo nome
+    # Estrutura: MEDIDA ÍNDICE MODELO [SUFIXOS]
+    # MEDIDA: dígitos/dígitos R/ZR/CR dígitos[C]
+    # ÍNDICE: NNN[A-Z]{1,2}[/NNN[A-Z]{0,2}]  (simples, duplo com barra, ou comercial)
     nome_re = re.compile(
-        r'[\d/\s]+R\s*\d+\s*-\s*(\d{2,3}[A-Z]{1,2}(?:\s+XL)?)\s*-\s*(.*)',
+        r'^\s*\d{3}/\d{2}\s+(?:Z?R|C)\s*\d{2}C?\s+'   # medida (205/55 R 16 ou 195/75 R 16C)
+        r'(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{0,2})?)'  # índice (97V ou 110/108R)
+        r'\s+([\w][\w\s\*\+\-\.]*?)$',                   # modelo + sufixos (TQ901 XL, DURVAN 10PR)
         re.IGNORECASE,
     )
     row_re   = re.compile(r'<tr\b[^>]*role=["\']row["\'][^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
@@ -2097,7 +2107,7 @@ def _parse_abtyres_html(html: str) -> list:
     products = []
     for row_m in row_re.finditer(html):
         row_html = row_m.group(0)
-        # BUG2 FIX (a): fundo amarelo → linha DEMO
+        # Fundo amarelo → linha DEMO
         if 'FFF63D' in row_html or 'fff63d' in row_html:
             continue
         fields = {m.group(1): m.group(2) for m in input_re.finditer(row_html)}
@@ -2106,7 +2116,7 @@ def _parse_abtyres_html(html: str) -> list:
         preco  = fields.get('preco', '').strip()
         if not nome or not preco:
             continue
-        # BUG2 FIX (b): marca com sufixo DEMO (ex: 'NEXEN DEMO', 'KUMHO DEMO')
+        # Marca com sufixo DEMO
         if 'DEMO' in marca:
             continue
         try:
@@ -2117,11 +2127,14 @@ def _parse_abtyres_html(html: str) -> list:
             continue
         m = nome_re.match(nome)
         if not m:
+            print(f"  [ABTyres] nome sem match: {nome!r}")
             continue
+        load_index = m.group(1).strip().upper()
+        model      = m.group(2).strip().upper()
         products.append({
             'brand':      marca,
-            'model':      m.group(2).strip().upper(),
-            'load_index': m.group(1).strip().upper(),
+            'model':      model,
+            'load_index': load_index,
             'price':      price,
         })
     return products
@@ -2132,8 +2145,10 @@ async def scrape_abtyres(page, username: str, password: str, medida: str,
     """Scrape ABTyres B2B portal (b2b.abtyres.pt).
 
     Login: input[name="user"] + input[type="password"] + button:has-text("Entrar").
-    Search: input[name="pesq"] + button:has-text("PESQUISA") on /pneus.
-    Results: <tr role="row"> with hidden inputs marca/nome/preco; skip DEMO (#FFF63D).
+    Search: campo MEDIDA (input placeholder "MEDIDA") + button:has-text("PESQUISA") em /pneus.
+    O site mostra loading de ~5s após cada navegação — aguardar sempre antes de interagir.
+    Results: <tr role="row"> com inputs hidden marca/nome/preco; skip DEMO (#FFF63D).
+    nome ex: "195/75 R 16C 110/108R DURVAN 10PR", "215/55 R 16 97V TQ901 XL"
     """
     result = {
         "supplier": "ABTyres",
@@ -2145,42 +2160,41 @@ async def scrape_abtyres(page, username: str, password: str, medida: str,
     try:
         if not skip_login:
             print("  [ABTyres] Login...")
-            await page.goto("https://b2b.abtyres.pt/menu", wait_until="domcontentloaded", timeout=60000)
-            await asyncio.sleep(1)
+            await page.goto("https://b2b.abtyres.pt/", wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(5)  # loading inicial do site
             current = page.url
-            if 'menu' not in current and 'pneus' not in current:
-                await page.goto("https://b2b.abtyres.pt/", wait_until="domcontentloaded", timeout=60000)
-                await asyncio.sleep(1)
+            # Se já está autenticado, vai directo para o portal
+            if 'menu' not in current and 'pneus' not in current and 'campanhas' not in current:
                 await page.locator('input[name="user"]').first.fill(username)
                 await page.locator('input[type="password"]').first.fill(password)
                 await page.locator('button:has-text("Entrar")').first.click()
-                await asyncio.sleep(4)
+                await asyncio.sleep(6)  # aguardar loading pós-login
                 try:
                     await page.wait_for_load_state("domcontentloaded", timeout=20000)
                 except Exception:
                     pass
                 print(f"  [ABTyres] URL após login: {page.url}")
-            await asyncio.sleep(1)
 
-        medida_norm = normalize_medida(medida)
-        print(f"  [ABTyres] Pesquisa: {medida_norm}")
+        medida_fmt = normalize_medida(medida)
+        print(f"  [ABTyres] Pesquisa: {medida_fmt}")
+
         await page.goto("https://b2b.abtyres.pt/pneus", wait_until="domcontentloaded", timeout=60000)
-        await asyncio.sleep(1)
+        await asyncio.sleep(5)  # loading obrigatório do site
 
-        pesq = page.locator('input[name="pesq"]').first
-        await pesq.fill(medida_norm)
+        # Campo MEDIDA — identificado por placeholder
+        medida_input = page.locator('input[placeholder="Medida"], input[placeholder="MEDIDA"]').first
+        await medida_input.fill('')
         await asyncio.sleep(0.3)
+        await medida_input.fill(medida_fmt)
+        await asyncio.sleep(0.5)
         await page.locator('button:has-text("PESQUISA")').first.click()
 
-        # Aguarda spinner desaparecer, depois aguarda primeira linha de resultado
+        # Aguardar loading pós-pesquisa (~5s) e depois primeira linha
+        await asyncio.sleep(5)
         try:
-            await page.wait_for_selector('#loading', state='hidden', timeout=20000)
+            await page.wait_for_selector('tr[role="row"]', state='visible', timeout=15000)
         except Exception:
-            pass
-        try:
-            await page.wait_for_selector('tr[role="row"]', state='visible', timeout=20000)
-        except Exception:
-            await asyncio.sleep(5)
+            pass  # pode não haver resultados — continuar e parsear
 
         html = await page.content()
         products = _parse_abtyres_html(html)
