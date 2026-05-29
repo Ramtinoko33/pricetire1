@@ -2096,8 +2096,11 @@ def _parse_abtyres_html(html: str) -> list:
     try:
         from bs4 import BeautifulSoup
     except ImportError:
-        print("  [ABTyres] BeautifulSoup não disponível — instalar beautifulsoup4")
-        return []
+        import subprocess, sys
+        print("  [ABTyres] A instalar beautifulsoup4...")
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'beautifulsoup4', '--quiet'])
+        from bs4 import BeautifulSoup
+
 
     _price_re = re.compile(r'(\d+[.,]\d+)')
     _idx_re   = re.compile(r'^(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{0,2})?)$', re.IGNORECASE)
