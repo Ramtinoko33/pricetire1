@@ -2092,18 +2092,17 @@ def _parse_abtyres_html(html: str) -> list:
     → captura índice simples, duplo (110/108R), comercial (16C), sufixos (XL, FR, 10PR)
     """
     # Regex para extrair índice + modelo do campo nome
-    # Formato real (sem traços): "195/75 R 16C 110/108R RAINMAX5 10PR"
-    #                             "205/55 R 16 91V RAINSPORT5"
-    #                             "205/55 ZR 16 94W DX390 XL FR"
-    #                             "225/45 R 17 94Y CINTURATO (C3) XL P"
-    #                             "195/75 R 16C 107/105R DURVAN 8PR"
-    # Estrutura: MEDIDA ÍNDICE MODELO [SUFIXOS]
+    # Formatos reais observados nos logs:
+    #   COM traços:  "195/75 R 16C - 110/108R - RAINMAX5 10PR"
+    #                "225/45 R 17 - 94Y - CINTURATO (C3) XL P"
+    #                "225/45 ZR 17 - 94Y - HTRZ5 XL"
+    #   Separador opcional: traço rodeado de espaços ou espaço simples
     nome_re = re.compile(
         r'^\s*\d{3}/\d{2}\s+(?:Z?R|CR?)\s*\d{2}C?'           # medida (195/75 R 16C, 205/55 ZR 16)
-        r'\s+'                                                  # espaço
-        r'(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{0,2})?)'        # índice (91V, 110/108R, 107/105R)
-        r'\s+'                                                  # espaço
-        r'([\w][\w\s\*\+\.\(\)\/]*?)$',                       # modelo + sufixos, aceita parênteses
+        r'(?:\s+-\s+|\s+)'                                     # separador: " - " ou " "
+        r'(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{0,2})?)'        # índice (91V, 110/108R, 107/105S)
+        r'(?:\s+-\s+|\s+)'                                     # separador: " - " ou " "
+        r'([\w][\w\s\*\+\.\(\)\/\-]*?)$',                     # modelo + sufixos (aceita parênteses e hífens)
         re.IGNORECASE,
     )
 
