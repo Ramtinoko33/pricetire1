@@ -2083,94 +2083,59 @@ async def scrape_aguesport(page, username: str, password: str, medida: str,
 def _parse_abtyres_html(html: str) -> list:
     """Parse product rows from ABTyres results page HTML.
 
-    Estrutura real da página (confirmada por inspecção do DOM):
-    <tr role="row" style="background-color:...">
-      <td><img src=".../marcas/BRAND.png" title="Brand" alt="Brand"></td>
-      <td><span style="display:none">BRAND</span></td>
-      <td class="descricao"> "205/55 R 16 " <strong>94V</strong> " DX390 XL FR " </td>
-      ...
-      <td class="nowr text-right">37.95 €</td>
-      ...
-    </tr>
-    Linhas DEMO têm background-color:#C2EBFF (azul claro) ou #FFF63D (amarelo).
+    Each row is a <tr role="row"> (skipping DEMO rows with yellow bg #FFF63D).
+    Data lives in hidden form inputs: marca, nome, preco.
+    nome format examples:
+      "205/55 R 16 97V TQ901 XL"
+      "195/75 R 16C 110/108R DURVAN 10PR"
+      "215/55 ZR 16 97W DX390 XL FR"
+    → captura índice simples, duplo (110/108R), comercial (16C), sufixos (XL, FR, 10PR)
     """
-    from html.parser import HTMLParser
+    # Regex para extrair índice + modelo do campo nome
+    # Formatos reais observados nos logs:
+    #   COM traços:  "195/75 R 16C - 110/108R - RAINMAX5 10PR"
+    #                "225/45 R 17 - 94Y - CINTURATO (C3) XL P"
+    #                "225/45 ZR 17 - 94Y - HTRZ5 XL"
+    #   Separador opcional: traço rodeado de espaços ou espaço simples
+    nome_re = re.compile(
+        r'^\s*\d{3}/\d{2}\s+(?:Z?R|CR?)\s*\d{2}C?'           # medida (195/75 R 16C, 205/55 ZR 16)
+        r'(?:\s+-\s+|\s+)'                                     # separador: " - " ou " "
+        r'(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{0,2})?)'        # índice (91V, 110/108R, 107/105S)
+        r'(?:\s+-\s+|\s+)'                                     # separador: " - " ou " "
+        r'([\w][\w\s\*\+\.\(\)\/\-]*?)$',                     # modelo + sufixos (aceita parênteses e hífens)
+        re.IGNORECASE,
+    )
 
-    _strip_tags = re.compile(r'<[^>]+>')
-    _price_re   = re.compile(r'(\d+[.,]\d+)', re.IGNORECASE)
-    _row_re     = re.compile(r'<tr\b[^>]*role=["\']row["\'][^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
-    _span_re    = re.compile(r'<span[^>]*style=["\'][^"\']*display\s*:\s*none[^"\']*["\'][^>]*>(.*?)</span>', re.DOTALL | re.IGNORECASE)
-    _strong_re  = re.compile(r'<strong[^>]*>(.*?)</strong>', re.DOTALL | re.IGNORECASE)
-    _td_re      = re.compile(r'<td\b([^>]*)>(.*?)</td>', re.DOTALL | re.IGNORECASE)
-
-    # índice: simples (91V), duplo com barra (110/108R), comercial (107/105S)
-    _idx_re = re.compile(r'(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{0,2})?)', re.IGNORECASE)
+    row_re   = re.compile(r'<tr\b[^>]*role=["\']row["\'][^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
+    input_re = re.compile(r'<input\b[^>]*name=["\'](\w+)["\'][^>]*value=["\']([^"\']*)["\']', re.IGNORECASE)
 
     products = []
-    for row_m in _row_re.finditer(html):
+    for row_m in row_re.finditer(html):
         row_html = row_m.group(0)
-
-        # Ignorar linhas DEMO (fundo azul claro ou amarelo)
-        if 'C2EBFF' in row_html or 'c2ebff' in row_html:
-            continue
+        # Fundo amarelo → linha DEMO
         if 'FFF63D' in row_html or 'fff63d' in row_html:
             continue
-
-        tds = _td_re.findall(row_html)  # lista de (attrs, conteúdo)
-        if len(tds) < 3:
+        fields = {m.group(1): m.group(2) for m in input_re.finditer(row_html)}
+        marca  = fields.get('marca', '').strip().upper()
+        nome   = fields.get('nome', '').strip()
+        preco  = fields.get('preco', '').strip()
+        if not nome or not preco:
             continue
-
-        # Marca: segundo TD tem <span style="display:none">MARCA</span>
-        marca = ''
-        for td_attrs, td_content in tds:
-            span_m = _span_re.search(td_content)
-            if span_m:
-                marca = _strip_tags.sub('', span_m.group(1)).strip().upper()
-                break
-        if not marca:
-            continue
+        # Marca com sufixo DEMO
         if 'DEMO' in marca:
             continue
-
-        # Descrição: TD com class="descricao"
-        descricao_html = ''
-        for td_attrs, td_content in tds:
-            if 'descricao' in td_attrs:
-                descricao_html = td_content
-                break
-        if not descricao_html:
+        try:
+            price = float(preco.replace(',', '.'))
+        except ValueError:
             continue
-
-        # Índice: dentro de <strong> no td.descricao
-        strong_m = _strong_re.search(descricao_html)
-        if not strong_m:
+        if price <= 0:
             continue
-        load_index = _strip_tags.sub('', strong_m.group(1)).strip().upper()
-        if not _idx_re.match(load_index):
+        m = nome_re.match(nome)
+        if not m:
+            print(f"  [ABTyres] nome sem match: {nome!r}")
             continue
-
-        # Modelo: texto após o <strong>, sem tags
-        after_strong = descricao_html[strong_m.end():]
-        model = _strip_tags.sub('', after_strong).strip().upper()
-        # Remover espaços múltiplos
-        model = re.sub(r'\s+', ' ', model).strip()
-        if not model:
-            continue
-
-        # Preço: TD com class contendo "nowr" e "right"
-        price = None
-        for td_attrs, td_content in tds:
-            if 'nowr' in td_attrs and 'right' in td_attrs:
-                price_m = _price_re.search(_strip_tags.sub('', td_content))
-                if price_m:
-                    try:
-                        price = float(price_m.group(1).replace(',', '.'))
-                    except ValueError:
-                        pass
-                break
-        if not price or price <= 0:
-            continue
-
+        load_index = m.group(1).strip().upper()
+        model      = m.group(2).strip().upper()
         products.append({
             'brand':      marca,
             'model':      model,
