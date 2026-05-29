@@ -2181,13 +2181,33 @@ async def scrape_abtyres(page, username: str, password: str, medida: str,
         await page.goto("https://b2b.abtyres.pt/pneus", wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(5)  # loading obrigatório do site
 
-        # Campo MEDIDA — identificado por placeholder
-        medida_input = page.locator('input[placeholder="Medida"], input[placeholder="MEDIDA"]').first
+        # Debug: logar todos os inputs visíveis para identificar o selector correcto
+        _inputs_debug = await page.evaluate('''() => {
+            const inputs = document.querySelectorAll('input');
+            return Array.from(inputs).map(i => ({
+                name: i.name, id: i.id, placeholder: i.placeholder, type: i.type
+            }));
+        }''')
+        print(f"  [ABTyres] inputs na página /pneus: {_inputs_debug[:10]}")
+
+        # Campo MEDIDA — primeira tentativa por placeholder, fallback por posição
+        _medida_sel = (
+            'input[placeholder="Medida"], input[placeholder="MEDIDA"], '
+            'input[placeholder="medida"], input[name="medida"], input[name="MEDIDA"], '
+            'input[name="pesq"]'
+        )
+        try:
+            medida_input = page.locator(_medida_sel).first
+            await medida_input.wait_for(state='visible', timeout=10000)
+        except Exception:
+            # Fallback: primeiro input de texto visível na página
+            print(f"  [ABTyres] selector primário falhou, a usar primeiro input de texto")
+            medida_input = page.locator('input[type="text"]:visible, input:not([type]):visible').first
         await medida_input.fill('')
         await asyncio.sleep(0.3)
         await medida_input.fill(medida_fmt)
         await asyncio.sleep(0.5)
-        await page.locator('button:has-text("PESQUISA")').first.click()
+        await page.locator('button:has-text("PESQUISA"), button:has-text("Pesquisa")').first.click()
 
         # Aguardar loading pós-pesquisa (~5s) e depois primeira linha
         await asyncio.sleep(5)
