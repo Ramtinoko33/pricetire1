@@ -2255,8 +2255,12 @@ async def scrape_abtyres(page, username: str, password: str, medida: str,
         except Exception:
             pass  # pode não haver resultados — continuar e parsear
 
-
         html = await page.content()
+        try:
+            with open(f'/tmp/abtyres_{medida_fmt}.html', 'w', encoding='utf-8') as _f:
+                _f.write(html)
+        except Exception:
+            pass
         products = _parse_abtyres_html(html)
 
         result["products"] = products
