@@ -2152,6 +2152,13 @@ def _parse_abtyres_html(html: str) -> list:
         if not model:
             continue
 
+        # Mover XL do início do modelo para o índice (ex: "XL ROADHAWK" → índice "94V XL", modelo "ROADHAWK")
+        if model.startswith('XL ') or model == 'XL':
+            load_index = load_index + ' XL'
+            model = model[3:].strip() if model.startswith('XL ') else ''
+        if not model:
+            continue
+
         # Preço: TD com classes "nowr" e "text-right"
         price = None
         for td in tds:
