@@ -2249,6 +2249,7 @@ async def scrape_abtyres(page, username: str, password: str, medida: str,
 
         # Aguardar loading pós-pesquisa (~5s) e depois primeira linha
         await asyncio.sleep(5)
+        print(f"  [ABTyres] URL após pesquisa {medida_fmt}: {page.url}")
         try:
             await page.wait_for_selector('tr[role="row"]', state='visible', timeout=15000)
         except Exception:
