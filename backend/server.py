@@ -625,6 +625,106 @@ async def _compare_background(job_id: str, force: bool):
             logger.error(f"[Compare] finally: erro ao actualizar job {job_id}: {_fe}")
 
 
+# Mapeamento de abreviações usadas pelos fornecedores → nome completo do modelo
+# Chave: fragmento que aparece no modelo scraped (uppercase, sem espaços)
+# Valor: fragmento equivalente no Excel (uppercase, sem espaços)
+_MODEL_ALIASES: dict = {
+    # Bridgestone
+    'TUR6':        'TURANZA6',
+    'TUR6AS':      'TURANZA6',
+    'TURECO':      'TURANZAECO',
+    'T005':        'TURANZAT005',
+    'TOO5':        'TURANZAT005',
+    'PSPORTEVO':   'POTENZASPORTEVO',
+    'PSPORT':      'POTENZASPORT',
+    'PRACE':       'POTENZARACE',
+    'A005':        'WEATHERCONTROL',
+    # Firestone
+    'ROADHAWK2':   'ROADHAWK2',
+    'ROADHAWK':    'ROADHAWK',
+    'MULTISEASON2':'MULTISEASON2',
+    'MULTIHAWK2':  'MULTIHAWK2',
+    # Goodyear
+    'EFFGRIPPERF2': 'EFFICIENTGRIPPERFORMANCE2',
+    'EFFGRIPPERF':  'EFFICIENTGRIPPERFORMANCE',
+    'EFFGRIPCOMP2': 'EFFICIENTGRIPCOMPACT2',
+    'EFFGRIPCOMP':  'EFFICIENTGRIPCOMPACT',
+    'EFFGRIPSUV':   'EFFICIENTGRIPSUV',
+    'F1ASYMETRICO6':'F1ASYMMETRIC6',
+    'F1ASYMETRICO5':'F1ASYMMETRIC5',
+    'F1ASYMETRICO3':'F1ASYMMETRIC3',
+    'F1ASYMETRICO2':'F1ASYMMETRIC2',
+    'F1ASYMETRICO': 'F1ASYMMETRIC',
+    # Pirelli
+    'CINTURATOC3':  'CINTURATOP7',
+    'CINTP7':       'CINTURATOP7',
+    'CINTP7P7C2':   'CINTURATOP7',
+    'PZEROPZ5':     'PZERO',
+    'POWERGY2':     'POWERGY2',
+    'POWERGY':      'POWERGY',
+    # Dunlop
+    'SPORTMAXXRT2': 'SPORTMAXXRT2',
+    'SPORTMAXXRT':  'SPORTMAXXRT',
+    'SPORTBLURESP': 'SPORTBLURESPONSE',
+    # Falken
+    'ZE320':        'ZE320',
+    'ZE310EC':      'ZE310',
+    'ZE914AEC':     'ZE914',
+    'ZE914B':       'ZE914',
+    'FK520':        'FK520',
+    'SN110':        'SN110',
+    'R51':          'R51',
+}
+
+def _norm_modelo(s: str) -> str:
+    """Normaliza modelo para comparação: uppercase, sem espaços, sem sufixos XL/P/FR/AO/MFS/RFT/*."""
+    import re as _re
+    s = (s or '').upper().strip()
+    # Remover sufixos comuns (no final ou separados por espaço)
+    s = _re.sub(r'\s+(?:XL|FR|AO|MFS|RFT|FP|P(?:\s|$)|\*|AO1|MOE|SSR|FEXM)\b', '', s)
+    s = _re.sub(r'\*', '', s)
+    # Remover espaços e hífens
+    s = _re.sub(r'[\s\-]', '', s)
+    return s
+
+def _modelo_match(scraped_modelo: str, want_modelo: str) -> bool:
+    """True se o modelo scraped corresponde ao modelo do Excel.
+
+    Estratégias (por ordem):
+    1. Match exacto normalizado
+    2. Scraped começa com want (scraped tem sufixos extra)
+    3. Want começa com scraped (excel tem nome mais longo)
+    4. Via tabela de aliases
+    """
+    if not want_modelo:
+        return True
+    sn = _norm_modelo(scraped_modelo)
+    wn = _norm_modelo(want_modelo)
+    if not sn:
+        return False
+    # 1. Exacto
+    if sn == wn:
+        return True
+    # 2. Scraped começa com want (ex: ROADHAWK2XL → ROADHAWK2)
+    if sn.startswith(wn) or wn.startswith(sn):
+        return True
+    # 3. Alias: substituir fragmentos conhecidos
+    sn_aliased = sn
+    for alias, canonical in _MODEL_ALIASES.items():
+        if alias in sn_aliased:
+            sn_aliased = sn_aliased.replace(alias, canonical)
+            break
+    wn_aliased = wn
+    for alias, canonical in _MODEL_ALIASES.items():
+        if alias in wn_aliased:
+            wn_aliased = wn_aliased.replace(alias, canonical)
+            break
+    if sn_aliased == wn_aliased:
+        return True
+    if sn_aliased.startswith(wn_aliased) or wn_aliased.startswith(sn_aliased):
+        return True
+    return False
+
 async def _do_compare(job_id: str, force: bool):
     """Lógica principal de scrape + compare (chamada em background ou directamente)."""
     import re
@@ -1003,7 +1103,7 @@ async def _do_compare(job_id: str, force: bool):
             scraped = [
                 s for s in medida_prices
                 if _norm(s.get('marca', '')) == item_marca
-                and _norm(s.get('modelo', '')) == item_modelo
+                and _modelo_match(s.get('modelo', ''), item_modelo)
                 and _norm_idx_strict(s.get('load_index', '')) == _norm_idx_strict(item_indice)
             ]
             if scraped:
@@ -1015,10 +1115,11 @@ async def _do_compare(job_id: str, force: bool):
             scraped = [
                 s for s in medida_prices
                 if _norm(s.get('marca', '')) == item_marca
-                and _norm(s.get('modelo', '')) == item_modelo
+                and _modelo_match(s.get('modelo', ''), item_modelo)
             ]
             if scraped:
                 match_type = "modelo_sem_indice"
+
 
         # Nível 3: Medida + Marca (qualquer modelo e índice)
         if not scraped and item_marca:
