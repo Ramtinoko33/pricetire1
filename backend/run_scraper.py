@@ -2221,8 +2221,22 @@ async def scrape_abtyres(page, username: str, password: str, medida: str,
         medida_fmt = normalize_medida(medida)
         print(f"  [ABTyres] Pesquisa: {medida_fmt}")
 
-        await page.goto("https://b2b.abtyres.pt/pneus", wait_until="domcontentloaded", timeout=60000)
-        await asyncio.sleep(5)  # loading obrigatório do site
+        # Navegar para /pneus apenas se não estiver já lá
+        if 'b2b.abtyres.pt/pneus' not in page.url:
+            await page.goto("https://b2b.abtyres.pt/pneus", wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(5)  # loading obrigatório do site
+
+        # Verificar se sessão ainda válida (redirect para login = sessão expirou)
+        if 'b2b.abtyres.pt/pneus' not in page.url:
+            print(f"  [ABTyres] Sessão expirou, a re-autenticar...")
+            await page.goto("https://b2b.abtyres.pt/", wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(5)
+            await page.locator('input[name="user"]').first.fill(username)
+            await page.locator('input[type="password"]').first.fill(password)
+            await page.locator('button:has-text("Entrar")').first.click()
+            await asyncio.sleep(6)
+            await page.goto("https://b2b.abtyres.pt/pneus", wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(5)
 
         # Campo de pesquisa identificado: name="pesq"
         medida_input = page.locator('input[name="pesq"]').first
@@ -2239,6 +2253,7 @@ async def scrape_abtyres(page, username: str, password: str, medida: str,
             await page.wait_for_selector('tr[role="row"]', state='visible', timeout=15000)
         except Exception:
             pass  # pode não haver resultados — continuar e parsear
+
 
         html = await page.content()
         products = _parse_abtyres_html(html)
