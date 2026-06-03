@@ -45,8 +45,17 @@ _supplier_run_stats: Dict[str, Dict[str, dict]] = {}
 
 @app.on_event("startup")
 async def startup():
+    await _ensure_saved_column()
     await _cleanup_orphan_suppliers()
     await _cleanup_old_logs()
+
+    async def _ensure_saved_column():
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            await conn.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS saved BOOLEAN DEFAULT FALSE")
+    except Exception as e:
+        logger.warning(f"[startup] Erro ao garantir coluna saved: {e}")
 
 async def _cleanup_old_logs():
     try:
@@ -522,7 +531,7 @@ async def get_jobs():
     pool = await get_db()
     async with pool.acquire() as conn:
         rs = rows(await conn.fetch(
-            "SELECT * FROM jobs WHERE type IS NULL ORDER BY created_at DESC LIMIT 100"
+            "SELECT * FROM jobs WHERE type IS NULL AND saved = TRUE ORDER BY created_at DESC LIMIT 100"
         ))
     return [Job(**r) for r in rs]
 
@@ -1259,8 +1268,20 @@ async def compare_job_with_scraped_prices(
     }
 
 
+@api_router.post("/jobs/{job_id}/save")
+async def save_job(job_id: str):
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE jobs SET saved = TRUE WHERE id = $1", job_id
+        )
+    if result == "UPDATE 0":
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"message": "Job saved", "job_id": job_id}
+
 @api_router.delete("/jobs/{job_id}")
 async def delete_job(job_id: str):
+
     pool = await get_db()
     async with pool.acquire() as conn:
         r = row(await conn.fetchrow("SELECT id FROM jobs WHERE id = $1", job_id))

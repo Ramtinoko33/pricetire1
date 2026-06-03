@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
-import { Download, TrendingDown, Trash2, Loader2, RotateCcw } from 'lucide-react';
+import { Download, TrendingDown, Trash2, Loader2, RotateCcw, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 const Results = () => {
@@ -17,6 +17,10 @@ const Results = () => {
   const [indiceObrigatorio, setIndiceObrigatorio] = useState(false);
   const [sortOrder, setSortOrder] = useState('original');
   const [originalResults, setOriginalResults] = useState([]);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
 
   useEffect(() => {
     loadJobs();
@@ -69,24 +73,34 @@ const Results = () => {
     }
   };
 
-  const handleDelete = async (jobId, filename) => {
-    if (!window.confirm(`Tem certeza que deseja eliminar o job "${filename}"?`)) return;
+ const toggleSelectMode = () => {
+    setSelectMode((v) => !v);
+    setSelectedIds([]);
+  };
+
+  const toggleSelectId = (jobId) => {
+    setSelectedIds((prev) =>
+      prev.includes(jobId) ? prev.filter((id) => id !== jobId) : [...prev, jobId]
+    );
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedIds.length === 0) return;
+    if (!window.confirm(`Eliminar ${selectedIds.length} ${selectedIds.length === 1 ? 'tabela' : 'tabelas'}? Esta ação é permanente.`)) return;
 
     try {
-      await jobsAPI.delete(jobId);
-      toast.success('Job eliminado com sucesso!');
-      
-      // If deleted job was selected, clear selection
-      if (selectedJob === jobId) {
+      await Promise.all(selectedIds.map((id) => jobsAPI.delete(id)));
+      toast.success(`${selectedIds.length} ${selectedIds.length === 1 ? 'tabela eliminada' : 'tabelas eliminadas'}!`);
+      if (selectedIds.includes(selectedJob)) {
         setSelectedJob(null);
         setResults([]);
       }
-      
-      // Reload jobs list
+      setSelectMode(false);
+      setSelectedIds([]);
       loadJobs();
     } catch (error) {
-      console.error('Error deleting job:', error);
-      toast.error('Erro ao eliminar job');
+      console.error('Error deleting jobs:', error);
+      toast.error('Erro ao eliminar tabelas');
     }
   };
 
@@ -158,7 +172,35 @@ const Results = () => {
           <p className="text-sm text-muted-foreground mt-1">{jobs.length} jobs encontrados</p>
         </div>
         <div className="flex gap-2">
-          {selectedJob && (
+          {!selectMode && jobs.length > 0 && (
+            <Button
+              variant="outline"
+              onClick={toggleSelectMode}
+              title="Selecionar tabelas para eliminar"
+              data-testid="trash-mode-btn"
+            >
+              <Trash2 size={18} className="mr-2 text-red-600" />
+              Eliminar tabelas
+            </Button>
+          )}
+          {selectMode && (
+            <>
+              <Button
+                onClick={handleDeleteSelected}
+                disabled={selectedIds.length === 0}
+                className="bg-red-600 hover:bg-red-700"
+                data-testid="delete-selected-btn"
+              >
+                <Trash2 size={18} className="mr-2" />
+                Eliminar selecionadas ({selectedIds.length})
+              </Button>
+              <Button variant="outline" onClick={toggleSelectMode}>
+                <X size={18} className="mr-2" />
+                Cancelar
+              </Button>
+            </>
+          )}
+          {!selectMode && selectedJob && (
             <>
               <Button
                 variant="outline"
@@ -176,7 +218,7 @@ const Results = () => {
               </Button>
             </>
           )}
-          {selectedJob && currentJob?.status === 'completed' && (
+          {!selectMode && selectedJob && currentJob?.status === 'completed' && (
             <Button onClick={() => handleExport(selectedJob)} data-testid="export-btn">
               <Download size={18} className="mr-2" />
               Exportar Excel
@@ -194,18 +236,29 @@ const Results = () => {
           <div className="space-y-2">
             {jobs.map((job) => (
               <div
-                key={job.id}
-                className={`flex items-center gap-3 p-4 border rounded-sm transition-colors ${
-                  selectedJob === job.id
-                    ? 'border-primary bg-muted'
-                    : 'border-border hover:border-muted-foreground'
-                }`}
+              key={job.id}
+              className={`flex items-center gap-3 p-4 border rounded-sm transition-colors ${
+                selectMode && selectedIds.includes(job.id)
+                  ? 'border-red-400 bg-red-50'
+                  : selectedJob === job.id
+                  ? 'border-primary bg-muted'
+                  : 'border-border hover:border-muted-foreground'
+              }`}
+            >
+              {selectMode && (
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(job.id)}
+                  onChange={() => toggleSelectId(job.id)}
+                  className="w-4 h-4 flex-shrink-0 accent-red-600 cursor-pointer"
+                  data-testid={`select-checkbox-${job.id}`}
+                />
+              )}
+              <button
+                onClick={() => selectMode ? toggleSelectId(job.id) : loadJobResults(job.id)}
+                className="flex-1 text-left"
+                data-testid={`job-select-${job.id}`}
               >
-                <button
-                  onClick={() => loadJobResults(job.id)}
-                  className="flex-1 text-left"
-                  data-testid={`job-select-${job.id}`}
-                >
                   <div className="flex items-center justify-between">
                     <div className="flex-1">
                       <p className="font-medium text-sm">{job.filename}</p>
@@ -224,16 +277,7 @@ const Results = () => {
                     </div>
                   </div>
                 </button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleDelete(job.id, job.filename)}
-                  data-testid={`delete-job-btn-${job.id}`}
-                  className="flex-shrink-0"
-                >
-                  <Trash2 size={16} className="text-red-600" />
-                </Button>
-              </div>
+                </div>
             ))}
           </div>
         </CardContent>
