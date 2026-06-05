@@ -144,9 +144,10 @@ def update_job(job_id: str, **fields):
         print(f"update_job error: {e}", flush=True)
 
 
-def run_supplier_scrape(supplier_id: str, sizes: list, job_id: str):
-    from run_scraper import run_supplier
-    run_supplier(supplier_id=supplier_id, sizes=sizes, job_id=job_id)
+def run_supplier_scrape(supplier_name: str, sizes: list, job_id: str):
+    import asyncio
+    from run_scraper import run_scraper
+    asyncio.run(run_scraper(medidas=sizes, supplier_filter=supplier_name))
 
 
 def main():
@@ -163,6 +164,7 @@ def main():
                 continue
 
             supplier_id = job["supplier_id"]
+            supplier_name = job.get("supplier_name") or supplier_id
             job_id = job["id"]
             payload = job.get("payload") or {}
             if isinstance(payload, str):
@@ -181,7 +183,7 @@ def main():
 
             try:
                 print(f"  Lock acquired, running scraper...", flush=True)
-                run_supplier_scrape(supplier_id, sizes, job_id)
+                run_supplier_scrape(supplier_name, sizes, job_id)
                 update_job(
                     job_id,
                     status="done",
