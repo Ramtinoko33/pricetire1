@@ -52,11 +52,33 @@ async def _ensure_saved_column():
         logger.warning(f"[startup] Erro ao garantir coluna saved: {e}")
 
 
+async def _ensure_scheduled_targets_table():
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS scheduled_targets (
+                    id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE (kind, value)
+                )
+                """
+            )
+    except Exception as e:
+        logger.warning(f"[startup] Erro ao garantir tabela scheduled_targets: {e}")
+
+
 @app.on_event("startup")
 async def startup():
     await _ensure_saved_column()
+    await _ensure_scheduled_targets_table()
     await _cleanup_orphan_suppliers()
     await _cleanup_old_logs()
+    _start_scheduler()
+
 
 async def _cleanup_old_logs():
     try:
@@ -111,10 +133,74 @@ async def _cleanup_orphan_suppliers():
         logger.warning(f"[cleanup] Erro na limpeza de arranque: {e}")
 
 
+_scheduler = None
+
+async def _run_scheduled_scrape():
+    """Enfileira jobs de scrape para todas as medidas em scheduled_targets.
+    O worker.py processa-os a partir da fila. Corre às 00:00 e 12:00."""
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            medidas = [r['value'] for r in await conn.fetch(
+                "SELECT value FROM scheduled_targets WHERE kind = 'medida'"
+            )]
+            suppliers = rows(await conn.fetch(
+                "SELECT * FROM suppliers WHERE is_active = TRUE"
+            ))
+        if not medidas:
+            logger.info("[scheduler] Sem medidas em scheduled_targets — nada a fazer")
+            return
+        if not suppliers:
+            logger.info("[scheduler] Sem fornecedores activos — nada a fazer")
+            return
+
+        normalized = list({m.strip().replace('/', '').replace('R', '').replace('r', '')
+                           for m in medidas if m.strip()})
+        now = datetime.now(timezone.utc)
+        async with pool.acquire() as conn:
+            for supplier in suppliers:
+                job_id = str(uuid.uuid4())
+                await conn.execute(
+                    """
+                    INSERT INTO jobs
+                        (id, type, supplier_id, supplier_name, payload, status,
+                         attempts, created_at)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                    """,
+                    job_id, "scrape", supplier['id'], supplier['name'],
+                    {"sizes": normalized}, "queued", 0, now,
+                )
+        logger.info(f"[scheduler] Enfileirados {len(suppliers)} jobs de scrape "
+                    f"para {len(normalized)} medidas")
+    except Exception as e:
+        logger.error(f"[scheduler] Erro no scrape agendado: {e}", exc_info=True)
+
+
+def _start_scheduler():
+    global _scheduler
+    if _scheduler is not None:
+        return
+    try:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+        from apscheduler.triggers.cron import CronTrigger
+        _scheduler = AsyncIOScheduler(timezone="Europe/Lisbon")
+        _scheduler.add_job(_run_scheduled_scrape, CronTrigger(hour=0, minute=0), id="scrape_meia_noite")
+        _scheduler.add_job(_run_scheduled_scrape, CronTrigger(hour=12, minute=0), id="scrape_meio_dia")
+        _scheduler.start()
+        logger.info("[scheduler] APScheduler iniciado — scrapes às 00:00 e 12:00 (Europe/Lisbon)")
+    except Exception as e:
+        logger.error(f"[scheduler] Erro ao iniciar APScheduler: {e}", exc_info=True)
+
+
 @app.on_event("shutdown")
 async def shutdown():
+    global _scheduler
+    if _scheduler is not None:
+        try:
+            _scheduler.shutdown(wait=False)
+        except Exception:
+            pass
     await close_db()
-
 
 @app.get("/health")
 async def health():
@@ -1620,6 +1706,53 @@ async def check_scraper_availability():
 
 
 # ==================== Scraped Prices ====================
+
+@api_router.get("/scheduled-targets")
+async def get_scheduled_targets():
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        rs = rows(await conn.fetch(
+            "SELECT * FROM scheduled_targets ORDER BY kind, value"
+        ))
+    return rs
+
+
+@api_router.post("/scheduled-targets")
+async def add_scheduled_target(payload: Dict = Body(...)):
+    kind = (payload.get("kind") or "").strip().lower()
+    value = (payload.get("value") or "").strip()
+    if kind not in ("medida", "marca"):
+        raise HTTPException(status_code=400, detail="kind deve ser 'medida' ou 'marca'")
+    if not value:
+        raise HTTPException(status_code=400, detail="value obrigatório")
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """INSERT INTO scheduled_targets (id, kind, value)
+               VALUES ($1,$2,$3)
+               ON CONFLICT (kind, value) DO NOTHING""",
+            str(uuid.uuid4()), kind, value,
+        )
+    return {"message": "Alvo adicionado", "kind": kind, "value": value}
+
+
+@api_router.delete("/scheduled-targets/{target_id}")
+async def delete_scheduled_target(target_id: str):
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM scheduled_targets WHERE id = $1", target_id
+        )
+    if result == "DELETE 0":
+        raise HTTPException(status_code=404, detail="Alvo não encontrado")
+    return {"message": "Alvo removido"}
+
+
+@api_router.post("/scheduled-targets/run-now")
+async def run_scheduled_now(background_tasks: BackgroundTasks):
+    background_tasks.add_task(_run_scheduled_scrape)
+    return {"message": "Scrape agendado iniciado manualmente"}
+
 
 @api_router.get("/marcas")
 async def get_marcas():
