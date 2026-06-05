@@ -19,8 +19,6 @@ const Results = () => {
   const [originalResults, setOriginalResults] = useState([]);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
-  const [selectMode, setSelectMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState([]);
 
   useEffect(() => {
     loadJobs();
