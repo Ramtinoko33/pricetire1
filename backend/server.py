@@ -43,19 +43,20 @@ logger = logging.getLogger(__name__)
 _supplier_run_stats: Dict[str, Dict[str, dict]] = {}
 
 
-@app.on_event("startup")
-async def startup():
-    await _ensure_saved_column()
-    await _cleanup_orphan_suppliers()
-    await _cleanup_old_logs()
-
-    async def _ensure_saved_column():
+async def _ensure_saved_column():
     try:
         pool = await get_db()
         async with pool.acquire() as conn:
             await conn.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS saved BOOLEAN DEFAULT FALSE")
     except Exception as e:
         logger.warning(f"[startup] Erro ao garantir coluna saved: {e}")
+
+
+@app.on_event("startup")
+async def startup():
+    await _ensure_saved_column()
+    await _cleanup_orphan_suppliers()
+    await _cleanup_old_logs()
 
 async def _cleanup_old_logs():
     try:
