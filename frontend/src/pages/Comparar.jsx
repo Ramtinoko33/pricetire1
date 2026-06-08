@@ -261,9 +261,9 @@ const Comparar = () => {
   };
 
   const SupplierStatusTable = () => (
-    <div className="mt-4 rounded-lg border border-slate-200 overflow-hidden">
+    <div className="mt-4 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
       <table className="w-full text-sm">
-        <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+        <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs uppercase">
           <tr>
             <th className="px-4 py-2 text-left">Fornecedor</th>
             <th className="px-4 py-2 text-left">Estado</th>
@@ -272,20 +272,20 @@ const Comparar = () => {
             <th className="px-4 py-2 text-right">Melhor Preço</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100">
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
           {suppliersStatus.map((s) => {
             const m = statusMeta[s.status] || statusMeta.waiting;
             return (
-              <tr key={s.name} className="bg-white hover:bg-slate-50">
-                <td className="px-4 py-2 font-medium text-slate-700">{s.name}</td>
+              <tr key={s.name} className="bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800">
+                <td className="px-4 py-2 font-medium text-slate-700 dark:text-slate-200">{s.name}</td>
                 <td className={`px-4 py-2 ${m.cls}`}><span className="flex items-center gap-1">{m.icon} {m.label}</span></td>
-                <td className="px-4 py-2 text-right text-slate-500">
+                <td className="px-4 py-2 text-right text-slate-500 dark:text-slate-400">
                   {s.duration_s != null ? `${s.duration_s}s` : '-'}
                 </td>
-                <td className="px-4 py-2 text-right text-slate-600">
+                <td className="px-4 py-2 text-right text-slate-600 dark:text-slate-300">
                   {s.products != null ? s.products : '-'}
                 </td>
-                <td className="px-4 py-2 text-right font-medium text-slate-700">
+                <td className="px-4 py-2 text-right font-medium text-slate-700 dark:text-slate-200">
                   {s.best_price != null ? `€${s.best_price.toFixed(2)}` : '-'}
                 </td>
               </tr>

@@ -1119,9 +1119,39 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             await asyncio.sleep(3)
             print(f"  [Soledad] Typeahead input timeout — continuing anyway")
 
-        _save_debug('/tmp/soledad_search_page.html', await page.content())
+       _save_debug('/tmp/soledad_search_page.html', await page.content())
         search_page_url = page.url
         print(f"  [Soledad] Search page URL: {search_page_url}")
+
+        # ── Fechar pop-up de mensagens, se existir ────────────────────────────
+        # O Grupo Soledad apresenta um modal "Mensagens" com aviso logístico e um
+        # botão "Confirme a leitura" logo após o login. Enquanto não for confirmado,
+        # o site trata a sessão como incompleta e redireciona para /login ao navegar
+        # para a pesquisa. Fechamos o modal aqui (try/except — inofensivo se não existir).
+        try:
+            _msg_btn = page.locator(
+                'button:has-text("Confirme a leitura"), '
+                'button:has-text("Confirmar leitura"), '
+                'button:has-text("Confirme la lectura"), '
+                'button:has-text("Aceitar"), button:has-text("Aceptar")'
+            ).first
+            if await _msg_btn.count() > 0:
+                await _msg_btn.click(timeout=4000)
+                print(f"  [Soledad] Pop-up de mensagens fechado (Confirme a leitura)")
+                await asyncio.sleep(1.5)
+            else:
+                # Fallback: fechar pelo X do modal
+                _close_x = page.locator(
+                    '.modal button.close, .modal .btn-close, '
+                    '[class*="modal"] button[aria-label*="lose" i], '
+                    '[class*="dialog"] button[aria-label*="echar" i]'
+                ).first
+                if await _close_x.count() > 0:
+                    await _close_x.click(timeout=3000)
+                    print(f"  [Soledad] Pop-up de mensagens fechado (X)")
+                    await asyncio.sleep(1.5)
+        except Exception as _msg_e:
+            print(f"  [Soledad] Sem pop-up de mensagens a fechar ({_msg_e})")
 
         # Diagnostic: dump all visible inputs on the search page
         page_inputs = await page.evaluate('''() => {
