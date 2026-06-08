@@ -320,8 +320,8 @@ const Comparar = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Comparar Preços Excel</h1>
-          <p className="text-slate-500">Carregue um ficheiro Excel e compare com os preços dos fornecedores</p>
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Comparar Preços Excel</h1>
+         <p className="text-slate-500 dark:text-slate-400">Carregue um ficheiro Excel e compare com os preços dos fornecedores</p>
         </div>
         {step > 1 && (
           <Button variant="outline" onClick={resetFlow}>
@@ -474,25 +474,25 @@ const Comparar = () => {
         <>
           {/* Stats Card */}
           {stats && (
-            <Card className="bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-200">
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-8">
-                    <div>
-                      <p className="text-sm text-slate-600">Total de Itens</p>
-                      <p className="text-3xl font-bold text-slate-700">{stats.total}</p>
-                    </div>
-                    <div className="h-16 w-px bg-slate-200"></div>
-                    <div>
-                      <p className="text-sm text-slate-600">Com Preço Melhor</p>
-                      <p className="text-3xl font-bold text-emerald-600">{stats.found}</p>
-                    </div>
-                    <div className="h-16 w-px bg-slate-200"></div>
-                    <div>
-                      <p className="text-sm text-slate-600">Poupança Total</p>
-                      <p className="text-3xl font-bold text-emerald-600">€{stats.savings?.toFixed(2)}</p>
-                    </div>
+            <Card className="bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-slate-800 dark:to-slate-800 border-emerald-200 dark:border-slate-700">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-8">
+                  <div>
+                    <p className="text-sm text-slate-600 dark:text-slate-400">Total de Itens</p>
+                    <p className="text-3xl font-bold text-slate-700 dark:text-slate-100">{stats.total}</p>
                   </div>
+                  <div className="h-16 w-px bg-slate-200 dark:bg-slate-600"></div>
+                  <div>
+                    <p className="text-sm text-slate-600 dark:text-slate-400">Com Preço Melhor</p>
+                    <p className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">{stats.found}</p>
+                  </div>
+                  <div className="h-16 w-px bg-slate-200 dark:bg-slate-600"></div>
+                  <div>
+                    <p className="text-sm text-slate-600 dark:text-slate-400">Poupança Total</p>
+                    <p className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">€{stats.savings?.toFixed(2)}</p>
+                  </div>
+                </div>
                   <div className="flex gap-2">
                     {!saved && (
                       <Button
