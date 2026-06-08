@@ -1119,7 +1119,7 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
             await asyncio.sleep(3)
             print(f"  [Soledad] Typeahead input timeout — continuing anyway")
 
-       _save_debug('/tmp/soledad_search_page.html', await page.content())
+        _save_debug('/tmp/soledad_search_page.html', await page.content())
         search_page_url = page.url
         print(f"  [Soledad] Search page URL: {search_page_url}")
 
