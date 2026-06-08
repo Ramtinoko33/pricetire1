@@ -261,9 +261,9 @@ const Comparar = () => {
   };
 
   const SupplierStatusTable = () => (
-    <div className="mt-4 rounded-lg border border-slate-200 dark:border-emerald-800 overflow-hidden">
+    <div className="mt-4 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
       <table className="w-full text-sm">
-        <thead className="bg-slate-50 dark:bg-emerald-900 text-slate-500 dark:text-emerald-300/70 text-xs uppercase">
+        <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs uppercase">
           <tr>
             <th className="px-4 py-2 text-left">Fornecedor</th>
             <th className="px-4 py-2 text-left">Estado</th>
@@ -272,20 +272,20 @@ const Comparar = () => {
             <th className="px-4 py-2 text-right">Melhor Preço</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-emerald-900/50">
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
           {suppliersStatus.map((s) => {
             const m = statusMeta[s.status] || statusMeta.waiting;
             return (
-              <tr key={s.name} className="bg-white dark:bg-emerald-950 hover:bg-slate-50 dark:hover:bg-emerald-900/40">
-                <td className="px-4 py-2 font-medium text-slate-700 dark:text-emerald-50">{s.name}</td>
+              <tr key={s.name} className="bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800">
+                <td className="px-4 py-2 font-medium text-slate-700 dark:text-slate-200">{s.name}</td>
                 <td className={`px-4 py-2 ${m.cls}`}><span className="flex items-center gap-1">{m.icon} {m.label}</span></td>
-                <td className="px-4 py-2 text-right text-slate-500 dark:text-emerald-300/70">
+                <td className="px-4 py-2 text-right text-slate-500 dark:text-slate-400">
                   {s.duration_s != null ? `${s.duration_s}s` : '-'}
                 </td>
-                <td className="px-4 py-2 text-right text-slate-600 dark:text-emerald-200/80">
+                <td className="px-4 py-2 text-right text-slate-600 dark:text-slate-300">
                   {s.products != null ? s.products : '-'}
                 </td>
-                <td className="px-4 py-2 text-right font-medium text-slate-700 dark:text-emerald-50">
+                <td className="px-4 py-2 text-right font-medium text-slate-700 dark:text-slate-200">
                   {s.best_price != null ? `€${s.best_price.toFixed(2)}` : '-'}
                 </td>
               </tr>
@@ -474,25 +474,26 @@ const Comparar = () => {
         <>
           {/* Stats Card */}
           {stats && (
-            <Card className="bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-emerald-950 dark:to-emerald-950 border-emerald-200 dark:border-emerald-800">
+            <Card className="bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-slate-900 dark:to-slate-900 border-emerald-200 dark:border-slate-700">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-8">
                   <div>
-                    <p className="text-sm text-slate-600 dark:text-emerald-300/70">Total de Itens</p>
-                    <p className="text-3xl font-bold text-slate-700 dark:text-emerald-50">{stats.total}</p>
+                    <p className="text-sm text-slate-600 dark:text-slate-400">Total de Itens</p>
+                    <p className="text-3xl font-bold text-slate-700 dark:text-slate-100">{stats.total}</p>
                   </div>
-                  <div className="h-16 w-px bg-slate-200 dark:bg-emerald-800"></div>
+                  <div className="h-16 w-px bg-slate-200 dark:bg-slate-700"></div>
                   <div>
-                    <p className="text-sm text-slate-600 dark:text-emerald-300/70">Com Preço Melhor</p>
+                    <p className="text-sm text-slate-600 dark:text-slate-400">Com Preço Melhor</p>
                     <p className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">{stats.found}</p>
                   </div>
-                  <div className="h-16 w-px bg-slate-200 dark:bg-emerald-800"></div>
+                  <div className="h-16 w-px bg-slate-200 dark:bg-slate-700"></div>
                   <div>
-                    <p className="text-sm text-slate-600 dark:text-emerald-300/70">Poupança Total</p>
+                    <p className="text-sm text-slate-600 dark:text-slate-400">Poupança Total</p>
                     <p className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">€{stats.savings?.toFixed(2)}</p>
                   </div>
                 </div>
+
                   <div className="flex gap-2">
                     {!saved && (
                       <Button
@@ -640,7 +641,7 @@ const Comparar = () => {
                       return (
                         <TableRow
                           key={item.id || index}
-                          className={hasSavings ? 'bg-emerald-50 hover:bg-emerald-100' : isOtherBrand ? 'bg-amber-50/30' : ''}
+                          className={hasSavings ? 'bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/40' : isOtherBrand ? 'bg-amber-50/30 dark:bg-amber-950/20' : ''}
                           data-testid={`result-row-${index}`}
                         >
                           <TableCell className="font-mono">{item.medida}</TableCell>
