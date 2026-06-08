@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useBlocker } from 'react-router-dom';
 import { jobsAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -25,17 +24,7 @@ const Comparar = () => {
   const pollingTimerRef = useRef(null);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
-  const skipLeavePromptRef = useRef(false); // "não voltar a perguntar" (só esta sessão)
-
-  // Bloqueia navegação para outra aba quando há tabela por guardar
-  const blocker = useBlocker(
-    ({ currentLocation, nextLocation }) =>
-      step === 3 &&
-      job?.id &&
-      !saved &&
-      !skipLeavePromptRef.current &&
-      currentLocation.pathname !== nextLocation.pathname
-  );
+  // (bloqueio de navegação entre abas removido — usa-se apenas o aviso beforeunload)
 
   // Limpar timer ao desmontar componente
   useEffect(() => {
@@ -724,47 +713,7 @@ const Comparar = () => {
 </>
       )}
 
-{blocker.state === 'blocked' && (
-        <div
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-          }}
-          onClick={() => blocker.reset()}
-        >
-          <div
-            style={{
-              background: 'white', borderRadius: 12, padding: 24, maxWidth: 420,
-              width: '90%', boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1F2937', marginBottom: 8 }}>
-              Sair sem guardar?
-            </h3>
-            <p style={{ fontSize: 14, color: '#6B7280', marginBottom: 20 }}>
-              A tabela ainda não foi guardada. Se sair agora, perde a comparação e ela não aparecerá na aba Resultados.
-            </p>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#6B7280', marginBottom: 20, cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                onChange={(e) => { skipLeavePromptRef.current = e.target.checked; }}
-              />
-              Não voltar a perguntar nesta sessão
-            </label>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <Button variant="outline" onClick={() => blocker.reset()}>Cancelar</Button>
-              <Button
-                onClick={() => blocker.proceed()}
-                className="bg-red-600 hover:bg-red-700"
-              >
-                Sair sem guardar
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+</div>
   );
 };
 
