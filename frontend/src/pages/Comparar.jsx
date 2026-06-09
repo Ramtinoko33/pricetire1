@@ -583,7 +583,7 @@ const Comparar = () => {
                   <select
                     value={sortOrder}
                     onChange={e => setSortOrder(e.target.value)}
-                    className="ml-4 text-xs border border-slate-200 rounded px-2 py-0.5 bg-white text-slate-700"
+                    className="ml-4 text-xs border border-slate-200 dark:border-border rounded px-2 py-0.5 bg-white dark:bg-background text-slate-700 dark:text-foreground"
                   >
                     <option value="economia_desc">↓ Maior economia</option>
                     <option value="economia_asc">↑ Menor economia</option>
@@ -595,7 +595,7 @@ const Comparar = () => {
 
               <div className="max-h-[500px] overflow-auto">
                 <Table>
-                  <TableHeader className="sticky top-0 bg-white">
+                  <TableHeader className="sticky top-0 bg-card">
                     <TableRow>
                       <TableHead>Medida</TableHead>
                       <TableHead>Marca</TableHead>
@@ -620,19 +620,19 @@ const Comparar = () => {
                       const getMatchBadge = () => {
                         switch(matchType) {
                           case 'modelo_exato':
-                            return <Badge variant="outline" className="text-xs bg-emerald-100 text-emerald-800 border-emerald-400">modelo exato</Badge>;
+                            return <Badge variant="outline" className="text-xs bg-emerald-100 dark:bg-emerald-500/15 text-emerald-800 dark:text-emerald-400 border-emerald-400 dark:border-emerald-500/30">modelo exato</Badge>;
                           case 'modelo_sem_indice':
-                            return <Badge variant="outline" className="text-xs bg-orange-100 text-orange-800 border-orange-400">sem índice</Badge>;
+                            return <Badge variant="outline" className="text-xs bg-orange-100 dark:bg-orange-500/15 text-orange-800 dark:text-orange-400 border-orange-400 dark:border-orange-500/30">sem índice</Badge>;
                           case 'modelo_parcial':
-                            return <Badge variant="outline" className="text-xs bg-teal-50 text-teal-700 border-teal-300">modelo parcial</Badge>;
+                            return <Badge variant="outline" className="text-xs bg-teal-50 dark:bg-teal-500/15 text-teal-700 dark:text-teal-400 border-teal-300 dark:border-teal-500/30">modelo parcial</Badge>;
                           case 'marca':
-                            return <Badge variant="outline" className="text-xs bg-blue-100 text-blue-800 border-blue-400">marca</Badge>;
+                            return <Badge variant="outline" className="text-xs bg-blue-100 dark:bg-blue-500/15 text-blue-800 dark:text-blue-400 border-blue-400 dark:border-blue-500/30">marca</Badge>;
                           case 'marca_parcial':
-                            return <Badge variant="outline" className="text-xs bg-sky-100 text-sky-700 border-sky-300">marca parcial</Badge>;
+                            return <Badge variant="outline" className="text-xs bg-sky-100 dark:bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-300 dark:border-sky-500/30">marca parcial</Badge>;
                           case 'medida':
-                            return <Badge variant="outline" className="text-xs bg-purple-100 text-purple-800 border-purple-400">só medida</Badge>;
+                            return <Badge variant="outline" className="text-xs bg-purple-100 dark:bg-purple-500/15 text-purple-800 dark:text-purple-400 border-purple-400 dark:border-purple-500/30">só medida</Badge>;
                           case 'sem_dados':
-                            return <Badge variant="outline" className="text-xs bg-red-100 text-red-800 border-red-400">sem dados</Badge>;
+                            return <Badge variant="outline" className="text-xs bg-red-100 dark:bg-red-500/15 text-red-800 dark:text-red-400 border-red-400 dark:border-red-500/30">sem dados</Badge>;
                           default:
                             return null;
                         }
@@ -651,16 +651,16 @@ const Comparar = () => {
                               {getMatchBadge()}
                             </div>
                           </TableCell>
-                          <TableCell className="max-w-[120px] truncate text-slate-600" title={item.modelo}>
+                          <TableCell className="max-w-[120px] truncate text-slate-600 dark:text-muted-foreground" title={item.modelo}>
                             {item.modelo || '-'}
                           </TableCell>
-                          <TableCell className="font-mono text-slate-600">
+                          <TableCell className="font-mono text-slate-600 dark:text-muted-foreground">
                             {item.indice || '-'}
                           </TableCell>
                           <TableCell className="max-w-[150px] truncate font-medium" title={item.modelo_encontrado}>
                             {item.modelo_encontrado || '-'}
                           </TableCell>
-                          <TableCell className="font-mono text-slate-500 text-xs">
+                          <TableCell className="font-mono text-slate-500 dark:text-muted-foreground text-xs">
                             {item.indice_encontrado || '-'}
                           </TableCell>
                           <TableCell className="text-right font-medium">
@@ -669,7 +669,7 @@ const Comparar = () => {
                           <TableCell className="text-right font-medium">
                             {item.melhor_preco ? (
                               <div className="flex flex-col items-end">
-                                <span className={hasSavings ? 'text-emerald-600' : isOtherBrand ? 'text-amber-700' : ''}>
+                                <span className={hasSavings ? 'text-emerald-600 dark:text-emerald-400' : isOtherBrand ? 'text-amber-700 dark:text-amber-400' : ''}>
                                   €{item.melhor_preco.toFixed(2)}
                                 </span>
                                 {isOtherBrand && item.melhor_marca && (
@@ -687,17 +687,17 @@ const Comparar = () => {
                           </TableCell>
                           <TableCell className="text-right">
                             {hasSavings ? (
-                              <span className="text-emerald-600 font-bold">
+                              <span className="text-emerald-600 dark:text-emerald-400 font-bold">
                                 <TrendingDown className="inline w-3 h-3 mr-1" />
                                 €{item.economia_euro.toFixed(2)}
                               </span>
                             ) : isOtherBrand ? (
-                              <span className="text-xs text-amber-600 italic">outra marca</span>
+                              <span className="text-xs text-amber-600 dark:text-amber-400 italic">outra marca</span>
                             ) : '-'}
                           </TableCell>
                           <TableCell className="text-right">
                             {hasSavings ? (
-                              <span className="text-emerald-600 font-bold">
+                              <span className="text-emerald-600 dark:text-emerald-400 font-bold">
                                 {item.economia_percent.toFixed(1)}%
                               </span>
                             ) : '-'}
