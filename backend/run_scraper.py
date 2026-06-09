@@ -1039,58 +1039,23 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                 return result
             print(f"  [Soledad] Login succeeded")
 
-            # ── SSO handoff: b2b.current → b2b.new ───────────────────────────
-            # After login, b2b.current redirects to b2b.new.gruposoledad.com/login?params=TOKEN
-            # This SSO token is processed by b2b.new and creates the session there.
-            # We must wait for this redirect to complete before navigating anywhere.
-            #
-            # Three observed cases after login:
-            #  A) URL is b2b.new/login?params=TOKEN — SSO in progress (wait for it)
-            #  B) URL is b2b.new/dashboard/* — SSO already completed during sleep(3)
-            #  C) URL is b2b.current/* — SSO hasn't triggered yet (wait for it)
+            # ── Sessão mantém-se no b2b.current (NÃO há handoff para b2b.new) ──
+            # Confirmado pelo utilizador: login E pesquisa acontecem ambos em
+            # b2b.current.gruposoledad.com. O b2b.new rejeita a sessão e redireciona
+            # para /login — por isso NUNCA navegamos para lá. Mantemos os URLs no
+            # b2b.current já recebidos como argumentos da função.
             _post_login_url = page.url
-            if 'params=' in _post_login_url and '/login' in _post_login_url:
-                # Case A: SSO token in URL — wait for b2b.new to process it
-                print(f"  [Soledad] SSO handoff in progress — waiting for dashboard redirect...")
-                for _sso_i in range(30):
-                    await asyncio.sleep(1)
-                    _sso_url = page.url
-                    if '/login' not in _sso_url:
-                        print(f"  [Soledad] SSO complete after {_sso_i+1}s — {_sso_url}")
-                        break
-                    if _sso_i % 5 == 0:
-                        print(f"  [Soledad] SSO wait {_sso_i}s — {_sso_url}")
-                else:
-                    print(f"  [Soledad] SSO timeout — still on {page.url}")
-                url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
-                url_origin = 'https://b2b.new.gruposoledad.com'
-                print(f"  [Soledad] Search URL updated to b2b.new (SSO domain)")
-            elif 'b2b.new' in _post_login_url and '/login' not in _post_login_url:
-                # Case B: already on b2b.new dashboard — SSO completed during sleep
-                url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
-                url_origin = 'https://b2b.new.gruposoledad.com'
-                print(f"  [Soledad] Already on b2b.new after login — SSO complete: {_post_login_url}")
-            else:
-                # Case C: still on b2b.current — SSO hasn't triggered yet.
-                # Wait up to 25s for the page to navigate to b2b.new.
-                print(f"  [Soledad] Waiting for SSO redirect from {_post_login_url}...")
+            print(f"  [Soledad] Pós-login (sem handoff): {_post_login_url}")
+            url_search = 'https://b2b.current.gruposoledad.com/dashboard/main'
+            url_origin = 'https://b2b.current.gruposoledad.com'
+            # Se por algum motivo caímos no b2b.new, voltar ao b2b.current
+            if 'b2b.new' in _post_login_url:
+                print(f"  [Soledad] Detectado b2b.new — a regressar a b2b.current")
                 try:
-                    await page.wait_for_url('**/b2b.new/**', timeout=25000)
-                    _url_now = page.url
-                    url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
-                    url_origin = 'https://b2b.new.gruposoledad.com'
-                    print(f"  [Soledad] SSO redirect detected: {_url_now}")
-                    if 'params=' in _url_now and '/login' in _url_now:
-                        for _sso_proc in range(20):
-                            await asyncio.sleep(1)
-                            if '/login' not in page.url:
-                                print(f"  [Soledad] SSO token processed after {_sso_proc+1}s")
-                                break
-                except Exception:
-                    # SSO never happened — proceed anyway, session may still work
-                    url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
-                    url_origin = 'https://b2b.new.gruposoledad.com'
-                    print(f"  [Soledad] No SSO redirect after 25s — proceeding to b2b.new")
+                    await page.goto(url_search, wait_until="domcontentloaded", timeout=20000)
+                    await asyncio.sleep(2)
+                except Exception as _back_e:
+                    print(f"  [Soledad] Aviso ao regressar a b2b.current: {_back_e}")
 
         # ── Fechar pop-up de mensagens "Confirme a leitura" ───────────────────
         # Aparece logo após o login (no dashboard). Enquanto não for confirmado,
