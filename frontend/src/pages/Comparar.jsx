@@ -261,9 +261,9 @@ const Comparar = () => {
   };
 
   const SupplierStatusTable = () => (
-    <div className="mt-4 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+    <div className="mt-4 rounded-lg border border-slate-200 dark:border-border overflow-hidden">
       <table className="w-full text-sm">
-        <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs uppercase">
+        <thead className="bg-slate-50 dark:bg-emerald-500/10 text-slate-500 dark:text-muted-foreground text-xs uppercase">
           <tr>
             <th className="px-4 py-2 text-left">Fornecedor</th>
             <th className="px-4 py-2 text-left">Estado</th>
@@ -272,20 +272,20 @@ const Comparar = () => {
             <th className="px-4 py-2 text-right">Melhor Preço</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+        <tbody className="divide-y divide-slate-100 dark:divide-border">
           {suppliersStatus.map((s) => {
             const m = statusMeta[s.status] || statusMeta.waiting;
             return (
-              <tr key={s.name} className="bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800">
-                <td className="px-4 py-2 font-medium text-slate-700 dark:text-slate-200">{s.name}</td>
+              <tr key={s.name} className="bg-white dark:bg-card hover:bg-slate-50 dark:hover:bg-emerald-500/10">
+                <td className="px-4 py-2 font-medium text-slate-700 dark:text-foreground">{s.name}</td>
                 <td className={`px-4 py-2 ${m.cls}`}><span className="flex items-center gap-1">{m.icon} {m.label}</span></td>
-                <td className="px-4 py-2 text-right text-slate-500 dark:text-slate-400">
+                <td className="px-4 py-2 text-right text-slate-500 dark:text-muted-foreground">
                   {s.duration_s != null ? `${s.duration_s}s` : '-'}
                 </td>
-                <td className="px-4 py-2 text-right text-slate-600 dark:text-slate-300">
+                <td className="px-4 py-2 text-right text-slate-600 dark:text-muted-foreground">
                   {s.products != null ? s.products : '-'}
                 </td>
-                <td className="px-4 py-2 text-right font-medium text-slate-700 dark:text-slate-200">
+                <td className="px-4 py-2 text-right font-medium text-slate-700 dark:text-foreground">
                   {s.best_price != null ? `€${s.best_price.toFixed(2)}` : '-'}
                 </td>
               </tr>
@@ -474,22 +474,22 @@ const Comparar = () => {
         <>
           {/* Stats Card */}
           {stats && (
-            <Card className="bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-slate-900 dark:to-slate-900 border-emerald-200 dark:border-slate-700">
+            <Card className="bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-emerald-500/10 dark:to-emerald-500/10 border-emerald-200 dark:border-emerald-500/20">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-8">
                   <div>
-                    <p className="text-sm text-slate-600 dark:text-slate-400">Total de Itens</p>
-                    <p className="text-3xl font-bold text-slate-700 dark:text-slate-100">{stats.total}</p>
+                    <p className="text-sm text-slate-600 dark:text-muted-foreground">Total de Itens</p>
+                    <p className="text-3xl font-bold text-slate-700 dark:text-foreground">{stats.total}</p>
                   </div>
-                  <div className="h-16 w-px bg-slate-200 dark:bg-slate-700"></div>
+                  <div className="h-16 w-px bg-slate-200 dark:bg-emerald-500/20"></div>
                   <div>
-                    <p className="text-sm text-slate-600 dark:text-slate-400">Com Preço Melhor</p>
+                    <p className="text-sm text-slate-600 dark:text-muted-foreground">Com Preço Melhor</p>
                     <p className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">{stats.found}</p>
                   </div>
-                  <div className="h-16 w-px bg-slate-200 dark:bg-slate-700"></div>
+                  <div className="h-16 w-px bg-slate-200 dark:bg-emerald-500/20"></div>
                   <div>
-                    <p className="text-sm text-slate-600 dark:text-slate-400">Poupança Total</p>
+                    <p className="text-sm text-slate-600 dark:text-muted-foreground">Poupança Total</p>
                     <p className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">€{stats.savings?.toFixed(2)}</p>
                   </div>
                 </div>
@@ -641,7 +641,7 @@ const Comparar = () => {
                       return (
                         <TableRow
                           key={item.id || index}
-                          className={hasSavings ? 'bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/40' : isOtherBrand ? 'bg-amber-50/30 dark:bg-amber-950/20' : ''}
+                          className={hasSavings ? 'bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 dark:hover:bg-emerald-500/20' : isOtherBrand ? 'bg-amber-50/30 dark:bg-amber-500/10' : ''}
                           data-testid={`result-row-${index}`}
                         >
                           <TableCell className="font-mono">{item.medida}</TableCell>
