@@ -164,12 +164,12 @@ def _is_scheduled_job(job: dict) -> bool:
 def mark_scheduler_finished_if_last():
     """Se já não há jobs automáticos VIVOS em fila, grava o fim do scrape
     automático na tabela scheduler_status. Jobs presos em 'running' há mais
-    de 15 minutos são ignorados (considerados mortos), para que órfãos de
+    de 40 minutos são ignorados (considerados mortos), para que órfãos de
     lotes antigos não travem o fim do lote atual."""
     c = get_conn()
     try:
         with c.cursor() as cur:
-            # Conta jobs automáticos ainda vivos: 'queued', ou 'running' há < 15 min.
+            # Conta jobs automáticos ainda vivos: 'queued', ou 'running' há < 40 min.
             # Jobs 'running' há mais tempo são considerados presos e não contam.
             cur.execute(
                 """
@@ -179,7 +179,7 @@ def mark_scheduler_finished_if_last():
                   AND (
                         status = 'queued'
                         OR (status = 'running'
-                            AND started_at > NOW() - INTERVAL '15 minutes')
+                            AND started_at > NOW() - INTERVAL '40 minutes')
                   )
                 """
             )
