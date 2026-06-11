@@ -172,8 +172,27 @@ async def _run_scheduled_scrape():
                 )
         logger.info(f"[scheduler] Enfileirados {len(suppliers)} jobs de scrape "
                     f"para {len(normalized)} medidas")
+
+        # Carimbo nos logs: regista quando o scrape automático disparou,
+        # que medidas usou e quantos fornecedores enfileirou. Fica no topo
+        # da página de Logs (ordenada por created_at DESC).
+        try:
+            _hora = now.astimezone(timezone(timedelta(hours=1))).strftime('%Y-%m-%d %H:%M')
+            _medidas_str = ', '.join(sorted(normalized))
+            _msg = (f"Scrape automático iniciado às {_hora} — "
+                    f"medidas: {_medidas_str} "
+                    f"({len(suppliers)} fornecedores enfileirados)")
+            async with pool.acquire() as conn_log:
+                await conn_log.execute(
+                    "INSERT INTO logs (id, level, message, created_at) VALUES ($1,$2,$3,$4)",
+                    str(uuid.uuid4()), "SCHEDULE", _msg, now,
+                )
+            logger.info(f"[scheduler] {_msg}")
+        except Exception as _log_e:
+            logger.warning(f"[scheduler] Falha ao registar carimbo nos logs: {_log_e}")
     except Exception as e:
         logger.error(f"[scheduler] Erro no scrape agendado: {e}", exc_info=True)
+
 
 
 def _start_scheduler():
