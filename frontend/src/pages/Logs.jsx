@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { logsAPI } from '../lib/api';
+import api from '../lib/api';
 import { Card, CardContent } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { RefreshCw, ChevronDown, ChevronUp, AlertCircle, Info, AlertTriangle } from 'lucide-react';
@@ -51,7 +52,17 @@ const Logs = () => {
   const [limit, setLimit] = useState(100);
   const [lastRefresh, setLastRefresh] = useState(null);
   const [search, setSearch] = useState('');
+  const [schedStatus, setSchedStatus] = useState(null);
   const intervalRef = useRef(null);
+
+  const loadSchedStatus = async () => {
+    try {
+      const { data } = await api.get('/scheduler-status');
+      setSchedStatus(data && data.started_at ? data : null);
+    } catch (e) {
+      // silencioso — o cartão simplesmente não aparece
+    }
+  };
 
   const loadLogs = async (lim = limit) => {
     try {
@@ -65,7 +76,7 @@ const Logs = () => {
     }
   };
 
-  useEffect(() => { loadLogs(); }, []);
+  useEffect(() => { loadLogs(); loadSchedStatus(); }, []);
 
   useEffect(() => {
     intervalRef.current = setInterval(() => {
@@ -119,6 +130,30 @@ const Logs = () => {
           </select>
         </div>
       </div>
+
+      {schedStatus && (
+        <Card className="border-border bg-emerald-500/10">
+          <CardContent className="p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
+                SCRAPE AUTOMÁTICO
+              </span>
+              <span className="text-xs text-foreground">
+                Início: <span className="font-mono">{new Date(schedStatus.started_at).toLocaleString('pt-PT')}</span>
+              </span>
+              <span className="text-xs text-foreground">
+                Fim: <span className="font-mono">{schedStatus.finished_at ? new Date(schedStatus.finished_at).toLocaleString('pt-PT') : 'em curso...'}</span>
+              </span>
+            </div>
+            {schedStatus.medidas && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Medidas: <span className="font-mono">{schedStatus.medidas}</span>
+                {schedStatus.num_suppliers ? ` · ${schedStatus.num_suppliers} fornecedores` : ''}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="border-border">
         <CardContent className="p-0">

@@ -1771,6 +1771,17 @@ async def get_scheduled_targets():
     return rs
 
 
+@api_router.get("/scheduler-status")
+async def get_scheduler_status():
+    """Estado do último scrape automático: início, fim, medidas, nº fornecedores."""
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        r = row(await conn.fetchrow(
+            "SELECT * FROM scheduler_status WHERE id = 'singleton'"
+        ))
+    return r or {}
+
+
 @api_router.post("/scheduled-targets")
 async def add_scheduled_target(payload: Dict = Body(...)):
     kind = (payload.get("kind") or "").strip().lower()
