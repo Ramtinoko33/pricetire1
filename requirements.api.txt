@@ -1,5 +1,5 @@
 # ============================================================
-# requirements.api.txt — Dependências do serviço API
+# requirements.api.txt — Dependências do serviço API4
 # Versão slim: remove os ~80 pacotes AI/ML do Emergent
 # que não são usados pelo server.py
 # ============================================================
@@ -16,6 +16,7 @@ psycopg2-binary==2.9.10
 
 # Scraping (necessário para endpoint test-login)
 playwright==1.58.0
+apscheduler==3.10.4
 
 # Excel
 openpyxl==3.1.5
