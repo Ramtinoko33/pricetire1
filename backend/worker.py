@@ -150,6 +150,49 @@ def run_supplier_scrape(supplier_name: str, sizes: list, job_id: str):
     asyncio.run(run_scraper(medidas=sizes, supplier_filter=supplier_name))
 
 
+def _is_scheduled_job(job: dict) -> bool:
+    """True se o job foi criado pelo scrape automático (flag scheduled no payload)."""
+    payload = job.get("payload") or {}
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            return False
+    return bool(payload.get("scheduled"))
+
+
+def mark_scheduler_finished_if_last():
+    """Se já não há jobs automáticos em fila (queued/running), grava o fim do
+    scrape automático na tabela scheduler_status. Chamado após cada job
+    automático terminar — só o último do lote encontra a fila vazia."""
+    c = get_conn()
+    try:
+        with c.cursor() as cur:
+            # Contar jobs automáticos ainda por terminar (a flag está dentro do payload JSON)
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM jobs
+                WHERE type = 'scrape'
+                  AND status IN ('queued', 'running')
+                  AND payload::jsonb ->> 'scheduled' = 'true'
+                """
+            )
+            remaining = cur.fetchone()[0]
+            if remaining == 0:
+                cur.execute(
+                    "UPDATE scheduler_status SET finished_at = %s WHERE id = 'singleton'",
+                    (datetime.now(timezone.utc),),
+                )
+                c.commit()
+                print(f"  [scheduler] Último job automático terminado — fim gravado", flush=True)
+            else:
+                c.rollback()
+                print(f"  [scheduler] Ainda há {remaining} jobs automáticos em fila", flush=True)
+    except Exception as e:
+        c.rollback()
+        print(f"mark_scheduler_finished_if_last error: {e}", flush=True)
+
+
 def main():
     print(f"Worker started at {datetime.now()}", flush=True)
     print(f"PostgreSQL: {DATABASE_URL[:40]}...", flush=True)
@@ -191,6 +234,9 @@ def main():
                     last_error=None,
                 )
                 print(f"  Job {job_id} completed successfully", flush=True)
+                # Se este era um job automático, verificar se foi o último do lote
+                if _is_scheduled_job(job):
+                    mark_scheduler_finished_if_last()
             except Exception as e:
                 print(f"  Job {job_id} failed: {e}", flush=True)
                 update_job(
