@@ -3720,11 +3720,14 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                             _sol_relogin = False
                             _t0 = datetime.now(timezone.utc)
                             print(f"  [Soledad] Início medida {medida} às {_t0.strftime('%H:%M:%S')} (skip_login={not _is_first})")
-                            # Login em b2b.current (credenciais funcionam aqui).
-                            # b2b.current faz SSO para b2b.new/login?params=TOKEN após auth.
-                            # A sessão é criada no b2b.new — pesquisa usa b2b.new.
+                            # Login E pesquisa acontecem ambos em b2b.current.
+                            # Confirmado: b2b.new rejeita a sessão e redireciona para /login.
+                            # Passar já b2b.current como url_search garante que as medidas
+                            # com skip_login=True (que não passam pela correção pós-login)
+                            # também usam o domínio certo desde o início.
                             _sol_url_login = 'https://b2b.current.gruposoledad.com/login'
-                            _sol_url_search = 'https://b2b.new.gruposoledad.com/dashboard/main'
+                            _sol_url_search = 'https://b2b.current.gruposoledad.com/dashboard/main'
+
                             result = await asyncio.wait_for(
                                 scrape_grupo_soledad(
                                     _sol_page, supplier['username'], supplier['password'], medida,
