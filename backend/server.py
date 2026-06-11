@@ -71,10 +71,40 @@ async def _ensure_scheduled_targets_table():
         logger.warning(f"[startup] Erro ao garantir tabela scheduled_targets: {e}")
 
 
+async def _ensure_scheduler_status_table():
+    """Tabela de estado do scrape automático: uma única linha (singleton).
+    Guarda o último início e o último fim do scrape agendado."""
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS scheduler_status (
+                    id TEXT PRIMARY KEY,
+                    started_at TIMESTAMPTZ,
+                    medidas TEXT,
+                    num_suppliers INTEGER,
+                    finished_at TIMESTAMPTZ
+                )
+                """
+            )
+            await conn.execute(
+                """
+                INSERT INTO scheduler_status (id)
+                VALUES ('singleton')
+                ON CONFLICT (id) DO NOTHING
+                """
+            )
+    except Exception as e:
+        logger.warning(f"[startup] Erro ao garantir tabela scheduler_status: {e}")
+
+
+
 @app.on_event("startup")
 async def startup():
     await _ensure_saved_column()
     await _ensure_scheduled_targets_table()
+    await _ensure_scheduler_status_table()
     await _cleanup_orphan_suppliers()
     await _cleanup_old_logs()
     _start_scheduler()
@@ -168,28 +198,33 @@ async def _run_scheduled_scrape():
                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
                     """,
                     job_id, "scrape", supplier['id'], supplier['name'],
-                    {"sizes": normalized}, "queued", 0, now,
-                )
+                {"sizes": normalized, "scheduled": True}, "queued", 0, now,
+            )
         logger.info(f"[scheduler] Enfileirados {len(suppliers)} jobs de scrape "
                     f"para {len(normalized)} medidas")
 
-        # Carimbo nos logs: regista quando o scrape automático disparou,
-        # que medidas usou e quantos fornecedores enfileirou. Fica no topo
-        # da página de Logs (ordenada por created_at DESC).
+        # Estado do scrape automático: gravar início na tabela singleton e
+        # limpar o fim anterior (novo scrape em curso). Horário em Europe/Lisbon
+        # (resolve verão/inverno automaticamente).
         try:
-            _hora = now.astimezone(timezone(timedelta(hours=1))).strftime('%Y-%m-%d %H:%M')
+            from zoneinfo import ZoneInfo
+            _hora_dt = now.astimezone(ZoneInfo("Europe/Lisbon"))
+            _hora = _hora_dt.strftime('%Y-%m-%d %H:%M')
             _medidas_str = ', '.join(sorted(normalized))
-            _msg = (f"Scrape automático iniciado às {_hora} — "
-                    f"medidas: {_medidas_str} "
-                    f"({len(suppliers)} fornecedores enfileirados)")
-            async with pool.acquire() as conn_log:
-                await conn_log.execute(
-                    "INSERT INTO logs (id, level, message, created_at) VALUES ($1,$2,$3,$4)",
-                    str(uuid.uuid4()), "SCHEDULE", _msg, now,
+            async with pool.acquire() as conn_st:
+                await conn_st.execute(
+                    """
+                    UPDATE scheduler_status
+                    SET started_at = $1, medidas = $2, num_suppliers = $3,
+                        finished_at = NULL
+                    WHERE id = 'singleton'
+                    """,
+                    now, _medidas_str, len(suppliers),
                 )
-            logger.info(f"[scheduler] {_msg}")
-        except Exception as _log_e:
-            logger.warning(f"[scheduler] Falha ao registar carimbo nos logs: {_log_e}")
+            logger.info(f"[scheduler] Estado actualizado: início {_hora}, "
+                        f"medidas {_medidas_str}, {len(suppliers)} fornecedores")
+        except Exception as _st_e:
+            logger.warning(f"[scheduler] Falha ao gravar estado de início: {_st_e}")
     except Exception as e:
         logger.error(f"[scheduler] Erro no scrape agendado: {e}", exc_info=True)
 
