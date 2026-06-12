@@ -28,7 +28,7 @@ export const jobsAPI = {
   getOne: (id) => api.get(`/jobs/${id}`),
   run: (id) => api.post(`/jobs/${id}/run`),
   compare: (id) => api.post(`/jobs/${id}/compare`, {}, { timeout: 30000 }),
-  forceCompare: (id) => api.post(`/jobs/${id}/compare?force=true`, {}, { timeout: 30000 }),
+  forceCompare: (id) => api.post(`/jobs/${id}/compare?force=false`, {}, { timeout: 30000 }),
   getProgress: (id) => api.get(`/jobs/${id}/progress`),
   getResults: (id) => api.get(`/jobs/${id}/results`),
   export: (id) => api.get(`/jobs/${id}/export`, { responseType: 'blob' }),
