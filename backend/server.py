@@ -951,8 +951,16 @@ async def _do_compare(job_id: str, force: bool):
             #   2. Existe um match exato de modelo nos últimos 12h em TODOS os fornecedores
             #      activos.
             # Em qualquer outro caso → re-scrape para verificar stock actual.
-            CACHE_TTL_MIN = 30
-            cache_cutoff = datetime.now(timezone.utc) - timedelta(minutes=CACHE_TTL_MIN)
+            # Frescura: só vale o que foi recolhido no último scrape automático.
+            # Lê o started_at do scheduler_status; se nunca houve scrape (NULL),
+            # usa um cutoff no futuro para que nada passe como válido → força scrape.
+            _sched = await conn.fetchrow(
+                "SELECT started_at FROM scheduler_status WHERE id = 'singleton'"
+            )
+            if _sched and _sched['started_at']:
+                cache_cutoff = _sched['started_at']
+            else:
+                cache_cutoff = datetime.now(timezone.utc) + timedelta(days=3650)
 
             active_supplier_names = {
                 r['name'] for r in
