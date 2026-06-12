@@ -36,6 +36,35 @@ const Comparar = () => {
     };
   }, []);
 
+  // Ao montar: se havia uma comparação em curso (guardada em sessionStorage),
+  // retomar — re-ligar ao job e continuar a mostrar o progresso. Isto resolve
+  // o caso de sair da aba e voltar enquanto o scraper ainda corre.
+  useEffect(() => {
+    const savedJobId = sessionStorage.getItem('comparing_job_id');
+    if (!savedJobId) return;
+    (async () => {
+      try {
+        const { data: progress } = await jobsAPI.getProgress(savedJobId);
+        if (progress?.status === 'running') {
+          // Ainda a correr — retomar o ecrã de comparação e o polling
+          setJob({ id: savedJobId, total_items: progress.total_items });
+          setStep(2);
+          setComparing(true);
+          if (progress?.suppliers_status?.length) {
+            setSuppliersStatus(progress.suppliers_status);
+          }
+          await _pollUntilDone(savedJobId);
+        } else {
+          // Já terminou enquanto estavas fora — limpar marca
+          sessionStorage.removeItem('comparing_job_id');
+        }
+      } catch (e) {
+        sessionStorage.removeItem('comparing_job_id');
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Aviso nativo do browser ao fechar/recarregar a janela com tabela por guardar
   useEffect(() => {
     const handleBeforeUnload = (e) => {
@@ -95,6 +124,7 @@ const Comparar = () => {
     if (!job?.id) return;
 
     setComparing(true);
+    sessionStorage.setItem('comparing_job_id', job.id);
     try {
       // Iniciar compare (retorna imediatamente com status='running')
       const { data } = force
@@ -145,6 +175,7 @@ const Comparar = () => {
 
           if (status === 'completed') {
             pollingTimerRef.current = null;
+            sessionStorage.removeItem('comparing_job_id');
             await loadResults();
             setStep(3);
             const found = progress.found_items ?? 0;
@@ -154,12 +185,14 @@ const Comparar = () => {
             return;
           } else if (status === 'failed') {
             pollingTimerRef.current = null;
+            sessionStorage.removeItem('comparing_job_id');
             toast.error('Erro na comparação de preços. Tente novamente.');
             setComparing(false);
             resolve();
             return;
           } else if (Date.now() - started > MAX_WAIT_MS) {
             pollingTimerRef.current = null;
+            sessionStorage.removeItem('comparing_job_id');
             toast.error('Timeout: a comparação demorou demasiado. Tente novamente.');
             setComparing(false);
             resolve();
@@ -243,6 +276,7 @@ const Comparar = () => {
       clearTimeout(pollingTimerRef.current);
       pollingTimerRef.current = null;
     }
+    sessionStorage.removeItem('comparing_job_id');
     setStep(1);
     setFile(null);
     setJob(null);
