@@ -123,6 +123,29 @@ async def _cleanup_old_logs():
         logger.warning(f"[cleanup] Erro na limpeza de logs: {e}")
 
 
+async def _cleanup_old_scraped_prices():
+    """Remove scraped_prices com mais de 24h. Os resultados de comparações já
+    estão congelados nas job_items, por isso apagar os preços crus não afecta
+    nenhuma tabela já comparada ou guardada. Corre diariamente às 03:00."""
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            deleted = await conn.fetchval(
+                """
+                WITH d AS (
+                    DELETE FROM scraped_prices
+                    WHERE scraped_at < NOW() - INTERVAL '24 hours'
+                    RETURNING id
+                )
+                SELECT COUNT(*) FROM d
+                """
+            )
+            if deleted:
+                logger.info(f"[cleanup] Removidos {deleted} scraped_prices com mais de 24h")
+    except Exception as e:
+        logger.warning(f"[cleanup] Erro na limpeza de scraped_prices: {e}")
+
+
 async def _cleanup_orphan_suppliers():
     """
     Limpeza preventiva no arranque:
@@ -240,8 +263,9 @@ def _start_scheduler():
         _scheduler = AsyncIOScheduler(timezone="Europe/Lisbon")
         _scheduler.add_job(_run_scheduled_scrape, CronTrigger(hour=0, minute=0), id="scrape_meia_noite")
         _scheduler.add_job(_run_scheduled_scrape, CronTrigger(hour=12, minute=0), id="scrape_meio_dia")
+        _scheduler.add_job(_cleanup_old_scraped_prices, CronTrigger(hour=3, minute=0), id="limpeza_scraped_prices")
         _scheduler.start()
-        logger.info("[scheduler] APScheduler iniciado — scrapes às 00:00 e 12:00 (Europe/Lisbon)")
+        logger.info("[scheduler] APScheduler iniciado — scrapes às 00:00 e 12:00, limpeza às 03:00 (Europe/Lisbon)")
     except Exception as e:
         logger.error(f"[scheduler] Erro ao iniciar APScheduler: {e}", exc_info=True)
 
