@@ -115,7 +115,14 @@ async def _cleanup_old_logs():
         pool = await get_db()
         async with pool.acquire() as conn:
             deleted = await conn.fetchval(
-                "DELETE FROM logs WHERE created_at < NOW() - INTERVAL '7 days' RETURNING COUNT(*)"
+                """
+                WITH d AS (
+                    DELETE FROM logs
+                    WHERE created_at < NOW() - INTERVAL '20 days'
+                    RETURNING id
+                )
+                SELECT COUNT(*) FROM d
+                """
             )
             if deleted:
                 logger.info(f"[cleanup] Removidos {deleted} logs com mais de 7 dias")
