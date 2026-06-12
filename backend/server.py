@@ -939,6 +939,8 @@ async def _do_compare(job_id: str, force: bool):
 
         if force:
             # Apaga todo o cache para estas medidas — força re-scrape completo
+            logger.info(f"[compare origem] job={job_id} FORCE=TRUE → ignora BD, "
+                        f"vai scrape a TODAS as {len(unique_pairs)} combinações medida+marca")
             await conn.execute(
                 "DELETE FROM scraped_prices WHERE medida = ANY($1)",
                 unique_medidas,
@@ -1012,6 +1014,16 @@ async def _do_compare(job_id: str, force: bool):
                     break  # basta verificar um fornecedor (todos recebem o mesmo scrape)
 
             pairs_sem_dados = list(pairs_sem_dados_set)
+            _total_pairs = len(unique_pairs)
+            _from_site = len(pairs_sem_dados)
+            _from_db = _total_pairs - _from_site
+            logger.info(f"[compare origem] job={job_id} FORCE=FALSE · "
+                        f"total combinações medida+marca: {_total_pairs} · "
+                        f"servidas pela BD (último scrape): {_from_db} · "
+                        f"vão ao site: {_from_site}")
+            if pairs_sem_dados:
+                logger.info(f"[compare origem] combinações que vão ao site: {pairs_sem_dados}")
+
 
     # Obter fornecedores activos e inicializar tracking SEMPRE —
     # independentemente de haver cache ou não, para que o frontend
