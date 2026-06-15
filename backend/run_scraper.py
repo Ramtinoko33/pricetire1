@@ -620,9 +620,9 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                 const medidaRe = /\\d{3}\\/\\d{2}[RrBb]\\d{2}/;
                 const medidaMatch = txt.match(medidaRe);
                 if (!medidaMatch) {
-                    // Sem medida (comercial): ex "C 104/102T 6PR DURAVIS VAN"
-                    // Extrair índice duplo e limpar prefixo "C".
-                    let t2 = txt.replace(/^C\\s+/i, '');
+                    // Sem medida (comercial): ex "C 104/102S 8PR DURAVIS VAN"
+                    // Extrair indice duplo e limpar prefixo "C" / "CP".
+                    let t2 = txt.replace(/^(CP|C)\\s+/i, '');
                     let li = '';
                     const dm = t2.match(/\\b(\\d{2,3}\\/\\d{2,3}[A-Za-z])\\b/);
                     if (dm) {
