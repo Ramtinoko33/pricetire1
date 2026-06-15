@@ -523,8 +523,7 @@ const Comparar = () => {
                 </>
               )}
             </Button>
-
-            Substituir por:
+            
             {comparing && (
               <Button
                 onClick={handleCancel}
