@@ -927,6 +927,41 @@ def _request_cancel(job_id: str) -> int:
             pass
     return killed
 
+def _norm_idx_canonico(v: str) -> str:
+    """Reduz qualquer formato de índice (simples ou duplo) a forma canónica.
+    Exemplos:
+      '104T102T'  -> '104/102T'
+      '104/102T'  -> '104/102T'
+      '104T/102T' -> '104/102T'
+      '104T102'   -> '104/102T'
+      '110R108'   -> '110/108R'
+      '91V'       -> '91V'
+      '91V XL'    -> '91V XL'
+    Regra: extrai todos os números de carga (2-3 dígitos) e a(s) letra(s) de
+    velocidade. Se houver 2 cargas, devolve 'C1/C2L'. Se 1, devolve 'C1L'.
+    Preserva sufixo ' XL'.
+    """
+    import re as _re_c
+    if not v:
+        return ''
+    s = v.upper().strip()
+    tem_xl = 'XL' in s
+    s_sem_xl = s.replace('XL', '').strip()
+    # Apanhar todos os pares número+letra OU números soltos e letras soltas
+    # Captura sequências tipo: 104, 102, T, R, etc.
+    cargas = _re_c.findall(r'\d{2,3}', s_sem_xl)
+    letras = _re_c.findall(r'[A-Z]{1,2}', s_sem_xl)
+    if not cargas:
+        return s  # nada reconhecível, devolve original upper
+    # Letra de velocidade: a última letra encontrada (mais fiável p/ comerciais)
+    letra = letras[-1] if letras else ''
+    if len(cargas) >= 2:
+        base = f"{cargas[0]}/{cargas[1]}{letra}"
+    else:
+        base = f"{cargas[0]}{letra}"
+    if tem_xl:
+        base = base + ' XL'
+    return base
 
 async def _do_compare(job_id: str, force: bool):
     """Lógica principal de scrape + compare (chamada em background ou directamente)."""
@@ -1357,7 +1392,7 @@ async def _do_compare(job_id: str, force: bool):
         scraped = []
         if item_indice:
             def _norm_idx_strict(v):
-                return (v or '').upper().strip().replace('/', '').replace(' ', '')
+                return _norm_idx_canonico(v)
             scraped = [
                 s for s in medida_prices
                 if _norm(s.get('marca', '')) == item_marca

@@ -287,7 +287,7 @@ async def scrape_prismanil(page, username: str, password: str, medida: str) -> d
                         const parts = produtoStr.trim().split(' ');
                         const brand = parts[0] || '';
                         const remaining = parts.slice(2).join(' ');
-                        const allMatches = [...remaining.matchAll(/(\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?)(\s+XL)?/gi)];
+                        const allMatches = [...remaining.matchAll(/(\d{2,3}(?:\/\d{2,3})?[A-Z]{1,2}|\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?)(\s+XL)?/gi)];
                         const idxMatch = allMatches.length > 0 ? allMatches[allMatches.length - 1] : null;
                         const loadIndex = idxMatch ? (idxMatch[1] + (idxMatch[2] || '')).trim().toUpperCase() : '';
                         let model = (idxMatch ? remaining.slice(0, idxMatch.index) : remaining).trim();
