@@ -1605,18 +1605,19 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                                 _p2_digits = _p2_num.group(1) if _p2_num else ''
                                 if not (_p2.isdigit() and _JANTE_RE.match(_p2_digits or _p2)):
                                     indice_val = f"{_p1}/{_p2}" if '/' not in _nombre_val[_md_dual.start():_md_dual.end()] else f"{_p1}/{_p2}"
-                            # Índice comercial: 110R108 (letra no meio, segundo número sem letra)
-                            if not indice_val:
+                            # Índice comercial: 107R105 / 107R105R (letra no meio)
+                            # Corre quando indice_val e fraco: vazio OU so uma letra.
+                            _idx_fraco = (not indice_val) or (len(indice_val.strip()) <= 2 and not any(c.isdigit() for c in indice_val))
+                            if _idx_fraco:
                                 _md_comm = _re_idx.search(
-                                    r'\b(\d{2,3}[A-Z]\d{2,3})\b',
+                                    r'\b(\d{2,3})([A-Z])(\d{2,3})([A-Z])?\b',
                                     _nombre_val.upper()
                                 )
                                 if _md_comm:
-                                    _raw = _md_comm.group(1)
-                                    # Verificar que o número final não é tamanho de jante
-                                    _num_final = _re_idx.search(r'[A-Z](\d+)$', _raw)
-                                    if _num_final and not _JANTE_RE.match(_num_final.group(1)):
-                                        indice_val = _raw
+                                    _c1, _lt, _c2 = _md_comm.group(1), _md_comm.group(2), _md_comm.group(3)
+                                    # Verificar que o segundo número não é tamanho de jante
+                                    if not (14 <= int(_c2) <= 22):
+                                        indice_val = f"{_c1}/{_c2}{_lt}"
                         # Fallback: regex no campo model_val (apenas índice simples + XL)
                         if not indice_val and model_val:
                             _m = _re_idx.search(

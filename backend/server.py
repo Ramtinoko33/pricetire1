@@ -927,6 +927,34 @@ def _request_cancel(job_id: str) -> int:
             pass
     return killed
 
+def _extrai_indice_do_texto(texto: str) -> str:
+    """Procura um indice duplo comercial dentro de um texto livre (ex: modelo
+    'C 104/102T DURAVIS', '104T 102/ 6PR', 'RA30 107R105 4S').
+    Devolve forma tipo '104/102T' ou '' se nada encontrado.
+    """
+    import re as _re_t
+    if not texto:
+        return ''
+    s = texto.upper()
+    # 1) "104/102T" ou "104/102" (barra)
+    m = _re_t.search(r'\b(\d{2,3})/(\d{2,3})\s*([A-Z])?\b', s)
+    if m:
+        c1, c2, letra = m.group(1), m.group(2), (m.group(3) or '')
+        if not (14 <= int(c2) <= 22):  # evita jante
+            return f"{c1}/{c2}{letra}"
+    # 2) "107R105" ou "107R105R" (letra no meio)
+    m = _re_t.search(r'\b(\d{2,3})([A-Z])(\d{2,3})([A-Z])?\b', s)
+    if m:
+        c1, letra, c2 = m.group(1), m.group(2), m.group(3)
+        if not (14 <= int(c2) <= 22):
+            return f"{c1}/{c2}{letra}"
+    # 3) "104T 102/" (partido com barra solta)
+    m = _re_t.search(r'\b(\d{2,3})([A-Z])\s+(\d{2,3})\s*/', s)
+    if m:
+        c1, letra, c2 = m.group(1), m.group(2), m.group(3)
+        return f"{c1}/{c2}{letra}"
+    return ''
+
 def _norm_idx_canonico(v: str) -> str:
     """Reduz qualquer formato de índice (simples ou duplo) a forma canónica.
     Exemplos:
@@ -1394,11 +1422,19 @@ async def _do_compare(job_id: str, force: bool):
         if item_indice:
             def _norm_idx_strict(v):
                 return _norm_idx_canonico(v)
+            def _idx_efectivo(s):
+                _li = s.get('load_index', '') or ''
+                # load_index fraco: vazio ou so uma letra (ex: 'R', 'T')
+                if not _li or (len(_li.strip()) <= 2 and not any(c.isdigit() for c in _li)):
+                    _alt = _extrai_indice_do_texto(s.get('modelo', ''))
+                    if _alt:
+                        return _alt
+                return _li
             scraped = [
                 s for s in medida_prices
                 if _norm(s.get('marca', '')) == item_marca
                 and _modelo_match(s.get('modelo', ''), item_modelo)
-                and _norm_idx_strict(s.get('load_index', '')) == _norm_idx_strict(item_indice)
+                and _norm_idx_strict(_idx_efectivo(s)) == _norm_idx_strict(item_indice)
             ]
             if scraped:
                 match_type = "modelo_exato"
