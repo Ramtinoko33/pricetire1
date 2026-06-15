@@ -146,6 +146,10 @@ async def scrape_mp24_with_session(page, username: str, password: str, medida: s
                 product_map = {}  # key: "BRAND|MODEL" -> min price
                 
                 for tyre in captured_tyres:
+                    _prof = str(tyre.get('profile', '')).upper()
+                    if any(_c in str(tyre).upper() for _c in ('DURAVIS', '/102', '/105', '/108', '110/', '104/', '107/')) and not getattr(scrape_mp24_with_session, '_diag_done', False):
+                        print(f"  [MP24 DIAG CRU] {json.dumps(tyre, ensure_ascii=False)[:600]}")
+                        scrape_mp24_with_session._diag_done = True
                     brand = tyre.get('manufacturer', '').upper()
                     model = tyre.get('profile', '')
                     # Extract load/speed index
@@ -3100,11 +3104,22 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
         while i < len(tokens) and tokens[i].upper() in ('TL', 'TW'):
             i += 1
 
-        # Load index: \d{2,3}[A-Z]{1,2}  ex: "99V", "95H", "121S"
+        # Load index: simples "99V" ou duplo comercial "104/102R", "104R102R", "104R 102R"
         load_index = ''
-        if i < len(tokens) and _re.match(r'^\d{2,3}[A-Z]{1,2}$', tokens[i], _re.I):
+        if i < len(tokens) and _re.match(r'^\d{2,3}(?:/\d{2,3})?[A-Z]{1,2}$', tokens[i], _re.I):
             load_index = tokens[i].upper()
             i += 1
+            # Segundo token de carga colado a seguir (ex: "104R" "102R" em dois tokens)
+            if i < len(tokens) and _re.match(r'^\d{2,3}[A-Z]{1,2}$', tokens[i], _re.I) and '/' not in load_index:
+                load_index = f"{load_index}/{tokens[i].upper()}"
+                i += 1
+        elif i < len(tokens) and _re.match(r'^\d{2,3}/\d{2,3}$', tokens[i]):
+            # "104/102" sem letra; letra pode vir no token seguinte
+            load_index = tokens[i]
+            i += 1
+            if i < len(tokens) and _re.match(r'^[A-Z]{1,2}$', tokens[i], _re.I):
+                load_index = f"{load_index}{tokens[i].upper()}"
+                i += 1
 
         # Abreviatura de marca: exatamente 2 letras maiúsculas  ex: "MI", "DC"
         parsed_brand = ctx_brand
