@@ -3149,6 +3149,8 @@ def _parse_intersprint_html(html: str, search_brand: str = '') -> list:
                 _desc_cell = _ct
                 _desc_idx  = _ci
                 break
+        if _desc_cell and ('DURAVIS' in _desc_cell.upper() or '/10' in _desc_cell or '/11' in _desc_cell):
+            print(f"  [InterSprint DIAG] desc={_desc_cell!r}")
 
         # ── Preço: pesquisa no HTML raw da linha (preserva &nbsp; formato) ──
         _raw_row = _re.sub(r'\s+', ' ', tag_re.sub(' ', row_inner))
@@ -3429,7 +3431,7 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                 // ex: "PRIMACY 5 91V" → "PRIMACY 5"
                 // ex: "EFFICIENTGRIP PERFORMANCE 2 99V XL" → "EFFICIENTGRIP PERFORMANCE 2"
                 const remainingStr = parts.join(' ');
-                const idxMatch = remainingStr.match(/\b(\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\b/i);
+                const idxMatch = remainingStr.match(/\b(\d{2,3}(?:\/\d{2,3})?[A-Z]{1,2}(?:\s+XL)?|\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\b/i);
                 const loadIndex = idxMatch ? idxMatch[1].trim().toUpperCase() : '';
                 model = (idxMatch ? remainingStr.slice(0, idxMatch.index) : remainingStr).trim();
 
@@ -3478,7 +3480,7 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
                 }
 
                 const remainingStr = parts.join(' ');
-                const idxMatch = remainingStr.match(/\b(\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\b/i);
+                const idxMatch = remainingStr.match(/\b(\d{2,3}(?:\/\d{2,3})?[A-Z]{1,2}(?:\s+XL)?|\d{2,3}[A-Z]{1,2}(?:\/\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\b/i);
                 const loadIndex = idxMatch ? idxMatch[1].trim().toUpperCase() : '';
                 model = (idxMatch ? remainingStr.slice(0, idxMatch.index) : remainingStr).trim();
 

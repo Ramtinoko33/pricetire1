@@ -956,7 +956,8 @@ def _norm_idx_canonico(v: str) -> str:
     # Letra de velocidade: a última letra encontrada (mais fiável p/ comerciais)
     letra = letras[-1] if letras else ''
     if len(cargas) >= 2:
-        base = f"{cargas[0]}/{cargas[1]}{letra}"
+        _c = sorted(cargas[:2], key=lambda x: int(x))
+        base = f"{_c[0]}/{_c[1]}{letra}"
     else:
         base = f"{cargas[0]}{letra}"
     if tem_xl:
