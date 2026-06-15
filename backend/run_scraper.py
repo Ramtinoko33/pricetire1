@@ -158,7 +158,16 @@ async def scrape_mp24_with_session(page, username: str, password: str, medida: s
                     _li2 = str(tyre.get('loadIndex2') or tyre.get('li2') or '').strip()
                     _si2 = str(tyre.get('speedIndex2') or tyre.get('si2') or '').strip().upper()
                     _xl = any('xl' in str(tyre.get(k, '')).lower() for k in ('extra', 'xl', 'reinforced', 'extraLoad', 'loadRange', 'name', 'profile'))
-                    if _li.isdigit() and _si and len(_si) == 1 and _si.isalpha():
+                    if '/' in _li and _si and _si.isalpha():
+                        # loadIndex já vem "104/102" + speedIndex "T" → "104/102T"
+                        _nums = re.findall(r'\d{2,3}', _li)
+                        if len(_nums) >= 2:
+                            load_index = f"{_nums[0]}/{_nums[1]}{_si}"
+                        elif _nums:
+                            load_index = f"{_nums[0]}{_si}"
+                        else:
+                            load_index = ''
+                    elif _li.isdigit() and _si and len(_si) == 1 and _si.isalpha():
                         load_index = f"{_li}{_si}"
                         if _li2.isdigit() and _si2 and len(_si2) == 1 and _si2.isalpha():
                             load_index = f"{load_index}/{_li2}{_si2}"
@@ -611,9 +620,17 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                 const medidaRe = /\\d{3}\\/\\d{2}[RrBb]\\d{2}/;
                 const medidaMatch = txt.match(medidaRe);
                 if (!medidaMatch) {
-                    // Sem medida: primeiro token = marca, resto = modelo
-                    const parts = txt.split(/\\s+/);
-                    return { brand: parts[0].toUpperCase(), model: parts.slice(1).join(' ').trim(), loadIndex: '' };
+                    // Sem medida (comercial): ex "C 104/102T 6PR DURAVIS VAN"
+                    // Extrair índice duplo e limpar prefixo "C".
+                    let t2 = txt.replace(/^C\\s+/i, '');
+                    let li = '';
+                    const dm = t2.match(/\\b(\\d{2,3}\\/\\d{2,3}[A-Za-z])\\b/);
+                    if (dm) {
+                        li = dm[1].toUpperCase();
+                        t2 = t2.replace(dm[0], '').replace(/\\b\\d+PR\\b/i, '').replace(/\\s+/g, ' ').trim();
+                    }
+                    const p2 = t2.split(/\\s+/).filter(x => x);
+                    return { brand: (p2[0] || '').toUpperCase(), model: p2.slice(1).join(' ').trim(), loadIndex: li };
                 }
 
                 // Última palavra antes da medida = marca
@@ -3499,7 +3516,7 @@ async def scrape_pneus_cruzeiro(page, username: str, password: str, medida: str,
         products = await page.evaluate(_EXTRACT_JS)
         print(f"  [Cruzeiro] Página 1: {len(products)} linhas extraídas")
         for _dbg in products[:20]:
-            print(f"  [Cruzeiro DEBUG] fab={_dbg.get('_raw_fabricante','?')!r:20} | produto={_dbg.get('_raw_produto','?')!r:60} | brand={_dbg.get('brand','?')!r:15} | model={_dbg.get('model','?')!r:30} | price={_dbg.get('price')}")
+            print(f"  [Cruzeiro DEBUG] fab={_dbg.get('_raw_fabricante','?')!r:20} | produto={_dbg.get('_raw_produto','?')!r:60} | brand={_dbg.get('brand','?')!r:15} | model={_dbg.get('model','?')!r:30} | idx={_dbg.get('load_index','?')!r} | price={_dbg.get('price')}")
 
         # ── Paginação HTMX AJAX: offset=16, 32, 48... ───────────────────────
         # O site usa hx-trigger="intersect once" — não há botão de página.
