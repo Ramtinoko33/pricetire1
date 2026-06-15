@@ -153,6 +153,32 @@ const Comparar = () => {
     }
   };
 
+  const handleCancel = async () => {
+    const jobId = job?.id;
+    if (!jobId) return;
+    try {
+      await jobsAPI.cancel(jobId);
+      toast.info('A cancelar comparação...');
+      // O polling vai detectar status='failed' e parar; limpamos o estado.
+      if (pollingTimerRef.current) {
+        clearTimeout(pollingTimerRef.current);
+        pollingTimerRef.current = null;
+      }
+      sessionStorage.removeItem('comparing_job_id');
+      setComparing(false);
+      setStep(1);
+      setFile(null);
+      setJob(null);
+      setResults([]);
+      setStats(null);
+      setSuppliersStatus([]);
+      toast.success('Comparação cancelada.');
+    } catch (error) {
+      console.error('Cancel error:', error);
+      toast.error('Erro ao cancelar a comparação.');
+    }
+  };
+
   const _pollUntilDone = (jobId) => {
     const INTERVAL_MS = 2500;
     const MAX_WAIT_MS = 60 * 60 * 1000;
@@ -497,6 +523,19 @@ const Comparar = () => {
                 </>
               )}
             </Button>
+
+            Substituir por:
+            {comparing && (
+              <Button
+                onClick={handleCancel}
+                variant="outline"
+                className="w-full border-red-300 text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10"
+                size="lg"
+              >
+                <XCircle className="mr-2 h-5 w-5" />
+                Cancelar comparação
+              </Button>
+            )}
 
             {suppliersStatus.length > 0 && <SupplierStatusTable />}
           </CardContent>
