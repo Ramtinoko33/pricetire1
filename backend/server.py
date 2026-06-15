@@ -906,9 +906,37 @@ def _modelo_match(scraped_modelo: str, want_modelo: str) -> bool:
         return True
     return False
 
+# Registo global do estado de cancelamento e dos subprocessos vivos por job.
+# Vivem em memória, partilhados entre o pedido de cancelar e o _do_compare
+# em background (mesmo processo Python). _cancel_requested marca os jobs a
+# cancelar; _active_procs guarda os subprocessos vivos para os poder matar.
+_cancel_requested: set = set()
+_active_procs: dict = {}
+
+
+def _request_cancel(job_id: str) -> int:
+    """Marca o job para cancelamento e mata os subprocessos vivos. Devolve
+    quantos processos foram mortos."""
+    _cancel_requested.add(job_id)
+    killed = 0
+    for proc in list(_active_procs.get(job_id, [])):
+        try:
+            proc.kill()
+            killed += 1
+        except Exception:
+            pass
+    return killed
+
+
 async def _do_compare(job_id: str, force: bool):
     """Lógica principal de scrape + compare (chamada em background ou directamente)."""
     import re
+
+    # Limpa qualquer pedido de cancelamento anterior deste job e prepara o
+    # registo de processos vivos.
+    _cancel_requested.discard(job_id)
+    _active_procs[job_id] = []
+
 
     pool = await get_db()
     async with pool.acquire() as conn:
@@ -1089,6 +1117,11 @@ async def _do_compare(job_id: str, force: bool):
 
         async def _run_supplier_proc(sup_name: str):
             """Lança run_scraper.py filtrado para um único fornecedor e aguarda conclusão."""
+            # Se o job já foi cancelado antes de este fornecedor arrancar, não lança.
+            if job_id in _cancel_requested:
+                _supplier_run_stats[job_id][sup_name]["status"] = "error"
+                return True
+
             _supplier_run_stats[job_id][sup_name]["status"] = "running"
             _supplier_run_stats[job_id][sup_name]["start_time"] = _time.time()
             _sup_timeout = SUPPLIER_TIMEOUTS.get(sup_name, SUPPLIER_TIMEOUT_DEFAULT)
@@ -1103,6 +1136,8 @@ async def _do_compare(job_id: str, force: bool):
                 env=env,
                 cwd='/app/backend',
             )
+            # Regista o processo vivo para que o endpoint de cancelar o possa matar.
+            _active_procs.setdefault(job_id, []).append(proc)
             try:
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_sup_timeout)
                 out_str = stdout.decode()
@@ -1169,6 +1204,28 @@ async def _do_compare(job_id: str, force: bool):
             return_exceptions=False,
         )
         scraper_timed_out = any(all_timeout_flags)
+
+        # Se foi pedido cancelamento, descarta tudo: marca o job como cancelado
+        # e termina sem processar resultados. Os dados parciais ficam na BD mas
+        # não são usados — o job não fica em 'completed'.
+        if job_id in _cancel_requested:
+            _cancel_requested.discard(job_id)
+            _active_procs.pop(job_id, None)
+            logger.info(f"[Compare] job={job_id} CANCELADO — resultados descartados")
+            _pool_c = await get_db()
+            async with _pool_c.acquire() as _conn_c:
+                await _conn_c.execute(
+                    "UPDATE jobs SET status=$2, completed_at=$3 WHERE id=$1",
+                    job_id, "failed", datetime.now(timezone.utc),
+                )
+            return {
+                "message": "Comparison cancelled",
+                "cancelled": True,
+                "items_processed": 0,
+                "items_matched": 0,
+                "items_with_savings": 0,
+                "total_savings": 0.0,
+            }
 
 
     pool = await get_db()
@@ -1414,6 +1471,8 @@ async def _do_compare(job_id: str, force: bool):
                 datetime.now(timezone.utc),
             )
 
+    _active_procs.pop(job_id, None)
+    _cancel_requested.discard(job_id)
     return {
         "message": "Comparison completed",
         "items_processed": updated_count,
@@ -1423,6 +1482,13 @@ async def _do_compare(job_id: str, force: bool):
         "scraper_timeout": scraper_timed_out,
     }
 
+@api_router.post("/jobs/{job_id}/cancel")
+async def cancel_job_comparison(job_id: str):
+    """Cancela uma comparação em curso: mata os subprocessos vivos e marca o
+    job para descartar os resultados. Descarta tudo — não guarda o parcial."""
+    killed = _request_cancel(job_id)
+    logger.info(f"[Compare] Pedido de cancelamento job={job_id} — {killed} processos mortos")
+    return {"cancelling": True, "killed_processes": killed}
 
 @api_router.post("/jobs/{job_id}/compare")
 async def compare_job_with_scraped_prices(
