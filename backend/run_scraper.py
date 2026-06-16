@@ -2580,9 +2580,9 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
                 rest = dm.group(3).strip()
                 # Índice comercial partido do TugaPneus:
                 # "107S 109/" (load2+vel  load1/) → "109/107S" (load1/load2+vel)
-                _split_m = re.search(r'\b(\d{2,3})([A-Z])\s*(\d{2,3})\s*/', rest, re.IGNORECASE)
+                _split_m = re.search(r'\b(\d{2,3}[A-Za-z]?/\d{2,3}[A-Za-z])\b', rest)
                 if _split_m:
-                    indice = f"{_split_m.group(3)}/{_split_m.group(1)}{_split_m.group(2).upper()}"
+                    indice = _split_m.group(1).upper()
                     model = (rest[:_split_m.start()] + ' ' + rest[_split_m.end():]).strip().upper()
                 else:
                     idx_m = idx_re.search(rest)
