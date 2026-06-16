@@ -638,36 +638,40 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                 const beforeParts  = beforeMedida.split(/\\s+/).filter(p => p);
                 const brand = (beforeParts[beforeParts.length - 1] || '').toUpperCase();
 
-                // Após a medida: extrair índice de carga (ex: 99V, 95H, 91T, 94W XL), resto = modelo
-                 const afterMedida = txt.slice(medidaMatch.index + medidaMatch[0].length).trim();
-                const afterParts  = afterMedida.split(/\\s+/).filter(p => p);
+                // Após a medida: extrair índice (simples 91V ou comercial duplo
+                // 109/107S, 109T/107T, 109T107T). Procura em TODO o afterMedida porque
+                // o comercial nem sempre está no 1.º token ("C 109/107S 8PR ...").
+                let afterMedida = txt.slice(medidaMatch.index + medidaMatch[0].length).trim();
                 let loadIndex = '';
-                let idxStart = 0;
-                // Índice simples ou duplo: ex "91V", "109T107T", "109T/107T"
-                const idxRe = /^(\\d{2,3}[A-Za-z]{1,3}(?:\\/\\d{2,3}[A-Za-z]{1,3})?)$/;
-                const dualRe = /^(\\d{2,3}[A-Za-z]{1,3})(\\d{2,3}[A-Za-z]{1,3})$/;
-                if (afterParts.length > 0 && idxRe.test(afterParts[0])) {
-                    loadIndex = afterParts[0].toUpperCase();
-                    idxStart = 1;
-                    // XL pode seguir imediatamente: "91V XL"
-                    if (idxStart < afterParts.length && afterParts[idxStart].toUpperCase() === 'XL') {
-                        loadIndex = loadIndex + ' XL';
-                        idxStart++;
+                let _cm = afterMedida.match(/\b(\d{2,3})[A-Za-z]?\/(\d{2,3})([A-Za-z])\b/);
+                if (_cm) {
+                    loadIndex = _cm[1] + '/' + _cm[2] + _cm[3].toUpperCase();
+                    afterMedida = afterMedida.replace(_cm[0], ' ');
+                } else {
+                    let _dm = afterMedida.match(/\b(\d{2,3}[A-Za-z])(\d{2,3}[A-Za-z])\b/);
+                    if (_dm) {
+                        loadIndex = _dm[1].toUpperCase() + '/' + _dm[2].toUpperCase();
+                        afterMedida = afterMedida.replace(_dm[0], ' ');
+                    } else {
+                        let _sm = afterMedida.match(/\b(\d{2,3}[A-Za-z]{1,2})\b/);
+                        if (_sm) {
+                            loadIndex = _sm[1].toUpperCase();
+                            afterMedida = afterMedida.replace(_sm[0], ' ');
+                        }
                     }
-                } else if (afterParts.length > 0 && dualRe.test(afterParts[0])) {
-                    // índice duplo sem barra: "109T107T" → "109T/107T"
-                    const dm = afterParts[0].match(dualRe);
-                    loadIndex = dm[1].toUpperCase() + '/' + dm[2].toUpperCase();
-                    idxStart = 1;
                 }
-                // Verificar XL noutros tokens quando não apanhado acima
-                const modelParts = afterParts.slice(idxStart);
-                const xlIdx = modelParts.findIndex(t => t.toUpperCase() === 'XL');
-                if (xlIdx !== -1 && loadIndex && !loadIndex.includes('XL')) {
-                    loadIndex = loadIndex + ' XL';
-                    modelParts.splice(xlIdx, 1);
+                let model = afterMedida
+                    .replace(/\b(CP|C)\b/g, ' ')
+                    .replace(/\b\d{1,2}PR\b/gi, ' ')
+                    .replace(/\bTL\b/gi, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                if (/\bXL\b/i.test(model)) {
+                    if (loadIndex && !loadIndex.toUpperCase().includes('XL')) {
+                        loadIndex = loadIndex + ' XL';
+                    }
+                    model = model.replace(/\bXL\b/gi, '').replace(/\s+/g, ' ').trim();
                 }
-                const model = modelParts.join(' ').trim();
 
                 return { brand, model, loadIndex };
             }
@@ -2574,13 +2578,23 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
                 if not dm:
                     continue
                 rest = dm.group(3).strip()
-                idx_m = idx_re.search(rest)
-                if idx_m:
-                    indice = idx_m.group(1).strip().upper()
-                    model = (rest[:idx_m.start()] + ' ' + rest[idx_m.end():]).strip().upper()
+                # Índice comercial partido do TugaPneus:
+                # "107S 109/" (load2+vel  load1/) → "109/107S" (load1/load2+vel)
+                _split_m = re.search(r'\b(\d{2,3})([A-Z])\s+(\d{2,3})\s*/', rest, re.IGNORECASE)
+                if _split_m:
+                    indice = f"{_split_m.group(3)}/{_split_m.group(1)}{_split_m.group(2).upper()}"
+                    model = (rest[:_split_m.start()] + ' ' + rest[_split_m.end():]).strip().upper()
                 else:
-                    indice = ''
-                    model = rest.upper()
+                    idx_m = idx_re.search(rest)
+                    if idx_m:
+                        indice = idx_m.group(1).strip().upper()
+                        model = (rest[:idx_m.start()] + ' ' + rest[idx_m.end():]).strip().upper()
+                    else:
+                        indice = ''
+                        model = rest.upper()
+                model = re.sub(r'\b(\d{1,2}PR|TL|TT|FIA|DOT\d*)\b', ' ', model, flags=re.IGNORECASE)
+                model = re.sub(r'\(\s*DOT\d*\s*\)', ' ', model, flags=re.IGNORECASE)
+                model = re.sub(r'\s+', ' ', model).strip()
                 products.append({
                     'brand':  dm.group(1).strip().upper(),
                     'medida': dm.group(2).strip().upper(),
