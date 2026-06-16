@@ -2005,10 +2005,11 @@ def _parse_aguesport_html(html: str) -> list:
         re.DOTALL,
     )
     title_re = re.compile(
-        r'\d{3}/\d{2}\s+[RCBrcb]\d{2}\s+(\d{2,3}[A-Z]{1,2}(?:/\d{2,3}[A-Z]{1,2})?(?:\s+XL)?)\s+(\S+)\s+(.*)',
+        r'\d{3}/\d{2}\s+[RCBrcb]\d{2}[A-Z]?\s+(\d{2,3}[A-Z]{0,2}(?:/\d{2,3}[A-Z]{0,2})?(?:\s+XL)?)\s+(\S+)\s+(.*)',
         re.IGNORECASE,
     )
     products = []
+    _falhas_parse = []
     for title, price_str in card_re.findall(html):
         title = title.strip()
         try:
@@ -2019,6 +2020,8 @@ def _parse_aguesport_html(html: str) -> list:
             continue
         m = title_re.match(title)
         if not m:
+            if len(_falhas_parse) < 8:
+                _falhas_parse.append(title)
             continue
         products.append({
             'brand':      m.group(2).strip().upper(),
@@ -2026,6 +2029,8 @@ def _parse_aguesport_html(html: str) -> list:
             'load_index': m.group(1).strip().upper(),
             'price':      price,
         })
+    if _falhas_parse:
+        print(f"  [Aguesport] {len(_falhas_parse)} titulos nao parseados (amostra): {_falhas_parse}")
     return products
 
 
