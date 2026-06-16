@@ -8,8 +8,10 @@ import { Badge } from '../components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { Search, RefreshCw, TrendingDown, Loader2, Zap, Database } from 'lucide-react';
 import { toast } from 'sonner';
+import { supplierSearchUrl } from '../lib/supplierLinks';
 
 const MARCAS_FIXAS = [
+
   'APOLLO','AVON','BARUM','BF GOODRICH','BRIDGESTONE','CEAT','CONTINENTAL',
   'COOPER','DUNLOP','FALKEN','FIRESTONE','FULDA','GOODYEAR','HANKOOK',
   'KLEBER','KUMHO','LAUFENN','LINGLONG','MAXXIS','MICHELIN','NANKANG',
@@ -342,9 +344,16 @@ const Precos = () => {
                             </TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2">
-                                <Badge variant={isBest ? 'default' : 'secondary'} className={isBest ? 'bg-emerald-500/80' : ''}>
-                                  {best.supplier_name}
-                                </Badge>
+                              {(() => {
+                                  const _u = supplierSearchUrl(best.supplier_name, best.medida);
+                                  const _b = (
+                                    <Badge variant={isBest ? 'default' : 'secondary'} className={`${isBest ? 'bg-emerald-500/80' : ''} ${_u ? 'cursor-pointer hover:opacity-80' : ''}`}>
+                                      {best.supplier_name}
+                                    </Badge>
+                                  );
+                                  return _u ? <a href={_u} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} title="Abrir pesquisa no fornecedor">{_b}</a> : _b;
+                                })()}
+
                                 {hasMultiple && (
                                   <span className="text-xs text-amber-500 font-medium border border-amber-400 rounded px-1.5 py-0.5">
                                     +{items.length - 1} {isExpanded ? '▲' : '▼'}
@@ -371,7 +380,14 @@ const Precos = () => {
                                 {item.load_index || '-'}
                               </TableCell>
                               <TableCell>
-                                <Badge variant="secondary">{item.supplier_name}</Badge>
+                                {(() => {
+                                  const _u = supplierSearchUrl(item.supplier_name, item.medida);
+                                  return _u ? (
+                                    <a href={_u} target="_blank" rel="noopener noreferrer" title="Abrir pesquisa no fornecedor">
+                                      <Badge variant="secondary" className="cursor-pointer hover:opacity-80">{item.supplier_name}</Badge>
+                                    </a>
+                                  ) : <Badge variant="secondary">{item.supplier_name}</Badge>;
+                                })()}
                               </TableCell>
                               <TableCell className="text-right">
                                 <span className="font-semibold text-muted-foreground">€{item.price?.toFixed(2) ?? '-'}</span>

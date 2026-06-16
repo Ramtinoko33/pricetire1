@@ -6,6 +6,7 @@ import { Badge } from '../components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { Download, TrendingDown, Trash2, Loader2, RotateCcw, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { supplierSearchUrl } from '../lib/supplierLinks';
 
 const Results = () => {
   const [jobs, setJobs] = useState([]);
@@ -334,6 +335,7 @@ const Results = () => {
                       </TableHead>
                     </TableRow>
                     <TableRow>
+                      <TableHead>Ref</TableHead>
                       <TableHead>Medida</TableHead>
                       <TableHead>Marca</TableHead>
                       <TableHead>Modelo</TableHead>
@@ -396,7 +398,17 @@ const Results = () => {
                               </div>
                             ) : '-'}
                           </TableCell>
-                          <TableCell>{item.melhor_fornecedor ? <Badge variant="outline">{item.melhor_fornecedor}</Badge> : '-'}</TableCell>
+                          <TableCell>
+                            {item.melhor_fornecedor ? (() => {
+                              const _u = supplierSearchUrl(item.melhor_fornecedor, item.medida);
+                              return _u ? (
+                                <a href={_u} target="_blank" rel="noopener noreferrer" title="Abrir pesquisa no fornecedor">
+                                  <Badge variant="outline" className="cursor-pointer hover:bg-muted">{item.melhor_fornecedor}</Badge>
+                                </a>
+                              ) : <Badge variant="outline">{item.melhor_fornecedor}</Badge>;
+                            })() : '-'}
+                          </TableCell>
+
                           <TableCell className="text-right">
                             {hasSavings ? (
                               <span className="text-emerald-600 font-bold">

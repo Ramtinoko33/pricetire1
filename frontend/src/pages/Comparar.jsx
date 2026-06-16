@@ -6,6 +6,7 @@ import { Badge } from '../components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { Upload as UploadIcon, FileSpreadsheet, Loader2, Scale, Download, TrendingDown, CheckCircle, ArrowRight, RefreshCw, Clock, CheckCircle2, XCircle, AlertCircle, RotateCw, Save } from 'lucide-react';
 import { toast } from 'sonner';
+import { supplierSearchUrl } from '../lib/supplierLinks';
 
 const Comparar = () => {
   // State
@@ -753,9 +754,14 @@ const Comparar = () => {
                             ) : '-'}
                           </TableCell>
                           <TableCell>
-                            {item.melhor_fornecedor ? (
-                              <Badge variant="outline">{item.melhor_fornecedor}</Badge>
-                            ) : '-'}
+                            {item.melhor_fornecedor ? (() => {
+                              const _u = supplierSearchUrl(item.melhor_fornecedor, item.medida);
+                              return _u ? (
+                                <a href={_u} target="_blank" rel="noopener noreferrer" title="Abrir pesquisa no fornecedor">
+                                  <Badge variant="outline" className="cursor-pointer hover:bg-muted">{item.melhor_fornecedor}</Badge>
+                                </a>
+                              ) : <Badge variant="outline">{item.melhor_fornecedor}</Badge>;
+                            })() : '-'}
                           </TableCell>
                           <TableCell className="text-right">
                             {hasSavings ? (
