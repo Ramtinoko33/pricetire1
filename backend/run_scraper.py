@@ -643,17 +643,17 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                 // o comercial nem sempre está no 1.º token ("C 109/107S 8PR ...").
                 let afterMedida = txt.slice(medidaMatch.index + medidaMatch[0].length).trim();
                 let loadIndex = '';
-                let _cm = afterMedida.match(/\b(\d{2,3})[A-Za-z]?\/(\d{2,3})([A-Za-z])\b/);
+                let _cm = afterMedida.match(/\\b(\\d{2,3})[A-Za-z]?\\/(\\d{2,3})([A-Za-z])\\b/);
                 if (_cm) {
                     loadIndex = _cm[1] + '/' + _cm[2] + _cm[3].toUpperCase();
                     afterMedida = afterMedida.replace(_cm[0], ' ');
                 } else {
-                    let _dm = afterMedida.match(/\b(\d{2,3}[A-Za-z])(\d{2,3}[A-Za-z])\b/);
+                    let _dm = afterMedida.match(/\\b(\\d{2,3}[A-Za-z])(\\d{2,3}[A-Za-z])\\b/);
                     if (_dm) {
                         loadIndex = _dm[1].toUpperCase() + '/' + _dm[2].toUpperCase();
                         afterMedida = afterMedida.replace(_dm[0], ' ');
                     } else {
-                        let _sm = afterMedida.match(/\b(\d{2,3}[A-Za-z]{1,2})\b/);
+                        let _sm = afterMedida.match(/\\b(\\d{2,3}[A-Za-z]{1,2})\\b/);
                         if (_sm) {
                             loadIndex = _sm[1].toUpperCase();
                             afterMedida = afterMedida.replace(_sm[0], ' ');
@@ -661,16 +661,16 @@ async def scrape_sjose(page, username: str, password: str, medida: str,
                     }
                 }
                 let model = afterMedida
-                    .replace(/\b(CP|C)\b/g, ' ')
-                    .replace(/\b\d{1,2}PR\b/gi, ' ')
-                    .replace(/\bTL\b/gi, ' ')
-                    .replace(/\s+/g, ' ')
+                    .replace(/\\b(CP|C)\\b/g, ' ')
+                    .replace(/\\b\\d{1,2}PR\\b/gi, ' ')
+                    .replace(/\\bTL\\b/gi, ' ')
+                    .replace(/\\s+/g, ' ')
                     .trim();
-                if (/\bXL\b/i.test(model)) {
+                if (/\\bXL\\b/i.test(model)) {
                     if (loadIndex && !loadIndex.toUpperCase().includes('XL')) {
                         loadIndex = loadIndex + ' XL';
                     }
-                    model = model.replace(/\bXL\b/gi, '').replace(/\s+/g, ' ').trim();
+                    model = model.replace(/\\bXL\\b/gi, '').replace(/\\s+/g, ' ').trim();
                 }
 
                 return { brand, model, loadIndex };
@@ -2580,7 +2580,7 @@ async def scrape_tugapneus(page, username: str, password: str, medida: str,
                 rest = dm.group(3).strip()
                 # Índice comercial partido do TugaPneus:
                 # "107S 109/" (load2+vel  load1/) → "109/107S" (load1/load2+vel)
-                _split_m = re.search(r'\b(\d{2,3})([A-Z])\s+(\d{2,3})\s*/', rest, re.IGNORECASE)
+                _split_m = re.search(r'\b(\d{2,3})([A-Z])\s*(\d{2,3})\s*/', rest, re.IGNORECASE)
                 if _split_m:
                     indice = f"{_split_m.group(3)}/{_split_m.group(1)}{_split_m.group(2).upper()}"
                     model = (rest[:_split_m.start()] + ' ' + rest[_split_m.end():]).strip().upper()
