@@ -1591,6 +1591,15 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                         _JANTE_RE = _re_idx.compile(r'^(?:1[4-9]|2[0-2])$')
                         _nombre_val = str(item_lc.get('ar_nombre', ('', ''))[1] or '')
                         if not indice_val or '/' not in indice_val:
+                            # Índice comercial com barra e letra só no fim: "110/108R", "109/107S"
+                            # (Soledad usa ambos "110R108" e "110/108R"). O \b final evita
+                            # apanhar a medida "195/75X16" (tem digitos do aro apos a letra).
+                            _md_slash = _re_idx.search(
+                                r'\b(\d{2,3})/(\d{2,3})([A-Z])\b',
+                                _nombre_val.upper()
+                            )
+                            if _md_slash and not (14 <= int(_md_slash.group(2)) <= 22):
+                                indice_val = f"{_md_slash.group(1)}/{_md_slash.group(2)}{_md_slash.group(3)}"
                             # Índice duplo normal: 109T107T ou 109T/107T
                             _md_dual = _re_idx.search(
                                 r'\b(\d{2,3}[A-Z]{1,2})/(\d{2,3}[A-Z]{0,2})\b',
