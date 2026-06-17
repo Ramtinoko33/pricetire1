@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { statsAPI, jobsAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { TrendingUp, Package, CheckCircle, Database } from 'lucide-react';
 import { Badge } from '../components/ui/badge';
 
 const Dashboard = () => {
+  const navigate = useNavigate();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -94,10 +96,11 @@ const Dashboard = () => {
             <div className="space-y-3">
               {stats.recent_jobs.map((job) => (
                 <div
-                  key={job.id}
-                  className="flex items-center justify-between p-4 border border-slate-200 rounded-sm hover:bg-muted/50 transition-colors"
-                  data-testid={`job-${job.id}`}
-                >
+                key={job.id}
+                onClick={() => navigate(`/results?job=${job.id}`)}
+                className="flex items-center justify-between p-4 border border-slate-200 rounded-sm hover:bg-muted/50 transition-colors cursor-pointer"
+                data-testid={`job-${job.id}`}
+              >
                   <div className="flex-1">
                     <p className="font-medium text-sm">{job.filename}</p>
                     <p className="text-xs text-muted-foreground mt-1">

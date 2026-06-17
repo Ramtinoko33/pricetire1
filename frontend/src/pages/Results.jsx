@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { jobsAPI } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -20,16 +21,21 @@ const Results = () => {
   const [originalResults, setOriginalResults] = useState([]);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
     loadJobs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadJobs = async () => {
     try {
       const { data } = await jobsAPI.getAll();
       setJobs(data);
-      if (data.length > 0) {
+      const jobParam = searchParams.get('job');
+      if (jobParam) {
+        loadJobResults(jobParam);
+      } else if (data.length > 0) {
         loadJobResults(data[0].id);
       }
     } catch (error) {
