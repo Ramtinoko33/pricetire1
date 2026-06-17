@@ -1526,6 +1526,11 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                                 if _s.isdigit():
                                     ic_val = _s
                                     break  # only break on success
+                                # AR_CARGA comercial vem como "109/107" — manter a barra
+                                # para o indice ficar "109/107S" (formato canonico do Excel)
+                                if _re_idx.match(r'^\d{2,3}/\d{2,3}$', _s):
+                                    ic_val = _s
+                                    break
                         for lk, (orig_k, v) in item_lc.items():
                             if any(lk == suf.lstrip('_') or lk.endswith(suf)
                                    for suf in _CV_FIELD_SUFFIXES) and v is not None:
