@@ -1177,7 +1177,9 @@ async def _do_compare(job_id: str, force: bool):
         # scraped_prices. O lock por supplier_id evita colisões; com várias
         # réplicas do worker, vários fornecedores correm em paralelo.
         _now_enq = datetime.now(timezone.utc)
+        _base_ts = _now_enq.timestamp()
         _scrape_job_ids: dict = {}  # sup_name → scrape_job_id
+
         _pool_enq = await get_db()
         async with _pool_enq.acquire() as _conn_enq:
             _sup_rows_enq = rows(await _conn_enq.fetch(
@@ -1185,8 +1187,9 @@ async def _do_compare(job_id: str, force: bool):
                 supplier_names,
             ))
             _sup_id_by_name = {s['name']: s['id'] for s in _sup_rows_enq}
-            for _sname in supplier_names:
+            for _i, _sname in enumerate(supplier_names):
                 _sjid = str(uuid.uuid4())
+                _created = datetime.fromtimestamp(_base_ts + _i * 0.001, tz=timezone.utc)
                 await _conn_enq.execute(
                     """
                     INSERT INTO jobs
@@ -1197,7 +1200,7 @@ async def _do_compare(job_id: str, force: bool):
                     _sjid, "scrape", _sup_id_by_name.get(_sname), _sname,
                     {"sizes": medidas_sem_dados, "items": json.loads(items_json),
                      "compare_job_id": job_id},
-                    "queued", 0, _now_enq,
+                    "queued", 0, _created,
                 )
                 _scrape_job_ids[_sname] = _sjid
                 _supplier_run_stats[job_id][_sname]["status"] = "waiting"
@@ -1239,12 +1242,20 @@ async def _do_compare(job_id: str, force: bool):
                 _sjid = _scrape_job_ids[_sname]
                 _state = _states.get(_sjid, {})
                 _sstatus = _state.get('status')
+                # Cronómetro: enquanto o job está em fila (queued) o tempo real
+                # ainda não arrancou — mantemos start_time = agora para mostrar ~0s
+                # nas linhas em espera e para o timeout individual só contar a
+                # partir do arranque real no worker.
+                _cur_st = _supplier_run_stats[job_id][_sname]["status"]
+                if _sstatus not in ('running', 'done', 'failed') and _cur_st == "waiting":
+                    _supplier_run_stats[job_id][_sname]["start_time"] = _now_poll
+                # Reflectir 'running' no tracking assim que o worker pega no job
+                if _sstatus == 'running' and _cur_st == "waiting":
+                    _supplier_run_stats[job_id][_sname]["status"] = "running"
+                    _supplier_run_stats[job_id][_sname]["start_time"] = _now_poll
+
                 _start_t = _supplier_run_stats[job_id][_sname].get("start_time")
                 _elapsed = round(_now_poll - _start_t) if _start_t else 0
-
-                # Reflectir 'running' no tracking assim que o worker pega no job
-                if _sstatus == 'running' and _supplier_run_stats[job_id][_sname]["status"] == "waiting":
-                    _supplier_run_stats[job_id][_sname]["status"] = "running"
 
                 _terminou = _sstatus in ('done', 'failed')
                 _expirou = _elapsed > SUPPLIER_SCRAPE_TIMEOUT
