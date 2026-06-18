@@ -915,14 +915,16 @@ _active_procs: dict = {}
 
 
 def _request_cancel(job_id: str) -> int:
-    """Marca o job para cancelamento e mata os subprocessos vivos. Devolve
-    quantos processos foram mortos."""
+    """Marca o job para cancelamento. Os jobs de scrape na fila do worker são
+    marcados como falhados pelo loop de polling em _do_compare quando deteta o
+    pedido. Mantém compatibilidade com subprocessos antigos (se existirem)."""
     _cancel_requested.add(job_id)
     killed = 0
     for proc in list(_active_procs.get(job_id, [])):
         try:
-            proc.kill()
-            killed += 1
+            if hasattr(proc, "kill"):
+                proc.kill()
+                killed += 1
         except Exception:
             pass
     return killed
@@ -1161,113 +1163,148 @@ async def _do_compare(job_id: str, force: bool):
         env['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/pw-browsers')
         medidas_str = ','.join(medidas_sem_dados)
 
-        logger.info(f"A correr scraper em paralelo para {len(supplier_names)} fornecedores, "
+        logger.info(f"A enfileirar scrape na fila do worker para {len(supplier_names)} fornecedores, "
                     f"{len(medidas_sem_dados)} medidas...")
 
-        # Timeouts individuais por fornecedor (segundos).
-        # Scrapers lentos (MP24, S José, InterSprint, Aguesport) recebem 900s.
-        # Com 3 lotes × 900s = 45 min máximo no pior caso.
-        SUPPLIER_TIMEOUTS: dict = {
-            'Aguesport':     900,
-            'MP24':          900,
-            'S José Pneus':  900,
-            'InterSprint':   900,
-            'TugaPneus':     900,
-            'Prismanil':     600,
-            'Pneus Cruzeiro':600,
-            'Grupo Soledad': 900,
-        }
-        SUPPLIER_TIMEOUT_DEFAULT = 900
+        # Timeout individual por fornecedor (segundos): se um job de scrape ficar
+        # preso, desistimos dele e seguimos com o resto. 900s cobre os scrapers lentos.
+        SUPPLIER_SCRAPE_TIMEOUT = 900
+        # Timeout global: máximo de tempo a aguardar a fila toda (45 min).
+        GLOBAL_SCRAPE_TIMEOUT = 45 * 60
 
-        async def _run_supplier_proc(sup_name: str):
-            """Lança run_scraper.py filtrado para um único fornecedor e aguarda conclusão."""
-            # Se o job já foi cancelado antes de este fornecedor arrancar, não lança.
+        # ── Enfileirar um job 'scrape' por fornecedor na tabela jobs ──────────
+        # O(s) worker(s) consomem a fila (FOR UPDATE SKIP LOCKED) e enchem
+        # scraped_prices. O lock por supplier_id evita colisões; com várias
+        # réplicas do worker, vários fornecedores correm em paralelo.
+        _now_enq = datetime.now(timezone.utc)
+        _scrape_job_ids: dict = {}  # sup_name → scrape_job_id
+        _pool_enq = await get_db()
+        async with _pool_enq.acquire() as _conn_enq:
+            _sup_rows_enq = rows(await _conn_enq.fetch(
+                "SELECT id, name FROM suppliers WHERE is_active = TRUE AND name = ANY($1)",
+                supplier_names,
+            ))
+            _sup_id_by_name = {s['name']: s['id'] for s in _sup_rows_enq}
+            for _sname in supplier_names:
+                _sjid = str(uuid.uuid4())
+                await _conn_enq.execute(
+                    """
+                    INSERT INTO jobs
+                        (id, type, supplier_id, supplier_name, payload, status,
+                         attempts, created_at)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                    """,
+                    _sjid, "scrape", _sup_id_by_name.get(_sname), _sname,
+                    {"sizes": medidas_sem_dados, "items": json.loads(items_json),
+                     "compare_job_id": job_id},
+                    "queued", 0, _now_enq,
+                )
+                _scrape_job_ids[_sname] = _sjid
+                _supplier_run_stats[job_id][_sname]["status"] = "waiting"
+                _supplier_run_stats[job_id][_sname]["start_time"] = _time.time()
+            # Regista os scrape_job_ids para o cancelamento os poder marcar como falhados
+            _active_procs.setdefault(job_id, []).append({"scrape_jobs": list(_scrape_job_ids.values())})
+
+        logger.info(f"[Compare] {len(_scrape_job_ids)} jobs de scrape enfileirados: {supplier_names}")
+
+        # ── Polling à fila: aguardar que todos os jobs de scrape terminem ─────
+        # Cada fornecedor tem timeout individual (desiste e segue). O loop pára
+        # quando todos os jobs saíram de queued/running, ou ao fim do timeout global.
+        _poll_start = _time.time()
+        _pending = set(supplier_names)
+        scraper_timed_out = False
+        while _pending:
+            # Cancelamento pedido a meio → marca jobs de scrape vivos como falhados e sai
             if job_id in _cancel_requested:
-                _supplier_run_stats[job_id][sup_name]["status"] = "error"
-                return True
+                _pool_cx = await get_db()
+                async with _pool_cx.acquire() as _conn_cx:
+                    await _conn_cx.execute(
+                        "UPDATE jobs SET status='failed', finished_at=$2 "
+                        "WHERE id = ANY($1) AND status IN ('queued','running')",
+                        list(_scrape_job_ids.values()), datetime.now(timezone.utc),
+                    )
+                break
 
-            _supplier_run_stats[job_id][sup_name]["status"] = "running"
-            _supplier_run_stats[job_id][sup_name]["start_time"] = _time.time()
-            _sup_timeout = SUPPLIER_TIMEOUTS.get(sup_name, SUPPLIER_TIMEOUT_DEFAULT)
+            await asyncio.sleep(3)
+            _now_poll = _time.time()
 
-            proc = await asyncio.create_subprocess_exec(
-                'python3', '/app/backend/run_scraper.py',
-                '--supplier', sup_name,
-                '--medidas', medidas_str,
-                '--items-json', items_json,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                env=env,
-                cwd='/app/backend',
-            )
-            # Regista o processo vivo para que o endpoint de cancelar o possa matar.
-            _active_procs.setdefault(job_id, []).append(proc)
-            try:
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_sup_timeout)
-                out_str = stdout.decode()
-                head = out_str[:2000]
-                tail = out_str[-1000:] if len(out_str) > 2000 else ""
-                logger.info(f"[{sup_name}] Scraper concluído.\n{head}")
-                if tail:
-                    logger.info(f"[{sup_name}] ...fim:\n{tail}")
-                _st = _supplier_run_stats[job_id][sup_name].get("start_time")
-                elapsed = round(_time.time() - _st) if _st else 0
-                # Contar produtos e melhor preço na BD para este fornecedor+medidas
+            _pool_poll = await get_db()
+            async with _pool_poll.acquire() as _conn_poll:
+                _states = {r['id']: dict(r) for r in await _conn_poll.fetch(
+                    "SELECT id, status, started_at FROM jobs WHERE id = ANY($1)",
+                    list(_scrape_job_ids.values()),
+                )}
+
+            for _sname in list(_pending):
+                _sjid = _scrape_job_ids[_sname]
+                _state = _states.get(_sjid, {})
+                _sstatus = _state.get('status')
+                _start_t = _supplier_run_stats[job_id][_sname].get("start_time")
+                _elapsed = round(_now_poll - _start_t) if _start_t else 0
+
+                # Reflectir 'running' no tracking assim que o worker pega no job
+                if _sstatus == 'running' and _supplier_run_stats[job_id][_sname]["status"] == "waiting":
+                    _supplier_run_stats[job_id][_sname]["status"] = "running"
+
+                _terminou = _sstatus in ('done', 'failed')
+                _expirou = _elapsed > SUPPLIER_SCRAPE_TIMEOUT
+                if not (_terminou or _expirou):
+                    continue
+
+                # Agregar produtos/preço na BD para este fornecedor
                 try:
-                    _pool = await get_db()
-                    async with _pool.acquire() as _conn:
-                        _agg = await _conn.fetchrow(
+                    _pool_agg = await get_db()
+                    async with _pool_agg.acquire() as _conn_agg:
+                        _agg = await _conn_agg.fetchrow(
                             "SELECT COUNT(*) AS cnt, MIN(price) AS best FROM scraped_prices "
                             "WHERE supplier_name=$1 AND medida=ANY($2)",
-                            sup_name, medidas_sem_dados,
+                            _sname, medidas_sem_dados,
                         )
                     _cnt = int(_agg["cnt"]) if _agg else 0
                     _best = float(_agg["best"]) if _agg and _agg["best"] is not None else None
                 except Exception:
                     _cnt, _best = 0, None
-                _supplier_run_stats[job_id][sup_name].update({
-                    "status": "done", "duration_s": elapsed,
-                    "products": _cnt, "best_price": _best,
-                })
-                return False  # não houve timeout
-            except asyncio.TimeoutError:
-                _st = _supplier_run_stats[job_id][sup_name].get("start_time")
-                elapsed = round(_time.time() - _st) if _st else 0
-                _supplier_run_stats[job_id][sup_name].update({
-                    "status": "timeout", "duration_s": elapsed,
-                })
-                proc.kill()
-                try:
-                    # Timeout curto no communicate() após kill — evita pender para
-                    # sempre se o processo não terminar imediatamente (a causa raiz
-                    # do loop infinito no frontend após timeout do último lote).
-                    out, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-                    logger.warning(f"[{sup_name}] Scraper timeout. Output:\n{out.decode()[:2000]}")
-                except Exception:
-                    logger.warning(f"[{sup_name}] Scraper timeout (processo não terminou após kill)")
-                return True  # houve timeout
-            except Exception as _exc:
-                _st = _supplier_run_stats[job_id][sup_name].get("start_time")
-                elapsed = round(_time.time() - _st) if _st else 0
-                _supplier_run_stats[job_id][sup_name].update({
-                    "status": "error", "duration_s": elapsed,
-                })
-                logger.error(f"[{sup_name}] Erro inesperado: {_exc}")
-                return True
 
-        # Semáforo de 3: assim que um fornecedor termina, o próximo começa imediatamente
-        _sem_sup = asyncio.Semaphore(3)
+                if _expirou and not _terminou:
+                    # Fornecedor preso: desiste e marca o job de scrape como falhado
+                    scraper_timed_out = True
+                    _supplier_run_stats[job_id][_sname].update({
+                        "status": "timeout", "duration_s": _elapsed,
+                        "products": _cnt, "best_price": _best,
+                    })
+                    _pool_to = await get_db()
+                    async with _pool_to.acquire() as _conn_to:
+                        await _conn_to.execute(
+                            "UPDATE jobs SET status='failed', finished_at=$2 "
+                            "WHERE id=$1 AND status IN ('queued','running')",
+                            _sjid, datetime.now(timezone.utc),
+                        )
+                    logger.warning(f"[{_sname}] Scrape timeout individual ({_elapsed}s) — desistir e seguir")
+                else:
+                    _final = "done" if _sstatus == 'done' else "error"
+                    _supplier_run_stats[job_id][_sname].update({
+                        "status": _final, "duration_s": _elapsed,
+                        "products": _cnt, "best_price": _best,
+                    })
+                    logger.info(f"[{_sname}] Scrape {_sstatus} em {_elapsed}s ({_cnt} produtos)")
 
-        async def _run_with_sem(sup_name: str):
-            async with _sem_sup:
-                return await _run_supplier_proc(sup_name)
+                _pending.discard(_sname)
 
-        logger.info(f"[Compare] A correr {len(supplier_names)} fornecedores com semáforo 3: {supplier_names}")
-        all_timeout_flags = await asyncio.gather(
-            *[_run_with_sem(n) for n in supplier_names],
-            return_exceptions=False,
-        )
-        scraper_timed_out = any(all_timeout_flags)
+            # Timeout global: desiste do que sobra
+            if _time.time() - _poll_start > GLOBAL_SCRAPE_TIMEOUT:
+                scraper_timed_out = True
+                for _sname in list(_pending):
+                    _supplier_run_stats[job_id][_sname]["status"] = "timeout"
+                logger.warning(f"[Compare] Timeout global ({GLOBAL_SCRAPE_TIMEOUT}s) — "
+                               f"desistir de {list(_pending)}")
+                _pool_g = await get_db()
+                async with _pool_g.acquire() as _conn_g:
+                    await _conn_g.execute(
+                        "UPDATE jobs SET status='failed', finished_at=$2 "
+                        "WHERE id = ANY($1) AND status IN ('queued','running')",
+                        [_scrape_job_ids[n] for n in _pending], datetime.now(timezone.utc),
+                    )
+                break
 
         # Se foi pedido cancelamento, descarta tudo: marca o job como cancelado
         # e termina sem processar resultados. Os dados parciais ficam na BD mas
