@@ -1292,6 +1292,10 @@ async def _do_compare(job_id: str, force: bool):
             }
 
 
+    # Cutoff de frescura: ignorar preços com mais de 14h (scrapes automáticos
+    # correm de 12 em 12h). Sem isto, um scrape falhado faz o compare comparar
+    # contra preços obsoletos da BD e devolver resultados errados/instantâneos.
+    _fresh_cutoff = datetime.now(timezone.utc) - timedelta(hours=14)
     pool = await get_db()
     async with pool.acquire() as conn:
         all_scraped = rows(await conn.fetch(
@@ -1301,8 +1305,9 @@ async def _do_compare(job_id: str, force: bool):
             WHERE sp.medida = ANY($1)
               AND sp.price IS NOT NULL
               AND s.is_active = TRUE
+              AND sp.scraped_at > $2
             """,
-            unique_medidas,
+            unique_medidas, _fresh_cutoff,
         ))
 
     # Fornecedores que ficaram em "waiting" serviram de cache — marcar como "done"
