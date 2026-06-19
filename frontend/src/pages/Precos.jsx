@@ -305,6 +305,7 @@ const Precos = () => {
                     <TableHead>Modelo</TableHead>
                     <TableHead>Índice</TableHead>
                     <TableHead>Fornecedor</TableHead>
+                    <TableHead className="text-right">Stock</TableHead>
                     <TableHead className="text-right">Preço</TableHead>
                     <TableHead>Atualizado</TableHead>
                   </TableRow>
@@ -361,6 +362,12 @@ const Precos = () => {
                                 )}
                               </div>
                             </TableCell>
+                            <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                              {(() => {
+                                const _s = (best.stock ?? '').toString().replace(/^[+>]/, '').trim();
+                                return /^\d+$/.test(_s) ? _s : '-';
+                              })()}
+                            </TableCell>
                             <TableCell className="text-right">
                               <span className={`font-bold ${isBest ? 'text-emerald-500 text-lg' : 'text-foreground'}`}>
                                 {isBest && <TrendingDown className="inline w-4 h-4 mr-1" />}
@@ -388,10 +395,16 @@ const Precos = () => {
                                     </a>
                                   ) : <Badge variant="secondary">{item.supplier_name}</Badge>;
                                 })()}
-                              </TableCell>
-                              <TableCell className="text-right">
-                                <span className="font-semibold text-muted-foreground">€{item.price?.toFixed(2) ?? '-'}</span>
-                              </TableCell>
+                                </TableCell>
+                                <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                                  {(() => {
+                                    const _s = (item.stock ?? '').toString().replace(/^[+>]/, '').trim();
+                                    return /^\d+$/.test(_s) ? _s : '-';
+                                  })()}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <span className="font-semibold text-muted-foreground">€{item.price?.toFixed(2) ?? '-'}</span>
+                                </TableCell>
                               <TableCell className="text-muted-foreground text-sm">{formatDate(item.scraped_at)}</TableCell>
                             </TableRow>
                           ))}

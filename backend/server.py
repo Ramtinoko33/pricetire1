@@ -1370,6 +1370,24 @@ async def _do_compare(job_id: str, force: bool):
             unique_medidas, _fresh_cutoff,
         ))
 
+    # Filtro de stock: exclui produtos com stock numérico < 2 (0 ou 1).
+    # Stock vazio/desconhecido (NULL ou não-numérico) é MANTIDO — fornecedores
+    # que ainda não capturam stock continuam a aparecer nas comparações.
+    def _stock_ok(_sp):
+        _raw = (_sp.get('stock') or '').strip().lstrip('+>').strip()
+        if not _raw:
+            return True
+        try:
+            return int(float(_raw.replace(',', '.'))) >= 2
+        except (ValueError, TypeError):
+            return True
+
+    _before_stock = len(all_scraped)
+    all_scraped = [s for s in all_scraped if _stock_ok(s)]
+    if len(all_scraped) < _before_stock:
+        logger.info(f"[compare stock] {_before_stock - len(all_scraped)} produtos "
+                    f"excluídos por stock < 2")
+
     # Fornecedores que ficaram em "waiting" serviram de cache — marcar como "done"
     if job_id in _supplier_run_stats:
         for _sname, _sinfo in _supplier_run_stats[job_id].items():
