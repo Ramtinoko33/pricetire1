@@ -100,11 +100,23 @@ async def _ensure_scheduler_status_table():
 
 
 
+async def _ensure_stock_columns():
+    """Colunas de stock: scraped_prices.stock e job_items.melhor_stock (ambas TEXT)."""
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            await conn.execute("ALTER TABLE scraped_prices ADD COLUMN IF NOT EXISTS stock TEXT")
+            await conn.execute("ALTER TABLE job_items ADD COLUMN IF NOT EXISTS melhor_stock TEXT")
+    except Exception as e:
+        logger.warning(f"[startup] Erro ao garantir colunas de stock: {e}")
+
+
 @app.on_event("startup")
 async def startup():
     await _ensure_saved_column()
     await _ensure_scheduled_targets_table()
     await _ensure_scheduler_status_table()
+    await _ensure_stock_columns()
     await _cleanup_orphan_suppliers()
     await _cleanup_old_logs()
     _start_scheduler()
@@ -1557,6 +1569,7 @@ async def _do_compare(job_id: str, force: bool):
                 round(economia_percent, 2) if economia_percent is not None else None,
                 sup_prices,
                 item_status,
+                best.get('stock'),
             ))
             updated_count += 1
             matched_count += 1
@@ -1566,7 +1579,7 @@ async def _do_compare(job_id: str, force: bool):
         else:
             bulk_updates.append((
                 item['id'], None, None, None, None, None, "sem_dados",
-                None, None, {}, "no_data",
+                None, None, {}, "no_data", None,
             ))
             updated_count += 1
 
@@ -1579,7 +1592,7 @@ async def _do_compare(job_id: str, force: bool):
                     melhor_preco=$2, melhor_fornecedor=$3, melhor_marca=$4,
                     modelo_encontrado=$5, indice_encontrado=$6, match_type=$7,
                     economia_euro=$8, economia_percent=$9,
-                    supplier_prices=$10::jsonb, status=$11
+                    supplier_prices=$10::jsonb, status=$11, melhor_stock=$12
                 WHERE id=$1
                 """,
                 bulk_updates,

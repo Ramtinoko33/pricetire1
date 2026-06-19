@@ -1649,9 +1649,16 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                               f"model={model_val[:40]!r} price={price_val} "
                               f"ic={ic_val!r} cv={cv_val!r} indice={indice_val!r} "
                               f"(field={used_pk or 'N/A'})")
+                        _stock_raw = ''
+                        for _sk in ('ar_stockmostrar', 'ar_stock'):
+                            if _sk in item_lc and item_lc[_sk][1] is not None:
+                                _sv = str(item_lc[_sk][1]).strip()
+                                if _sv:
+                                    _stock_raw = _sv
+                                    break
                         products.append({'brand': brand_val, 'model': model_val,
                                          'price': price_val, 'indice': indice_val,
-                                         'load_index': indice_val})
+                                         'load_index': indice_val, 'stock': _stock_raw})
                     else:
                         _parse_api_json(item, depth + 1)
             elif isinstance(data, dict):
@@ -3854,10 +3861,10 @@ async def run_scraper(medidas: list, supplier_filter: str = None, items_list: li
                                 if products:
                                     for prod in products:
                                         await conn_save.execute(
-                                            "INSERT INTO scraped_prices (id,supplier_name,medida,marca,modelo,price,load_index,scraped_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+                                            "INSERT INTO scraped_prices (id,supplier_name,medida,marca,modelo,price,load_index,stock,scraped_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
                                             str(uuid.uuid4()), supplier['name'], medida,
                                             prod.get('brand', '').upper(), prod.get('model', ''),
-                                            prod.get('price'), prod.get('load_index') or prod.get('indice') or '', datetime.now(timezone.utc),
+                                            prod.get('price'), prod.get('load_index') or prod.get('indice') or '', prod.get('stock') or '', datetime.now(timezone.utc),
                                         )
                                     print(f"  {medida}: saved {len(products)} products")
                                 elif not _is_session_err:

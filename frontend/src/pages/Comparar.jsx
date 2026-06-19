@@ -677,6 +677,7 @@ const Comparar = () => {
                       <TableHead>Modelo Encontrado</TableHead>
                       <TableHead>Índice Encontrado</TableHead>
                       <TableHead className="text-right">Meu Preço</TableHead>
+                      <TableHead className="text-right">Stock</TableHead>
                       <TableHead className="text-right">Melhor Preço</TableHead>
                       <TableHead>Fornecedor</TableHead>
                       <TableHead className="text-right">Economia €</TableHead>
@@ -738,6 +739,12 @@ const Comparar = () => {
                           </TableCell>
                           <TableCell className="text-right font-medium">
                             {item.meu_preco ? `€${item.meu_preco.toFixed(2)}` : '-'}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-slate-600 dark:text-muted-foreground">
+                            {(() => {
+                              const _s = (item.melhor_stock ?? '').toString().replace(/^[+>]/, '').trim();
+                              return /^\d+$/.test(_s) ? _s : '-';
+                            })()}
                           </TableCell>
                           <TableCell className="text-right font-medium">
                             {item.melhor_preco ? (
