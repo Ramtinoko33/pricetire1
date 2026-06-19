@@ -676,8 +676,8 @@ const Comparar = () => {
                       <TableHead>Índice</TableHead>
                       <TableHead>Modelo Encontrado</TableHead>
                       <TableHead>Índice Encontrado</TableHead>
-                      <TableHead className="text-right">Meu Preço</TableHead>
                       <TableHead className="text-right">Stock</TableHead>
+                      <TableHead className="text-right">Meu Preço</TableHead>
                       <TableHead className="text-right">Melhor Preço</TableHead>
                       <TableHead>Fornecedor</TableHead>
                       <TableHead className="text-right">Economia €</TableHead>

@@ -1649,13 +1649,21 @@ async def scrape_grupo_soledad(page, username: str, password: str, medida: str,
                               f"model={model_val[:40]!r} price={price_val} "
                               f"ic={ic_val!r} cv={cv_val!r} indice={indice_val!r} "
                               f"(field={used_pk or 'N/A'})")
-                        _stock_raw = ''
-                        for _sk in ('ar_stockmostrar', 'ar_stock'):
-                            if _sk in item_lc and item_lc[_sk][1] is not None:
-                                _sv = str(item_lc[_sk][1]).strip()
-                                if _sv:
-                                    _stock_raw = _sv
-                                    break
+                        _own = _oth = None
+                        if 'ar_stock' in item_lc and item_lc['ar_stock'][1] is not None:
+                            try:
+                                _own = int(float(str(item_lc['ar_stock'][1]).strip()))
+                            except Exception:
+                                _own = None
+                        if 'ar_stockotros' in item_lc and item_lc['ar_stockotros'][1] is not None:
+                            try:
+                                _oth = int(float(str(item_lc['ar_stockotros'][1]).strip()))
+                            except Exception:
+                                _oth = None
+                        if _own is None and _oth is None:
+                            _stock_raw = ''
+                        else:
+                            _stock_raw = str((_own or 0) + (_oth or 0))
                         products.append({'brand': brand_val, 'model': model_val,
                                          'price': price_val, 'indice': indice_val,
                                          'load_index': indice_val, 'stock': _stock_raw})
