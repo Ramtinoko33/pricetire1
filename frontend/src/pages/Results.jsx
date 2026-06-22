@@ -310,7 +310,7 @@ const Results = () => {
                   <TableHeader className="sticky top-0 bg-card">
                     <TableRow>
                       <TableHead>Ref</TableHead>
-                      <TableHead colSpan={12}>
+                      <TableHead colSpan={11}>
                         <div className="flex items-center gap-2 py-1">
                           <span className="text-xs text-muted-foreground">Índice obrigatório</span>
                           <button
@@ -348,7 +348,6 @@ const Results = () => {
                       <TableHead>Índice</TableHead>
                       <TableHead>Modelo Encontrado</TableHead>
                       <TableHead>Índice Encontrado</TableHead>
-                      <TableHead className="text-right">Stock</TableHead>
                       <TableHead className="text-right">Meu Preço</TableHead>
                       <TableHead className="text-right">Melhor Preço</TableHead>
                       <TableHead>Fornecedor</TableHead>
@@ -393,12 +392,6 @@ const Results = () => {
                           <TableCell className="max-w-[150px] truncate font-medium" title={item.modelo_encontrado}>{item.modelo_encontrado || '-'}</TableCell>
                           <TableCell className="font-mono text-muted-foreground text-xs">{item.indice_encontrado || '-'}</TableCell>
                           <TableCell className="text-right font-medium">{item.meu_preco ? `€${item.meu_preco.toFixed(2)}` : '-'}</TableCell>
-                          <TableCell className="text-right font-mono text-muted-foreground">
-                            {(() => {
-                              const _s = (item.melhor_stock ?? '').toString().replace(/^[+>]/, '').trim();
-                              return /^\d+$/.test(_s) ? _s : '-';
-                            })()}
-                          </TableCell>
                           <TableCell className="text-right font-medium">
                             {item.melhor_preco ? (
                               <div className="flex flex-col items-end">

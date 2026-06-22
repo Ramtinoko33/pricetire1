@@ -100,23 +100,11 @@ async def _ensure_scheduler_status_table():
 
 
 
-async def _ensure_stock_columns():
-    """Colunas de stock: scraped_prices.stock e job_items.melhor_stock (ambas TEXT)."""
-    try:
-        pool = await get_db()
-        async with pool.acquire() as conn:
-            await conn.execute("ALTER TABLE scraped_prices ADD COLUMN IF NOT EXISTS stock TEXT")
-            await conn.execute("ALTER TABLE job_items ADD COLUMN IF NOT EXISTS melhor_stock TEXT")
-    except Exception as e:
-        logger.warning(f"[startup] Erro ao garantir colunas de stock: {e}")
-
-
 @app.on_event("startup")
 async def startup():
     await _ensure_saved_column()
     await _ensure_scheduled_targets_table()
     await _ensure_scheduler_status_table()
-    await _ensure_stock_columns()
     await _cleanup_orphan_suppliers()
     await _cleanup_old_logs()
     _start_scheduler()
@@ -1370,24 +1358,6 @@ async def _do_compare(job_id: str, force: bool):
             unique_medidas, _fresh_cutoff,
         ))
 
-    # Filtro de stock: exclui produtos com stock numérico < 2 (0 ou 1).
-    # Stock vazio/desconhecido (NULL ou não-numérico) é MANTIDO — fornecedores
-    # que ainda não capturam stock continuam a aparecer nas comparações.
-    def _stock_ok(_sp):
-        _raw = (_sp.get('stock') or '').strip().lstrip('+>').strip()
-        if not _raw:
-            return True
-        try:
-            return int(float(_raw.replace(',', '.'))) >= 2
-        except (ValueError, TypeError):
-            return True
-
-    _before_stock = len(all_scraped)
-    all_scraped = [s for s in all_scraped if _stock_ok(s)]
-    if len(all_scraped) < _before_stock:
-        logger.info(f"[compare stock] {_before_stock - len(all_scraped)} produtos "
-                    f"excluídos por stock < 2")
-
     # Fornecedores que ficaram em "waiting" serviram de cache — marcar como "done"
     if job_id in _supplier_run_stats:
         for _sname, _sinfo in _supplier_run_stats[job_id].items():
@@ -1587,7 +1557,6 @@ async def _do_compare(job_id: str, force: bool):
                 round(economia_percent, 2) if economia_percent is not None else None,
                 sup_prices,
                 item_status,
-                best.get('stock'),
             ))
             updated_count += 1
             matched_count += 1
@@ -1597,7 +1566,7 @@ async def _do_compare(job_id: str, force: bool):
         else:
             bulk_updates.append((
                 item['id'], None, None, None, None, None, "sem_dados",
-                None, None, {}, "no_data", None,
+                None, None, {}, "no_data",
             ))
             updated_count += 1
 
@@ -1610,7 +1579,7 @@ async def _do_compare(job_id: str, force: bool):
                     melhor_preco=$2, melhor_fornecedor=$3, melhor_marca=$4,
                     modelo_encontrado=$5, indice_encontrado=$6, match_type=$7,
                     economia_euro=$8, economia_percent=$9,
-                    supplier_prices=$10::jsonb, status=$11, melhor_stock=$12
+                    supplier_prices=$10::jsonb, status=$11
                 WHERE id=$1
                 """,
                 bulk_updates,
