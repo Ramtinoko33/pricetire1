@@ -1,23 +1,130 @@
 import axios from 'axios';
+import { getToken, clearSession } from './session';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
+export const API_BASE = `${BACKEND_URL}/api`;
 
 const api = axios.create({
-  baseURL: API,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  baseURL: API_BASE,
+  headers: { 'Content-Type': 'application/json' },
+  timeout: 60000,
 });
+
+api.interceptors.request.use((config) => {
+  const token = getToken();
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status;
+    const url = error?.config?.url || '';
+    if (status === 401 && !url.includes('/auth/login')) {
+      // Sessão inválida/expirada: limpar; o AuthProvider redirecciona para /login.
+      clearSession();
+    }
+    return Promise.reject(error);
+  },
+);
+
+// Remove parâmetros vazios para não enviar "brand=" etc.
+export function cleanParams(params = {}) {
+  const out = {};
+  Object.entries(params).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === '') return;
+    out[k] = v;
+  });
+  return out;
+}
+
+export const authAPI = {
+  login: (email, password) => api.post('/auth/login', { email, password }),
+  me: () => api.get('/auth/me'),
+  changePassword: (current_password, new_password) =>
+    api.post('/auth/change-password', { current_password, new_password }),
+};
+
+export const usersAPI = {
+  getAll: () => api.get('/users'),
+  create: (data) => api.post('/users', data),
+  update: (id, data) => api.put(`/users/${id}`, data),
+};
+
+export const apiKeysAPI = {
+  getAll: () => api.get('/api-keys'),
+  create: (data) => api.post('/api-keys', data),
+  delete: (id) => api.delete(`/api-keys/${id}`),
+};
+
+export const searchAPI = {
+  offers: (params) => api.get('/v1/offers', { params: cleanParams({ limit: 500, ...params }) }),
+  search: (body) => api.post('/v1/search', body),
+  refresh: (sizes, supplier_ids) =>
+    api.post('/v1/refresh', supplier_ids?.length ? { sizes, supplier_ids } : { sizes }),
+  refreshStatus: (requestId) => api.get(`/v1/refresh/${encodeURIComponent(requestId)}`),
+};
 
 export const suppliersAPI = {
   getAll: () => api.get('/suppliers'),
   create: (data) => api.post('/suppliers', data),
   update: (id, data) => api.put(`/suppliers/${id}`, data),
   delete: (id) => api.delete(`/suppliers/${id}`),
-  testLogin: (id) => api.post(`/suppliers/${id}/test`),
-  getSelectors: (id) => api.get(`/suppliers/${id}/selectors`),
-  updateSelectors: (id, selectors) => api.put(`/suppliers/${id}/selectors`, selectors),
+  // DELETE desactiva o fornecedor (não apaga dados).
+  testLogin: (id, size = '205/55R16') => api.post(`/suppliers/${id}/test`, {}, { params: { size } }),
+  adapters: () => api.get('/suppliers/adapters'),
+};
+
+export const opsAPI = {
+  status: () => api.get('/ops/status'),
+  jobs: (params) => api.get('/ops/jobs', { params: cleanParams(params) }),
+  retryJob: (id) => api.post(`/ops/jobs/${id}/retry`),
+  cancelJob: (id) => api.post(`/ops/jobs/${id}/cancel`),
+  failures: (params) => api.get('/ops/failures', { params: cleanParams(params) }),
+  runs: (params) => api.get('/ops/runs', { params: cleanParams(params) }),
+  runScheduledNow: () => api.post('/ops/run-scheduled-now'),
+};
+
+export const scheduledTargetsAPI = {
+  getAll: () => api.get('/scheduled-targets'),
+  create: (data) => api.post('/scheduled-targets', data),
+  delete: (id) => api.delete(`/scheduled-targets/${encodeURIComponent(id)}`),
+};
+
+export const catalogAPI = {
+  getAll: (params) => api.get('/catalog', { params: cleanParams(params) }),
+  create: (data) => api.post('/catalog', data),
+  update: (id, data) => api.put(`/catalog/${id}`, data),
+  delete: (id) => api.delete(`/catalog/${id}`),
+  import: (file, mode = 'upsert') => {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('mode', mode);
+    return api.post('/catalog/import', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      params: { mode },
+      timeout: 120000,
+    });
+  },
+  template: () => api.get('/catalog/template', { responseType: 'blob' }),
+  comparison: (onlySavings = false) =>
+    api.get('/catalog/comparison', { params: { only_savings: onlySavings } }),
+};
+
+export const alertsAPI = {
+  getRules: () => api.get('/alerts/rules'),
+  createRule: (data) => api.post('/alerts/rules', data),
+  updateRule: (id, data) => api.put(`/alerts/rules/${id}`, data),
+  deleteRule: (id) => api.delete(`/alerts/rules/${id}`),
+  events: (limit = 200) => api.get('/alerts/events', { params: { limit } }),
+  testEmail: (email_to) => api.post('/alerts/test-email', { email_to }),
+  evaluate: () => api.post('/alerts/evaluate'),
+  getBrandCategories: () => api.get('/brand-categories'),
+  putBrandCategories: (list) => api.put('/brand-categories', list),
 };
 
 export const jobsAPI = {
@@ -26,10 +133,9 @@ export const jobsAPI = {
   }),
   getAll: () => api.get('/jobs'),
   getOne: (id) => api.get(`/jobs/${id}`),
-  run: (id) => api.post(`/jobs/${id}/run`),
   compare: (id) => api.post(`/jobs/${id}/compare`, {}, { timeout: 30000 }),
+  forceCompare: (id) => api.post(`/jobs/${id}/compare`, {}, { params: { force: true }, timeout: 30000 }),
   cancel: (id) => api.post(`/jobs/${id}/cancel`, {}, { timeout: 30000 }),
-  forceCompare: (id) => api.post(`/jobs/${id}/compare?force=false`, {}, { timeout: 30000 }),
   getProgress: (id) => api.get(`/jobs/${id}/progress`),
   getResults: (id) => api.get(`/jobs/${id}/results`),
   export: (id) => api.get(`/jobs/${id}/export`, { responseType: 'blob' }),
@@ -37,25 +143,16 @@ export const jobsAPI = {
   delete: (id) => api.delete(`/jobs/${id}`),
 };
 
-
-export const statsAPI = {
-  getDashboard: () => api.get('/stats'),
-};
-
-export const logsAPI = {
-  getAll: (jobId = null, limit = 100) => api.get('/logs', { params: { job_id: jobId, limit } }),
-};
-
-export const scrapedPricesAPI = {
-  getAll: (medida = null, marca = null, modelo = null, load_index = null) => {
-    const params = {};
-    if (medida) params.medida = medida;
-    if (marca) params.marca = marca;
-    if (modelo) params.modelo = modelo;
-    if (load_index) params.load_index = load_index;
-    return api.get('/scraped-prices', { params });
-  },
-  getBest: (medida) => api.get(`/scraped-prices/best/${medida}`),
-};
+export function downloadBlob(data, filename, type) {
+  const blob = data instanceof Blob ? data : new Blob([data], type ? { type } : undefined);
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+}
 
 export default api;

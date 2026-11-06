@@ -1,0 +1,136 @@
+import React from 'react';
+import { ArrowDown, ArrowUp, ExternalLink } from 'lucide-react';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
+import { FreshnessCell, MatchBadge, OfferFlags, StockBadge, WithTooltip, StaleBadge } from './badges';
+import { formatAge, formatDateTime, formatLoadSpeed, formatPrice } from '@/lib/format';
+import { supplierSearchUrl } from '@/lib/supplierLinks';
+import { cn } from '@/lib/utils';
+
+export function sortOffersByPrice(offers, dir = 'asc') {
+  const mult = dir === 'desc' ? -1 : 1;
+  return [...(offers || [])].sort((a, b) => {
+    const pa = a.price ?? null;
+    const pb = b.price ?? null;
+    if (pa === null && pb === null) return 0;
+    if (pa === null) return 1;
+    if (pb === null) return -1;
+    return (pa - pb) * mult;
+  });
+}
+
+function SupplierCell({ offer }) {
+  const url = supplierSearchUrl(offer.supplier_name, offer.size_key);
+  if (!url) return <span className="whitespace-nowrap">{offer.supplier_name || '—'}</span>;
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 hover:underline whitespace-nowrap" title="Abrir o portal do fornecedor">
+      {offer.supplier_name} <ExternalLink size={12} />
+    </a>
+  );
+}
+
+function MatchCell({ offer }) {
+  if (!offer.match) return null;
+  return (
+    <div className="space-y-1">
+      <MatchBadge matchClass={offer.match.match_class} details={offer.match.details} reasons={offer.match.reasons} />
+      {offer.match.match_class !== 'MATCH_EXACTO' && offer.match.details?.length > 0 && (
+        <ul className="text-xs text-muted-foreground list-disc pl-4">
+          {offer.match.details.map((d, i) => <li key={i}>{d}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// Tabela de ofertas (desktop) + cartões (mobile).
+export default function OffersTable({ offers, sortDir = 'asc', onToggleSort, showMatch = false, highlightId = null, testId = 'offers-table' }) {
+  const rows = offers || [];
+  const SortIcon = sortDir === 'desc' ? ArrowDown : ArrowUp;
+
+  return (
+    <div data-testid={testId}>
+      <div className="hidden md:block">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Marca</TableHead>
+              <TableHead>Modelo</TableHead>
+              <TableHead>Índice</TableHead>
+              <TableHead>Características</TableHead>
+              {showMatch && <TableHead>Correspondência</TableHead>}
+              <TableHead>Fornecedor</TableHead>
+              <TableHead className="text-right">
+                {onToggleSort ? (
+                  <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={onToggleSort} data-testid="sort-price">
+                    Preço <SortIcon size={12} />
+                  </button>
+                ) : 'Preço'}
+              </TableHead>
+              <TableHead>Stock</TableHead>
+              <TableHead>Actualizado</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((o) => (
+              <TableRow
+                key={o.id ?? `${o.supplier_id}-${o.supplier_ref}-${o.price}`}
+                className={cn(o.fresh === false && 'opacity-75', highlightId && o.id === highlightId && 'bg-emerald-50 dark:bg-emerald-500/10')}
+              >
+                <TableCell className="font-medium whitespace-nowrap">{o.brand || '—'}</TableCell>
+                <TableCell className="max-w-[220px]">
+                  <WithTooltip content={o.description}>
+                    <span className="block truncate cursor-help" title={o.description || undefined}>{o.model || o.description || '—'}</span>
+                  </WithTooltip>
+                </TableCell>
+                <TableCell className="font-mono text-xs whitespace-nowrap">{formatLoadSpeed(o)}</TableCell>
+                <TableCell><OfferFlags offer={o} /></TableCell>
+                {showMatch && <TableCell className="max-w-[260px]"><MatchCell offer={o} /></TableCell>}
+                <TableCell className="text-sm"><SupplierCell offer={o} /></TableCell>
+                <TableCell className="text-right font-mono font-semibold whitespace-nowrap">{formatPrice(o.price, o.currency)}</TableCell>
+                <TableCell><StockBadge status={o.stock_status} qty={o.stock_qty} location={o.stock_location || o.delivery_info} /></TableCell>
+                <TableCell><FreshnessCell at={o.last_seen_at} ageHours={o.age_hours} fresh={o.fresh} /></TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+
+      <div className="md:hidden divide-y divide-border">
+        {onToggleSort && (
+          <div className="flex justify-end p-2">
+            <button className="inline-flex items-center gap-1 text-xs text-muted-foreground" onClick={onToggleSort}>
+              Ordenar por preço <SortIcon size={12} />
+            </button>
+          </div>
+        )}
+        {rows.map((o) => (
+          <div
+            key={o.id ?? `${o.supplier_id}-${o.supplier_ref}-${o.price}`}
+            className={cn('p-3 space-y-2', highlightId && o.id === highlightId && 'bg-emerald-50 dark:bg-emerald-500/10')}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-semibold">{o.brand || '—'} <span className="font-normal">{o.model || ''}</span></p>
+                <p className="text-xs text-muted-foreground break-words">{o.description}</p>
+              </div>
+              <p className="font-mono font-bold text-lg whitespace-nowrap">{formatPrice(o.price, o.currency)}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-1 text-xs">
+              <span className="font-mono">{formatLoadSpeed(o)}</span>
+              <OfferFlags offer={o} />
+            </div>
+            {showMatch && <MatchCell offer={o} />}
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <SupplierCell offer={o} />
+              <StockBadge status={o.stock_status} qty={o.stock_qty} location={o.stock_location || o.delivery_info} />
+            </div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>{formatDateTime(o.last_seen_at)} · {o.age_hours != null ? formatAge(o.age_hours) : formatAge(o.last_seen_at)}</span>
+              {o.fresh === false && <StaleBadge />}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
