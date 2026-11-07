@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState, ErrorState, Field, NativeSelect, PageHeader, TableSkeleton } from '@/components/common';
 import { ERROR_KIND_LABELS, JOB_FINISHED, JobStatusBadge, OfferFlags, StaleBadge, StockBadge, ToneBadge } from '@/components/badges';
 import OffersTable, { sortOffersByPrice } from '@/components/OffersTable';
+import BrandInput from '@/components/BrandInput';
 import { groupOffers } from '@/lib/groupOffers';
 
 const POLL_MS = 3000;
@@ -281,6 +282,21 @@ const Pesquisa = () => {
     else runExact(lastQuery.size, lastQuery.wanted, lastQuery.filters, { silent: true });
   }, [lastQuery, runQuick, runExact]);
 
+  // Filtros alterados depois de uma pesquisa: repetir a pesquisa sem carregar em "Pesquisar".
+  const lastQueryRef = useRef(lastQuery);
+  useEffect(() => { lastQueryRef.current = lastQuery; }, [lastQuery]);
+  useEffect(() => {
+    const last = lastQueryRef.current;
+    if (!last || (last.filters === filters && last.wanted === wanted)) return undefined;
+    const t = setTimeout(() => {
+      const q = { ...last, filters, wanted };
+      setLastQuery(q);
+      if (q.mode === 'quick') runQuick(q.size, filters, { silent: true });
+      else runExact(q.size, wanted, filters, { silent: true });
+    }, 450);
+    return () => clearTimeout(t);
+  }, [filters, wanted, runQuick, runExact]);
+
   const reloadRef = useRef(reloadLast);
   useEffect(() => { reloadRef.current = reloadLast; }, [reloadLast]);
 
@@ -379,9 +395,6 @@ const Pesquisa = () => {
       <Card>
         <CardContent className="pt-6">
           <form onSubmit={handleSubmit} className="space-y-4">
-            <datalist id="brand-options">
-              {brandOptions.map((b) => <option key={b} value={b} />)}
-            </datalist>
             <Tabs value={mode} onValueChange={setMode}>
               <TabsList>
                 <TabsTrigger value="quick"><Search size={14} className="mr-1" /> Rápida</TabsTrigger>
@@ -424,10 +437,10 @@ const Pesquisa = () => {
               <div className="rounded-md border border-dashed p-3 space-y-2">
                 <p className="text-xs font-medium">Referência pretendida</p>
                 <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
-                  <Field label="Marca" htmlFor="w-brand"><Input id="w-brand" list="brand-options" autoComplete="off" value={wanted.brand} onChange={(e) => setW('brand')(e.target.value)} /></Field>
+                  <Field label="Marca" htmlFor="w-brand"><BrandInput id="w-brand" value={wanted.brand} onChange={setW('brand')} options={brandOptions} /></Field>
                   <Field label="Modelo" htmlFor="w-model"><Input id="w-model" value={wanted.model} onChange={(e) => setW('model')(e.target.value)} /></Field>
-                  <Field label="Carga" htmlFor="w-load"><Input id="w-load" placeholder="91 ou 109/107" value={wanted.load_index} onChange={(e) => setW('load_index')(e.target.value)} /></Field>
-                  <Field label="Velocidade" htmlFor="w-speed"><Input id="w-speed" placeholder="V" maxLength={2} value={wanted.speed_index} onChange={(e) => setW('speed_index')(e.target.value)} /></Field>
+                  <Field label="Carga" htmlFor="w-load"><Input id="w-load" value={wanted.load_index} onChange={(e) => setW('load_index')(e.target.value)} /></Field>
+                  <Field label="Velocidade" htmlFor="w-speed"><Input id="w-speed" maxLength={2} value={wanted.speed_index} onChange={(e) => setW('speed_index')(e.target.value)} /></Field>
                   <Field label="XL" htmlFor="w-xl"><TriSelect id="w-xl" value={wanted.xl} onChange={setW('xl')} anyLabel="Indiferente" /></Field>
                   <Field label="RunFlat" htmlFor="w-rf"><TriSelect id="w-rf" value={wanted.runflat} onChange={setW('runflat')} anyLabel="Indiferente" /></Field>
                   <Field label="Estação" htmlFor="w-season"><SeasonSelect id="w-season" value={wanted.season} onChange={setW('season')} /></Field>
@@ -435,15 +448,15 @@ const Pesquisa = () => {
               </div>
             )}
 
-            <details className="group" open={mode === 'quick'}>
+            <details className="group" open>
               <summary className="cursor-pointer text-sm font-medium select-none">Filtros</summary>
               <div className="mt-3 grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
                 {mode === 'quick' && (
                   <>
-                    <Field label="Marca" htmlFor="f-brand"><Input id="f-brand" list="brand-options" autoComplete="off" value={filters.brand} onChange={(e) => setF('brand')(e.target.value)} /></Field>
+                    <Field label="Marca" htmlFor="f-brand"><BrandInput id="f-brand" value={filters.brand} onChange={setF('brand')} options={brandOptions} /></Field>
                     <Field label="Modelo" htmlFor="f-model"><Input id="f-model" value={filters.model} onChange={(e) => setF('model')(e.target.value)} /></Field>
-                    <Field label="Carga" htmlFor="f-load"><Input id="f-load" placeholder="91" value={filters.load_index} onChange={(e) => setF('load_index')(e.target.value)} /></Field>
-                    <Field label="Velocidade" htmlFor="f-speed"><Input id="f-speed" placeholder="V" maxLength={2} value={filters.speed_index} onChange={(e) => setF('speed_index')(e.target.value)} /></Field>
+                    <Field label="Carga" htmlFor="f-load"><Input id="f-load" value={filters.load_index} onChange={(e) => setF('load_index')(e.target.value)} /></Field>
+                    <Field label="Velocidade" htmlFor="f-speed"><Input id="f-speed" maxLength={2} value={filters.speed_index} onChange={(e) => setF('speed_index')(e.target.value)} /></Field>
                     <Field label="XL" htmlFor="f-xl"><TriSelect id="f-xl" value={filters.xl} onChange={setF('xl')} /></Field>
                     <Field label="RunFlat" htmlFor="f-rf"><TriSelect id="f-rf" value={filters.runflat} onChange={setF('runflat')} /></Field>
                     <Field label="Estação" htmlFor="f-season"><SeasonSelect id="f-season" value={filters.season} onChange={setF('season')} /></Field>
