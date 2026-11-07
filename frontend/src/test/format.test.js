@@ -68,3 +68,13 @@ describe('parseSize camião', () => {
     expect(parseSize('2055516')?.display).toBe('205/55R16');
   });
 });
+
+describe('parseSize polegadas', () => {
+  it.each(['37125017', '371217', '3712517', '37x12.5R17', '37X12.50 R17', '37x12.5-17', 'LT37X12.50R17'])('%s', (v) => {
+    expect(parseSize(v)).toMatchObject({ display: '37x12.50R17', key: '37X12.50R17' });
+  });
+  it('não troca medidas métricas nem de camião', () => {
+    expect(parseSize('2055516')?.display).toBe('205/55R16');
+    expect(parseSize('31570225')?.display).toBe('315/70R22.5');
+  });
+});

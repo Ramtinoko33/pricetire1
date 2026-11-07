@@ -63,11 +63,35 @@ export function formatAge(value, now = new Date()) {
 // Normaliza a medida introduzida pelo utilizador.
 // Aceita "205/55R16", "205/55 R16", "205 55 16", "2055516", "205/55ZR17", "215/65R16C", "205/55R16.5".
 // Devolve { width, aspect, rim, construction, commercial, display, key } ou null.
+function flotationSize(d, w, rim) {
+  if (!(d >= 26 && d <= 44 && w >= 7 && w <= 16.5 && Number.isInteger(w * 2) && rim >= 14 && rim <= 24)) return null;
+  const ws = w.toFixed(2);
+  const rs = String(rim);
+  return {
+    width: d, aspect: Math.round(w * 100), rim, construction: 'R', commercial: false, flotation: true,
+    display: `${d}x${ws}R${rs}`, key: `${d}X${ws}R${rs}`,
+  };
+}
+
+function parseFlotation(text, digits) {
+  const m = digits.match(/^(?:LT)?(\d{2})[X×](\d{1,2}(?:\.\d{1,2})?)(?:LT)?(?:ZR|R|-)?(\d{2}(?:\.5)?)(?:LT)?$/);
+  if (m) return flotationSize(parseInt(m[1], 10), parseFloat(m[2]), parseFloat(m[3]));
+  const c = digits.match(/^(\d{2})(\d{2,4})(\d{2})$/);
+  if (!c) return null;
+  const wd = c[2];
+  const w = wd.length === 4 ? parseInt(wd, 10) / 100 : wd.length === 3 ? parseInt(wd, 10) / 10 : parseInt(wd, 10) + 0.5;
+  return flotationSize(parseInt(c[1], 10), w, parseInt(c[3], 10));
+}
+
 export function parseSize(input) {
   if (input === null || input === undefined) return null;
   const text = String(input).trim().toUpperCase().replace(',', '.');
   if (!text) return null;
   const digits = text.replace(/\s+/g, '');
+
+  // Polegadas (jipe): 37x12.5R17 · 37X12.50 R17 · 37125017 · 3712517 · 371217
+  const flot = parseFlotation(text, digits);
+  if (flot) return flot;
 
   // Camião sem perfil: 12R22.5, 13 R 22.5
   const truck = digits.match(/^(1[0-4]|[7-9])R((?:17|19|22|24)\.5)$/);
