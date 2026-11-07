@@ -80,10 +80,13 @@ export function FreshnessCell({ at, ageHours, fresh }) {
   );
 }
 
-// Badges técnicos de uma oferta (XL, RunFlat, homologação, estação, DEMO).
+// Badges técnicos de uma oferta (C, XL, RunFlat, homologação, estação, DEMO).
 export function OfferFlags({ offer }) {
   if (!offer) return null;
   const items = [];
+  if (offer.commercial === true || /C$/.test(offer.size_key || '')) {
+    items.push(<ToneBadge key="c" tone="amber" title="Pneu comercial (C)">C</ToneBadge>);
+  }
   if (offer.xl === true) items.push(<ToneBadge key="xl" tone="purple">XL</ToneBadge>);
   if (offer.runflat === true) {
     items.push(<ToneBadge key="rf" tone="sky">RunFlat{offer.runflat_tech ? ` ${offer.runflat_tech}` : ''}</ToneBadge>);
