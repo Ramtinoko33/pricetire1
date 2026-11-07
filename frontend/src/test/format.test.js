@@ -54,3 +54,17 @@ describe('formatLoadSpeed', () => {
     expect(formatLoadSpeed({})).toBe('—');
   });
 });
+
+describe('parseSize camião', () => {
+  it('aceita compacto de 8 dígitos com jante .5', () => {
+    expect(parseSize('31570225')).toMatchObject({ width: 315, aspect: 70, rim: 22.5, display: '315/70R22.5', key: '3157022.5' });
+    expect(parseSize('21575175')?.display).toBe('215/75R17.5');
+  });
+  it('aceita larguras de camião e medidas sem perfil', () => {
+    expect(parseSize('445/45R19.5')?.display).toBe('445/45R19.5');
+    expect(parseSize('12R22.5')).toMatchObject({ display: '12R22.5', key: '12-22.5', aspect: null });
+  });
+  it('mantém ligeiros', () => {
+    expect(parseSize('2055516')?.display).toBe('205/55R16');
+  });
+});

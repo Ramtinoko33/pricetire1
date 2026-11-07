@@ -67,21 +67,34 @@ export function parseSize(input) {
   if (input === null || input === undefined) return null;
   const text = String(input).trim().toUpperCase().replace(',', '.');
   if (!text) return null;
+  const digits = text.replace(/\s+/g, '');
+
+  // Camião sem perfil: 12R22.5, 13 R 22.5
+  const truck = digits.match(/^(1[0-4]|[7-9])R((?:17|19|22|24)\.5)$/);
+  if (truck) {
+    const width = parseInt(truck[1], 10);
+    return {
+      width, aspect: null, rim: parseFloat(truck[2]), construction: 'R', commercial: false,
+      display: `${width}R${truck[2]}`, key: `${width}-${truck[2]}`,
+    };
+  }
 
   let m = text.match(/^(\d{3})\s*[/\s-]?\s*(\d{2})\s*(ZR|R|D|B|-)?\s*(\d{2}(?:\.\d)?)\s*(C)?$/);
+  if (!m) m = digits.match(/^(\d{3})(\d{2})(ZR|R|D|B)?(\d{2}(?:\.\d)?)(C)?$/);
   if (!m) {
-    const digits = text.replace(/\s+/g, '');
-    m = digits.match(/^(\d{3})(\d{2})(ZR|R|D|B)?(\d{2}(?:\.\d)?)(C)?$/);
+    // Compacto de 8 dígitos com jante .5: 31570225 → 315/70R22.5
+    const c = digits.match(/^(\d{3})(\d{2})(\d{2})5(C)?$/);
+    if (c) m = [c[0], c[1], c[2], undefined, `${c[3]}.5`, c[4]];
   }
   if (!m) return null;
 
   const width = parseInt(m[1], 10);
   const aspect = parseInt(m[2], 10);
   const rim = parseFloat(m[4]);
-  if (width < 100 || width > 400 || aspect < 20 || aspect > 95 || rim < 10 || rim > 26) return null;
+  if (width < 100 || width > 495 || aspect < 20 || aspect > 95 || rim < 10 || rim > 26) return null;
   const construction = m[3] && m[3] !== '-' ? m[3] : 'R';
   const commercial = Boolean(m[5]);
-  const rimStr = Number.isInteger(rim) ? String(rim) : String(rim);
+  const rimStr = String(rim);
   return {
     width,
     aspect,
