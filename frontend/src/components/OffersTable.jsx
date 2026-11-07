@@ -1,10 +1,11 @@
-import React from 'react';
-import { ArrowDown, ArrowUp, ExternalLink } from 'lucide-react';
+import React, { useState } from 'react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { FreshnessCell, MatchBadge, OfferFlags, StockBadge, WithTooltip, StaleBadge } from './badges';
 import { formatAge, formatDateTime, formatLoadSpeed, formatPrice } from '@/lib/format';
 import { supplierSearchUrl } from '@/lib/supplierLinks';
 import { cn } from '@/lib/utils';
+import { groupOffers } from '@/lib/groupOffers';
 
 export function sortOffersByPrice(offers, dir = 'asc') {
   const mult = dir === 'desc' ? -1 : 1;
@@ -42,10 +43,92 @@ function MatchCell({ offer }) {
   );
 }
 
-// Tabela de ofertas (desktop) + cartões (mobile).
-export default function OffersTable({ offers, sortDir = 'asc', onToggleSort, showMatch = false, highlightId = null, testId = 'offers-table' }) {
+const offerKey = (o) => o.id ?? `${o.supplier_id}-${o.supplier_ref}-${o.price}`;
+
+function MoreButton({ count, open, onClick }) {
+  if (!count) return null;
+  const Icon = open ? ChevronUp : ChevronDown;
+  return (
+    <button type="button" onClick={onClick} aria-expanded={open} data-testid="offers-more"
+      className="inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs whitespace-nowrap hover:bg-muted">
+      {open ? 'Ver menos' : `Ver mais (${count})`} <Icon size={12} />
+    </button>
+  );
+}
+
+// Tabela de ofertas (desktop) + cartões (mobile). Com `grouped`, uma linha por pneu (a oferta
+// mais barata) e "Ver mais" mostra os restantes fornecedores desse pneu.
+export default function OffersTable({ offers, sortDir = 'asc', onToggleSort, showMatch = false, highlightId = null, grouped = false, testId = 'offers-table' }) {
   const rows = offers || [];
   const SortIcon = sortDir === 'desc' ? ArrowDown : ArrowUp;
+  const [open, setOpen] = useState(() => new Set());
+  const groups = grouped
+    ? groupOffers(rows, sortDir)
+    : rows.map((o) => ({ key: offerKey(o), best: o, others: [] }));
+  const toggle = (k) => setOpen((prev) => {
+    const next = new Set(prev);
+    if (next.has(k)) next.delete(k); else next.add(k);
+    return next;
+  });
+
+  const desktopRow = (o, { sub = false, group = null } = {}) => (
+    <TableRow
+      key={offerKey(o)}
+      data-testid={sub ? 'offer-subrow' : 'offer-row'}
+      className={cn(o.fresh === false && 'opacity-75', sub && 'bg-muted/40 text-sm',
+        highlightId && o.id === highlightId && 'bg-emerald-50 dark:bg-emerald-500/10')}
+    >
+      <TableCell className={cn('font-medium whitespace-nowrap', sub && 'pl-8 font-normal text-muted-foreground')}>{sub ? '↳' : (o.brand || '—')}</TableCell>
+      <TableCell className="max-w-[220px]">
+        <WithTooltip content={o.description}>
+          <span className={cn('block truncate cursor-help', sub && 'text-muted-foreground')} title={o.description || undefined}>{o.model || o.description || '—'}</span>
+        </WithTooltip>
+      </TableCell>
+      <TableCell className="font-mono text-xs whitespace-nowrap">{formatLoadSpeed(o)}</TableCell>
+      <TableCell><OfferFlags offer={o} /></TableCell>
+      {showMatch && <TableCell className="max-w-[260px]"><MatchCell offer={o} /></TableCell>}
+      <TableCell className="text-sm"><SupplierCell offer={o} /></TableCell>
+      <TableCell className="text-right font-mono font-semibold whitespace-nowrap">{formatPrice(o.price, o.currency)}</TableCell>
+      <TableCell><StockBadge status={o.stock_status} qty={o.stock_qty} location={o.stock_location || o.delivery_info} /></TableCell>
+      <TableCell><FreshnessCell at={o.last_seen_at} ageHours={o.age_hours} fresh={o.fresh} /></TableCell>
+      {grouped && (
+        <TableCell className="text-right">
+          {group && <MoreButton count={group.others.length} open={open.has(group.key)} onClick={() => toggle(group.key)} />}
+        </TableCell>
+      )}
+    </TableRow>
+  );
+
+  const mobileCard = (o, { sub = false, group = null } = {}) => (
+    <div
+      key={offerKey(o)}
+      className={cn('p-3 space-y-2', sub && 'bg-muted/40 pl-6', highlightId && o.id === highlightId && 'bg-emerald-50 dark:bg-emerald-500/10')}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-semibold">{o.brand || '—'} <span className="font-normal">{o.model || ''}</span></p>
+          <p className="text-xs text-muted-foreground break-words">{o.description}</p>
+        </div>
+        <p className="font-mono font-bold text-lg whitespace-nowrap">{formatPrice(o.price, o.currency)}</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-1 text-xs">
+        <span className="font-mono">{formatLoadSpeed(o)}</span>
+        <OfferFlags offer={o} />
+      </div>
+      {showMatch && <MatchCell offer={o} />}
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+        <SupplierCell offer={o} />
+        <StockBadge status={o.stock_status} qty={o.stock_qty} location={o.stock_location || o.delivery_info} />
+      </div>
+      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span className="flex items-center gap-2">
+          {formatDateTime(o.last_seen_at)} · {o.age_hours != null ? formatAge(o.age_hours) : formatAge(o.last_seen_at)}
+          {o.fresh === false && <StaleBadge />}
+        </span>
+        {group && <MoreButton count={group.others.length} open={open.has(group.key)} onClick={() => toggle(group.key)} />}
+      </div>
+    </div>
+  );
 
   return (
     <div data-testid={testId}>
@@ -68,28 +151,15 @@ export default function OffersTable({ offers, sortDir = 'asc', onToggleSort, sho
               </TableHead>
               <TableHead>Stock</TableHead>
               <TableHead>Actualizado</TableHead>
+              {grouped && <TableHead className="text-right">Fornecedores</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((o) => (
-              <TableRow
-                key={o.id ?? `${o.supplier_id}-${o.supplier_ref}-${o.price}`}
-                className={cn(o.fresh === false && 'opacity-75', highlightId && o.id === highlightId && 'bg-emerald-50 dark:bg-emerald-500/10')}
-              >
-                <TableCell className="font-medium whitespace-nowrap">{o.brand || '—'}</TableCell>
-                <TableCell className="max-w-[220px]">
-                  <WithTooltip content={o.description}>
-                    <span className="block truncate cursor-help" title={o.description || undefined}>{o.model || o.description || '—'}</span>
-                  </WithTooltip>
-                </TableCell>
-                <TableCell className="font-mono text-xs whitespace-nowrap">{formatLoadSpeed(o)}</TableCell>
-                <TableCell><OfferFlags offer={o} /></TableCell>
-                {showMatch && <TableCell className="max-w-[260px]"><MatchCell offer={o} /></TableCell>}
-                <TableCell className="text-sm"><SupplierCell offer={o} /></TableCell>
-                <TableCell className="text-right font-mono font-semibold whitespace-nowrap">{formatPrice(o.price, o.currency)}</TableCell>
-                <TableCell><StockBadge status={o.stock_status} qty={o.stock_qty} location={o.stock_location || o.delivery_info} /></TableCell>
-                <TableCell><FreshnessCell at={o.last_seen_at} ageHours={o.age_hours} fresh={o.fresh} /></TableCell>
-              </TableRow>
+            {groups.map((g) => (
+              <React.Fragment key={g.key}>
+                {desktopRow(g.best, { group: grouped ? g : null })}
+                {open.has(g.key) && g.others.map((o) => desktopRow(o, { sub: true }))}
+              </React.Fragment>
             ))}
           </TableBody>
         </Table>
@@ -103,32 +173,11 @@ export default function OffersTable({ offers, sortDir = 'asc', onToggleSort, sho
             </button>
           </div>
         )}
-        {rows.map((o) => (
-          <div
-            key={o.id ?? `${o.supplier_id}-${o.supplier_ref}-${o.price}`}
-            className={cn('p-3 space-y-2', highlightId && o.id === highlightId && 'bg-emerald-50 dark:bg-emerald-500/10')}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="font-semibold">{o.brand || '—'} <span className="font-normal">{o.model || ''}</span></p>
-                <p className="text-xs text-muted-foreground break-words">{o.description}</p>
-              </div>
-              <p className="font-mono font-bold text-lg whitespace-nowrap">{formatPrice(o.price, o.currency)}</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-1 text-xs">
-              <span className="font-mono">{formatLoadSpeed(o)}</span>
-              <OfferFlags offer={o} />
-            </div>
-            {showMatch && <MatchCell offer={o} />}
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-              <SupplierCell offer={o} />
-              <StockBadge status={o.stock_status} qty={o.stock_qty} location={o.stock_location || o.delivery_info} />
-            </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span>{formatDateTime(o.last_seen_at)} · {o.age_hours != null ? formatAge(o.age_hours) : formatAge(o.last_seen_at)}</span>
-              {o.fresh === false && <StaleBadge />}
-            </div>
-          </div>
+        {groups.map((g) => (
+          <React.Fragment key={g.key}>
+            {mobileCard(g.best, { group: grouped ? g : null })}
+            {open.has(g.key) && g.others.map((o) => mobileCard(o, { sub: true }))}
+          </React.Fragment>
         ))}
       </div>
     </div>

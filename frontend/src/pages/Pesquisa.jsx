@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState, ErrorState, Field, NativeSelect, PageHeader, TableSkeleton } from '@/components/common';
 import { ERROR_KIND_LABELS, JOB_FINISHED, JobStatusBadge, OfferFlags, StaleBadge, StockBadge, ToneBadge } from '@/components/badges';
 import OffersTable, { sortOffersByPrice } from '@/components/OffersTable';
+import { groupOffers } from '@/lib/groupOffers';
 
 const POLL_MS = 3000;
 const REFRESH_TIMEOUT_MS = 30 * 60 * 1000;
@@ -147,7 +148,7 @@ function BestExactCard({ offer }) {
   );
 }
 
-function Section({ title, description, offers, sortDir, onToggleSort, emptyText, tone, highlightId }) {
+function Section({ title, description, offers, sortDir, onToggleSort, emptyText, tone, highlightId, grouped }) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -158,7 +159,7 @@ function Section({ title, description, offers, sortDir, onToggleSort, emptyText,
       </CardHeader>
       <CardContent className="p-0">
         {offers?.length ? (
-          <OffersTable offers={sortOffersByPrice(offers, sortDir)} sortDir={sortDir} onToggleSort={onToggleSort} showMatch highlightId={highlightId} />
+          <OffersTable offers={sortOffersByPrice(offers, sortDir)} sortDir={sortDir} onToggleSort={onToggleSort} showMatch highlightId={highlightId} grouped={grouped} />
         ) : (
           <p className="text-sm text-muted-foreground px-6 pb-6">{emptyText}</p>
         )}
@@ -174,6 +175,7 @@ const Pesquisa = () => {
   const [wanted, setWanted] = useState(EMPTY_WANTED);
   const [supplierOptions, setSupplierOptions] = useState([]);
   const [sortDir, setSortDir] = useState('asc');
+  const [grouped, setGrouped] = useState(true);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -449,6 +451,7 @@ const Pesquisa = () => {
                 <Field label="Preço mín. (€)" htmlFor="f-min"><Input id="f-min" inputMode="decimal" value={filters.min_price} onChange={(e) => setF('min_price')(e.target.value)} /></Field>
                 <Field label="Preço máx. (€)" htmlFor="f-max"><Input id="f-max" inputMode="decimal" value={filters.max_price} onChange={(e) => setF('max_price')(e.target.value)} /></Field>
                 <div className="col-span-2 md:col-span-4 xl:col-span-6 flex flex-wrap gap-x-5 gap-y-2 text-sm">
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} data-testid="group-toggle" /> Agrupar por modelo</label>
                   <label className="flex items-center gap-2"><input type="checkbox" checked={filters.in_stock} onChange={(e) => setF('in_stock')(e.target.checked)} /> Só com stock</label>
                   <label className="flex items-center gap-2"><input type="checkbox" checked={filters.show_stale} onChange={(e) => setF('show_stale')(e.target.checked)} /> Mostrar desactualizados</label>
                   {mode === 'exact' && (
@@ -486,7 +489,7 @@ const Pesquisa = () => {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">
-              {quickOffers.length} ofertas para <span className="font-mono">{quickResult.size || lastQuery?.size}</span>
+              {quickOffers.length} ofertas{grouped && quickOffers.length ? ` em ${groupOffers(quickOffers).length} pneus` : ''} para <span className="font-mono">{quickResult.size || lastQuery?.size}</span>
             </CardTitle>
             <p className="text-xs text-muted-foreground">
               Gerado {formatDateTime(quickResult.generated_at)}
@@ -495,7 +498,7 @@ const Pesquisa = () => {
           </CardHeader>
           <CardContent className="p-0">
             {quickOffers.length ? (
-              <OffersTable offers={quickOffers} sortDir={sortDir} onToggleSort={toggleSort} />
+              <OffersTable offers={quickOffers} sortDir={sortDir} onToggleSort={toggleSort} grouped={grouped} />
             ) : (
               <EmptyState
                 title="Sem ofertas para estes critérios"
@@ -524,6 +527,7 @@ const Pesquisa = () => {
             <div className="rounded-md border p-3 text-sm text-muted-foreground">Nenhuma oferta com correspondência exacta.</div>
           )}
           <Section
+            grouped={grouped}
             title="Correspondência exacta"
             tone="green"
             offers={exactFilter(exactResult.results?.exact)}
@@ -533,6 +537,7 @@ const Pesquisa = () => {
             emptyText="Sem ofertas exactas para a referência indicada."
           />
           <Section
+            grouped={grouped}
             title="Alternativas compatíveis"
             tone="blue"
             description="Pneus que servem na mesma medida mas diferem da referência pedida (ver motivos). Não são comparáveis em preço com a referência."
@@ -542,6 +547,7 @@ const Pesquisa = () => {
             emptyText="Sem alternativas compatíveis."
           />
           <Section
+            grouped={grouped}
             title="Informação insuficiente"
             tone="amber"
             description="Ofertas em que o fornecedor não indica atributos suficientes para confirmar a correspondência."
@@ -552,6 +558,7 @@ const Pesquisa = () => {
           />
           {exactResult.results?.incompatible && (
             <Section
+              grouped={grouped}
               title="Incompatíveis"
               tone="red"
               description="Não servem como substituto da referência pedida (ver motivos)."
