@@ -297,6 +297,7 @@ function route(config) {
   }
   if ((mm = m(/^\/api-keys\/(\d+)$/)) && method === 'delete') { db.apiKeys = db.apiKeys.filter((k) => k.id !== Number(mm[1])); return ok(config, { ok: true }); }
 
+  if (url === '/v1/brands') return ok(config, { brands: BRANDS.map((brand) => ({ brand, offers: 10 })) });
   if (url === '/v1/offers') {
     const sk = sizeKeyOf(params.size);
     let offers = makeOffers(sk);
