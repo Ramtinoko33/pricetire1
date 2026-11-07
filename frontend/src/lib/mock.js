@@ -273,9 +273,11 @@ function route(config) {
   if (url === '/auth/login' && method === 'post') {
     if (!body.email || !body.password) return fail(config, 400, 'Email e password obrigatórios');
     if (body.password === 'errada') return fail(config, 401, 'Email ou password incorrectos');
-    return ok(config, { token: 'mock-token', user: db.users[0] });
+    const u = db.users.find((x) => x.email === body.email) || db.users[0];
+    db.currentUser = u;
+    return ok(config, { token: 'mock-token', user: u });
   }
-  if (url === '/auth/me') return ok(config, db.users[0]);
+  if (url === '/auth/me') return ok(config, db.currentUser || db.users[0]);
   if (url === '/auth/change-password') {
     if (body.current_password === 'errada') return fail(config, 400, 'Password actual incorrecta');
     return ok(config, { ok: true });
@@ -297,6 +299,12 @@ function route(config) {
   }
   if ((mm = m(/^\/api-keys\/(\d+)$/)) && method === 'delete') { db.apiKeys = db.apiKeys.filter((k) => k.id !== Number(mm[1])); return ok(config, { ok: true }); }
 
+  if (url === '/v1/searches/recent') {
+    return ok(config, { all_users: Boolean(params?.all_users), searches: [
+      { id: 2, mode: 'quick', size_key: '2055516', size_input: '205/55R16', params: { brand: 'MARCA ALFA', in_stock: true }, results: 6, best_price: 58, created_at: new Date().toISOString(), user_email: 'demo@mock.test' },
+      { id: 1, mode: 'exact', size_key: '2056515', size_input: '205/65R15', params: { load_index: '94', speed_index: 'V' }, results: 12, best_price: 101.6, created_at: new Date(Date.now() - 3600e3).toISOString(), user_email: 'demo@mock.test' },
+    ] });
+  }
   if (url === '/v1/brands') return ok(config, { brands: BRANDS.map((brand) => ({ brand, offers: 10 })) });
   if (url === '/v1/offers') {
     const sk = sizeKeyOf(params.size);

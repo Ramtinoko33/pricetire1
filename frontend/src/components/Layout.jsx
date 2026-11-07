@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Scale, Database, FileText, Search, Moon, Sun, Menu, X, BookOpen,
-  Bell, Activity, ShieldCheck, LogOut, UserCircle, ChevronDown,
+  Bell, Activity, ShieldCheck, LogOut, UserCircle, ChevronDown, ChevronRight, Users,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import {
@@ -18,19 +18,45 @@ function readTheme() {
   }
 }
 
+// O perfil "utilizador" só vê Dashboard e Pesquisa; o resto é de administradores.
 export const MENU_ITEMS = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/precos', label: 'Pesquisa', icon: Search, aliases: ['/scraper'] },
-  { path: '/comparar', label: 'Comparar', icon: Scale },
-  { path: '/catalogo', label: 'Catálogo', icon: BookOpen },
-  { path: '/alertas', label: 'Alertas', icon: Bell },
-  { path: '/results', label: 'Resultados', icon: FileText },
-  { path: '/suppliers', label: 'Fornecedores', icon: Database },
-  { path: '/operacao', label: 'Operação', icon: Activity, aliases: ['/logs'] },
-  { path: '/admin', label: 'Administração', icon: ShieldCheck, adminOnly: true },
+  { path: '/catalogo', label: 'Catálogo', icon: BookOpen, adminOnly: true },
+  { path: '/comparar', label: 'Comparar', icon: Scale, adminOnly: true },
+  { path: '/results', label: 'Resultados', icon: FileText, adminOnly: true },
+  {
+    key: 'admin', label: 'Administração', icon: ShieldCheck, adminOnly: true,
+    children: [
+      { path: '/admin', label: 'Utilizadores', icon: Users },
+      { path: '/suppliers', label: 'Fornecedores', icon: Database },
+      { path: '/operacao', label: 'Operação', icon: Activity, aliases: ['/logs'] },
+      { path: '/alertas', label: 'Alertas', icon: Bell },
+    ],
+  },
 ];
 
+const flatItems = (list) => list.flatMap((i) => (i.children ? i.children : [i]));
+
 const EXTRA_TITLES = { '/conta': 'Conta' };
+
+function NavLink({ item, active, small = false }) {
+  const Icon = item.icon;
+  return (
+    <Link
+      to={item.path}
+      data-testid={`nav-${item.path.replace('/', '') || 'dashboard'}`}
+      className={`flex items-center gap-3 px-4 ${small ? 'py-2' : 'py-3'} rounded-sm mb-1 transition-colors ${
+        active
+          ? 'bg-slate-800 text-white border-l-2 border-blue-500'
+          : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+      }`}
+    >
+      <Icon size={small ? 16 : 18} />
+      <span className="text-sm font-medium">{item.label}</span>
+    </Link>
+  );
+}
 
 const Layout = ({ children }) => {
   const location = useLocation();
@@ -61,7 +87,10 @@ const Layout = ({ children }) => {
 
   const items = MENU_ITEMS.filter((i) => !i.adminOnly || isAdmin);
   const isActive = (item) => location.pathname === item.path || (item.aliases || []).includes(location.pathname);
-  const current = items.find(isActive);
+  const current = flatItems(items).find(isActive);
+  const adminGroupActive = items.some((i) => i.children?.some(isActive));
+  const [adminOpen, setAdminOpen] = useState(adminGroupActive);
+  useEffect(() => { if (adminGroupActive) setAdminOpen(true); }, [adminGroupActive]);
   const title = current?.label || EXTRA_TITLES[location.pathname] || 'Pneu Price Scout';
 
   const handleLogout = () => {
@@ -103,22 +132,32 @@ const Layout = ({ children }) => {
         <nav className="flex-1 p-4 overflow-y-auto" data-testid="nav-menu">
           {items.map((item) => {
             const Icon = item.icon;
-            const active = isActive(item);
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                data-testid={`nav-${item.path.replace('/', '') || 'dashboard'}`}
-                className={`flex items-center gap-3 px-4 py-3 rounded-sm mb-1 transition-colors ${
-                  active
-                    ? 'bg-slate-800 text-white border-l-2 border-blue-500'
-                    : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                }`}
-              >
-                <Icon size={18} />
-                <span className="text-sm font-medium">{item.label}</span>
-              </Link>
-            );
+            if (item.children) {
+              const Chevron = adminOpen ? ChevronDown : ChevronRight;
+              return (
+                <div key={item.key} className="mb-1">
+                  <button
+                    type="button"
+                    onClick={() => setAdminOpen((o) => !o)}
+                    aria-expanded={adminOpen}
+                    data-testid={`nav-group-${item.key}`}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-sm transition-colors ${
+                      adminGroupActive ? 'text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                    }`}
+                  >
+                    <Icon size={18} />
+                    <span className="text-sm font-medium flex-1 text-left">{item.label}</span>
+                    <Chevron size={14} />
+                  </button>
+                  {adminOpen && (
+                    <div className="ml-4 border-l border-slate-700 pl-2">
+                      {item.children.map((c) => <NavLink key={c.path} item={c} active={isActive(c)} small />)}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            return <NavLink key={item.path} item={item} active={isActive(item)} />;
           })}
         </nav>
         <div className="p-4 border-t border-slate-700 flex items-center justify-between">

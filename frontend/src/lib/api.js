@@ -63,6 +63,7 @@ export const apiKeysAPI = {
 
 export const searchAPI = {
   brands: () => api.get('/v1/brands'),
+  recent: (params) => api.get('/v1/searches/recent', { params: cleanParams(params || {}) }),
   offers: (params) => api.get('/v1/offers', { params: cleanParams({ limit: 500, ...params }) }),
   search: (body) => api.post('/v1/search', body),
   refresh: (sizes, supplier_ids) =>

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CloudDownload, Loader2, Search, Target, Trophy, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { useSearchParams } from 'react-router-dom';
 import { searchAPI, suppliersAPI } from '@/lib/api';
 import { errorMessage, formatAge, formatDateTime, formatLoadSpeed, formatPrice, parseSize } from '@/lib/format';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -184,6 +185,8 @@ const Pesquisa = () => {
   const [quickResult, setQuickResult] = useState(null);
   const [exactResult, setExactResult] = useState(null);
   const [lastQuery, setLastQuery] = useState(null);
+  const [searchParams] = useSearchParams();
+  const [autoRun, setAutoRun] = useState(false);
 
   const [refresh, setRefresh] = useState(null);
   const finishedRef = useRef(new Set());
@@ -275,6 +278,22 @@ const Pesquisa = () => {
     if (mode === 'quick') runQuick(q.size, filters);
     else runExact(q.size, wanted, filters);
   };
+
+  // Vindo do dashboard ("Últimas pesquisas"): /precos?size=205/55R16&mode=quick
+  useEffect(() => {
+    const size = searchParams.get('size');
+    if (!size) return;
+    const m = searchParams.get('mode');
+    if (m === 'quick' || m === 'exact') setMode(m);
+    setSizeInput(size);
+    setAutoRun(true);
+  }, [searchParams]);
+  useEffect(() => {
+    if (autoRun && parsed) {
+      setAutoRun(false);
+      handleSubmit();
+    }
+  });
 
   const reloadLast = useCallback(() => {
     if (!lastQuery) return;

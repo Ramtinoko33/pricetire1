@@ -33,12 +33,12 @@ export function AppRoutes() {
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/precos" element={<Pesquisa />} />
                   <Route path="/scraper" element={<Navigate to="/precos" replace />} />
-                  <Route path="/comparar" element={<Comparar />} />
-                  <Route path="/catalogo" element={<Catalogo />} />
-                  <Route path="/alertas" element={<Alertas />} />
-                  <Route path="/results" element={<Results />} />
-                  <Route path="/suppliers" element={<Suppliers />} />
-                  <Route path="/operacao" element={<Operacao />} />
+                  <Route path="/comparar" element={<RequireAdmin><Comparar /></RequireAdmin>} />
+                  <Route path="/catalogo" element={<RequireAdmin><Catalogo /></RequireAdmin>} />
+                  <Route path="/alertas" element={<RequireAdmin><Alertas /></RequireAdmin>} />
+                  <Route path="/results" element={<RequireAdmin><Results /></RequireAdmin>} />
+                  <Route path="/suppliers" element={<RequireAdmin><Suppliers /></RequireAdmin>} />
+                  <Route path="/operacao" element={<RequireAdmin><Operacao /></RequireAdmin>} />
                   <Route path="/logs" element={<Navigate to="/operacao" replace />} />
                   <Route path="/conta" element={<Conta />} />
                   <Route path="/admin" element={<RequireAdmin><Admin /></RequireAdmin>} />

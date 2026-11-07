@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { AlertTriangle, BookOpen, Clock, Database, TrendingDown, ArrowRight, CheckCircle2 } from 'lucide-react';
-import { catalogAPI, opsAPI } from '@/lib/api';
+import { Link, useNavigate } from 'react-router-dom';
+import { AlertTriangle, BookOpen, Clock, Database, TrendingDown, ArrowRight, CheckCircle2, History } from 'lucide-react';
+import { catalogAPI, opsAPI, searchAPI } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { errorMessage, formatAge, formatDateTime, formatLoadSpeed, formatPct, formatPrice, parseDate } from '@/lib/format';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ErrorState, EmptyState, KpiCard, TableSkeleton } from '@/components/common';
@@ -16,7 +17,87 @@ function latestDate(values) {
   return best;
 }
 
+const PARAM_LABELS = {
+  brand: 'Marca', model: 'Modelo', load_index: 'Carga', speed_index: 'Vel.', xl: 'XL', runflat: 'RunFlat',
+  season: 'Estação', min_price: 'Mín.', max_price: 'Máx.', in_stock: 'Só com stock', supplier_id: 'Fornecedor',
+};
+
+function paramsSummary(params) {
+  return Object.entries(params || {})
+    .map(([k, v]) => (v === true || v === 'true' ? PARAM_LABELS[k] || k : `${PARAM_LABELS[k] || k}: ${Array.isArray(v) ? v.length : v}`))
+    .join(' · ');
+}
+
+function RecentSearches({ isAdmin }) {
+  const navigate = useNavigate();
+  const [everyone, setEveryone] = useState(false);
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    searchAPI.recent({ limit: 10, all_users: everyone || undefined })
+      .then(({ data }) => { if (alive) { setRows(data?.searches || []); setError(''); } })
+      .catch((err) => { if (alive) { setRows([]); setError(errorMessage(err, 'Erro ao carregar as últimas pesquisas')); } });
+    return () => { alive = false; };
+  }, [everyone]);
+
+  const open = (r) => {
+    const q = new URLSearchParams({ size: r.size_input || r.size_key, mode: r.mode });
+    navigate(`/precos?${q.toString()}`);
+  };
+
+  return (
+    <Card data-testid="recent-searches">
+      <CardHeader className="pb-2 flex flex-row items-center justify-between gap-3 space-y-0">
+        <CardTitle className="text-base flex items-center gap-2"><History size={16} /> Últimas pesquisas</CardTitle>
+        {isAdmin && (
+          <div className="flex rounded-md border text-xs overflow-hidden">
+            <button type="button" onClick={() => setEveryone(false)} className={`px-2 py-1 ${!everyone ? 'bg-muted font-medium' : ''}`}>As minhas</button>
+            <button type="button" onClick={() => setEveryone(true)} className={`px-2 py-1 border-l ${everyone ? 'bg-muted font-medium' : ''}`}>Todos os utilizadores</button>
+          </div>
+        )}
+      </CardHeader>
+      <CardContent className="p-0">
+        {error && <ErrorState className="m-4" message={error} />}
+        {rows === null ? <TableSkeleton rows={4} cols={4} /> : rows.length === 0 ? (
+          !error && <EmptyState title="Ainda sem pesquisas" description="As pesquisas feitas na página Pesquisa aparecem aqui." />
+        ) : (
+          <div className="divide-y divide-border">
+            {rows.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => open(r)}
+                className="w-full text-left flex items-center justify-between gap-3 px-4 sm:px-6 py-2.5 hover:bg-muted/50"
+                title="Repetir esta pesquisa"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">
+                    <span className="font-mono">{r.size_input || r.size_key}</span>
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">{r.mode === 'exact' ? 'Referência exacta' : 'Rápida'}</span>
+                  </p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {formatDateTime(r.created_at)}
+                    {everyone && (r.user_name || r.user_email) ? ` · ${r.user_name || r.user_email}` : ''}
+                    {paramsSummary(r.params) ? ` · ${paramsSummary(r.params)}` : ''}
+                  </p>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <p className="text-sm font-mono font-semibold">{r.best_price != null ? formatPrice(r.best_price) : '—'}</p>
+                  <p className="text-xs text-muted-foreground">{r.results ?? 0} resultado(s)</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 const Dashboard = () => {
+  const { isAdmin } = useAuth();
   const [status, setStatus] = useState(null);
   const [comparison, setComparison] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -96,6 +177,8 @@ const Dashboard = () => {
         />
       </div>
 
+      <RecentSearches isAdmin={isAdmin} />
+
       {alarms.length > 0 && (
         <Card className="border-amber-300 dark:border-amber-500/30">
           <CardHeader className="pb-2">
@@ -108,7 +191,7 @@ const Dashboard = () => {
                 {a.since && <span className="text-xs text-muted-foreground">desde {formatDateTime(a.since)}</span>}
               </div>
             ))}
-            <Link to="/operacao" className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline mt-2">Ver operação <ArrowRight size={12} /></Link>
+            {isAdmin && <Link to="/operacao" className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline mt-2">Ver operação <ArrowRight size={12} /></Link>}
           </CardContent>
         </Card>
       )}
@@ -123,7 +206,7 @@ const Dashboard = () => {
               <EmptyState
                 title="Sem oportunidades neste momento"
                 description="Quando um fornecedor tiver uma referência do catálogo abaixo do seu preço de referência, aparece aqui."
-                action={<Link to="/catalogo" className="text-sm text-blue-600 hover:underline">Gerir catálogo</Link>}
+                action={isAdmin ? <Link to="/catalogo" className="text-sm text-blue-600 hover:underline">Gerir catálogo</Link> : undefined}
               />
             ) : (
               <div className="divide-y divide-border">
@@ -139,9 +222,9 @@ const Dashboard = () => {
                     </div>
                   </div>
                 ))}
-                <div className="px-4 sm:px-6 py-3">
+                {isAdmin && <div className="px-4 sm:px-6 py-3">
                   <Link to="/catalogo" className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline">Ver comparação completa <ArrowRight size={12} /></Link>
-                </div>
+                </div>}
               </div>
             )}
           </CardContent>
@@ -151,7 +234,7 @@ const Dashboard = () => {
           <CardHeader className="pb-2"><CardTitle className="text-base">Fornecedores</CardTitle></CardHeader>
           <CardContent className="p-0">
             {loading ? <TableSkeleton rows={4} cols={3} /> : suppliers.length === 0 ? (
-              <EmptyState title="Sem fornecedores" action={<Link to="/suppliers" className="text-sm text-blue-600 hover:underline">Configurar fornecedores</Link>} />
+              <EmptyState title="Sem fornecedores" action={isAdmin ? <Link to="/suppliers" className="text-sm text-blue-600 hover:underline">Configurar fornecedores</Link> : undefined} />
             ) : (
               <div className="divide-y divide-border">
                 {suppliers.map((s) => {
