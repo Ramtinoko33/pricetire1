@@ -128,6 +128,14 @@ export const alertsAPI = {
   getBrandCategories: () => api.get('/brand-categories'),
 };
 
+export const monitorAPI = {
+  categories: () => api.get('/monitor/categories'),
+  updateCategory: (id, data) => api.put(`/monitor/categories/${encodeURIComponent(id)}`, data),
+  addSizes: (id, sizes) => api.post(`/monitor/categories/${encodeURIComponent(id)}/sizes`, { sizes }),
+  deleteSize: (id) => api.delete(`/monitor/sizes/${encodeURIComponent(id)}`),
+  runNow: (id) => api.post(`/monitor/categories/${encodeURIComponent(id)}/run-now`),
+};
+
 export const brandsAPI = {
   overview: () => api.get('/brands/overview'),
   setTier: (brand, category, note) => api.put(`/brand-categories/${encodeURIComponent(brand)}`, { category: category || null, note: note || undefined }),

@@ -1,8 +1,9 @@
+import { Link } from 'react-router-dom';
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, Ban, Clock, Loader2, Plus, RefreshCw, RotateCcw, Trash2, XCircle, CheckCircle2, PlayCircle, CalendarClock } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { toast } from 'sonner';
-import { opsAPI, scheduledTargetsAPI, suppliersAPI } from '@/lib/api';
+import { opsAPI, suppliersAPI } from '@/lib/api';
 import { errorMessage, formatAge, formatDateTime, parseSize } from '@/lib/format';
 import { useInterval } from '@/hooks/useInterval';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -126,101 +127,6 @@ function RunsHistory({ suppliers }) {
           </div>
         ))}
       </CardContent>
-    </Card>
-  );
-}
-
-function ScheduledTargets() {
-  const [targets, setTargets] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [input, setInput] = useState('');
-  const [adding, setAdding] = useState(false);
-  const [toDelete, setToDelete] = useState(null);
-
-  const load = useCallback(async () => {
-    setError('');
-    try {
-      const { data } = await scheduledTargetsAPI.getAll();
-      setTargets(asList(data, 'targets'));
-    } catch (err) {
-      setError(errorMessage(err, 'Erro ao carregar medidas monitorizadas'));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const parsed = parseSize(input);
-
-  const add = async (e) => {
-    e.preventDefault();
-    if (!parsed) { toast.error('Medida inválida'); return; }
-    setAdding(true);
-    try {
-      await scheduledTargetsAPI.create({ size: parsed.display });
-      setInput('');
-      toast.success(`Medida ${parsed.display} adicionada`);
-      load();
-    } catch (err) {
-      toast.error(errorMessage(err, 'Erro ao adicionar medida'));
-    } finally {
-      setAdding(false);
-    }
-  };
-
-  const remove = async () => {
-    const t = toDelete;
-    setToDelete(null);
-    try {
-      await scheduledTargetsAPI.delete(t.id ?? t.size_key ?? t.size);
-      toast.success('Medida removida');
-      load();
-    } catch (err) {
-      toast.error(errorMessage(err, 'Erro ao remover medida'));
-    }
-  };
-
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base">Medidas monitorizadas</CardTitle>
-        <p className="text-xs text-muted-foreground">Recolhidas nos horários do agendador, para além das medidas das referências activas do catálogo.</p>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <form onSubmit={add} className="flex flex-col sm:flex-row gap-2">
-          <Input placeholder="205/55R16" value={input} onChange={(e) => setInput(e.target.value)} className="sm:w-48" aria-label="Medida a monitorizar" />
-          <Button type="submit" variant="outline" disabled={adding || !parsed}>
-            {adding ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Plus size={14} className="mr-2" />}
-            Adicionar{parsed ? ` ${parsed.display}` : ''}
-          </Button>
-        </form>
-        {error && <ErrorState message={error} onRetry={load} />}
-        {loading ? <TableSkeleton rows={2} cols={3} /> : targets.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nenhuma medida adicional.</p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {targets.map((t) => (
-              <span key={t.id ?? t.size_key ?? t.size} className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-sm font-mono">
-                {t.size_display || t.size || t.size_key}
-                <button onClick={() => setToDelete(t)} className="text-muted-foreground hover:text-red-600" aria-label={`Remover ${t.size || t.size_key}`}>
-                  <Trash2 size={12} />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-      </CardContent>
-      <ConfirmDialog
-        open={Boolean(toDelete)}
-        onOpenChange={(v) => !v && setToDelete(null)}
-        title="Deixar de monitorizar esta medida?"
-        description={toDelete ? `${toDelete.size_display || toDelete.size || toDelete.size_key} deixa de ser recolhida automaticamente (excepto se estiver no catálogo).` : ''}
-        confirmLabel="Remover"
-        destructive
-        onConfirm={remove}
-      />
     </Card>
   );
 }
@@ -369,9 +275,12 @@ const Operacao = () => {
                 <div><span className="text-muted-foreground">Fuso horário: </span>{sched.timezone || '—'}</div>
                 <div><span className="text-muted-foreground">Horários: </span>{sched.times?.length ? sched.times.join(' · ') : '—'}</div>
                 <div>
-                  <span className="text-muted-foreground">Próximas execuções: </span>
-                  {sched.next_runs?.length ? sched.next_runs.map((r) => formatDateTime(r)).join(' · ') : '—'}
+                  <span className="text-muted-foreground">Próximas recolhas: </span>
+                  {sched.next_categories?.length
+                    ? sched.next_categories.map((r) => `${formatDateTime(r.at)} ${r.category}`).join(' · ')
+                    : (sched.next_runs?.length ? sched.next_runs.map((r) => formatDateTime(r)).join(' · ') : '—')}
                 </div>
+                <Link to="/monitorizacao" className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline">Medidas e horários por categoria →</Link>
                 <div><span className="text-muted-foreground">Último início: </span>{formatDateTime(sched.last_started_at)}{sched.last_started_at && <span className="text-muted-foreground"> ({formatAge(sched.last_started_at)})</span>}</div>
                 <div><span className="text-muted-foreground">Último fim: </span>{sched.last_finished_at ? formatDateTime(sched.last_finished_at) : sched.last_started_at ? 'em curso…' : '—'}</div>
               </>
@@ -529,13 +438,12 @@ const Operacao = () => {
 
       <RunsHistory suppliers={suppliers} />
 
-      <ScheduledTargets />
 
       <ConfirmDialog
         open={confirmRun}
         onOpenChange={setConfirmRun}
         title="Correr a recolha agendada agora?"
-        description="Enfileira a recolha de todas as medidas monitorizadas em todos os fornecedores activos. Pode demorar vários minutos e ocupar os workers."
+        description="Enfileira a recolha de todas as medidas monitorizadas (todas as categorias) em todos os fornecedores activos. Pode demorar horas e ocupar os workers; para uma só categoria use Medidas monitorizadas."
         confirmLabel="Correr agora"
         onConfirm={runScheduledNow}
       />

@@ -19,6 +19,7 @@ const Operacao = lazy(() => import('./pages/Operacao'));
 const Conta = lazy(() => import('./pages/Conta'));
 const Admin = lazy(() => import('./pages/Admin'));
 const Marcas = lazy(() => import('./pages/Marcas'));
+const Monitorizacao = lazy(() => import('./pages/Monitorizacao'));
 
 export function AppRoutes() {
   return (
@@ -44,6 +45,7 @@ export function AppRoutes() {
                   <Route path="/conta" element={<Conta />} />
                   <Route path="/admin" element={<RequireAdmin><Admin /></RequireAdmin>} />
                   <Route path="/marcas" element={<RequireAdmin><Marcas /></RequireAdmin>} />
+                  <Route path="/monitorizacao" element={<RequireAdmin><Monitorizacao /></RequireAdmin>} />
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
               </Suspense>
