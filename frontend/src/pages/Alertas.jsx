@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Loader2, Mail, Pencil, Play, Plus, Power, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { TIER_OPTIONS } from '@/lib/tiers';
 import { alertsAPI, catalogAPI } from '@/lib/api';
 import { errorMessage, formatDateTime, formatPct, formatPrice } from '@/lib/format';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -419,7 +420,8 @@ function BrandCategoriesTab() {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Categorias de marca</CardTitle>
+        <CardTitle className="text-base">Tiers de marca</CardTitle>
+        <p className="text-xs text-muted-foreground">Usados na vista comparativa da Pesquisa (Premium, Quality, Budget) e nos alertas por categoria.</p>
         <p className="text-xs text-muted-foreground">Usadas pelas regras de âmbito "Categoria" (ex.: Premium, Qualidade/preço, Económica).</p>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -431,7 +433,11 @@ function BrandCategoriesTab() {
               {rows.map((r, i) => (
                 <div key={i} className="flex gap-2">
                   <Input placeholder="Marca" value={r.brand} onChange={(e) => update(i, 'brand', e.target.value)} aria-label="Marca" />
-                  <Input placeholder="Categoria" value={r.category} onChange={(e) => update(i, 'category', e.target.value)} aria-label="Categoria" />
+                  <NativeSelect value={r.category} onChange={(e) => update(i, 'category', e.target.value)} aria-label="Tier">
+                    <option value="">Tier…</option>
+                    {TIER_OPTIONS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    {r.category && !TIER_OPTIONS.some((t) => t.value === r.category) && <option value={r.category}>{r.category}</option>}
+                  </NativeSelect>
                   <Button variant="outline" size="icon" onClick={() => del(i)} aria-label="Remover linha"><Trash2 size={14} className="text-red-600" /></Button>
                 </div>
               ))}

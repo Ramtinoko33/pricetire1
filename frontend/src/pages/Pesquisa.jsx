@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CloudDownload, Loader2, Search, Target, Trophy, X } from 'lucide-react';
+import { CloudDownload, Columns3, List, Loader2, Search, Target, Trophy, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useSearchParams } from 'react-router-dom';
-import { searchAPI, suppliersAPI } from '@/lib/api';
+import { alertsAPI, searchAPI, suppliersAPI } from '@/lib/api';
+import TierColumns from '@/components/TierColumns';
+import { buildTierMap } from '@/lib/tiers';
 import { errorMessage, formatAge, formatDateTime, formatLoadSpeed, formatPrice, parseSize } from '@/lib/format';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -177,6 +179,14 @@ const Pesquisa = () => {
   const [wanted, setWanted] = useState(EMPTY_WANTED);
   const [supplierOptions, setSupplierOptions] = useState([]);
   const [brandOptions, setBrandOptions] = useState([]);
+  const [tierMap, setTierMap] = useState(() => new Map());
+  const [layout, setLayout] = useState(() => {
+    try { return window.localStorage.getItem('pesquisa-layout') === 'tiers' ? 'tiers' : 'list'; } catch { return 'list'; }
+  });
+  const changeLayout = (v) => {
+    setLayout(v);
+    try { window.localStorage.setItem('pesquisa-layout', v); } catch { /* storage indisponível */ }
+  };
   const [sortDir, setSortDir] = useState('asc');
   const [grouped, setGrouped] = useState(true);
 
@@ -200,6 +210,9 @@ const Pesquisa = () => {
     suppliersAPI.getAll()
       .then(({ data }) => { if (mountedRef.current && Array.isArray(data)) setSupplierOptions(data); })
       .catch(() => { /* filtro de fornecedores usa os da resposta */ });
+    alertsAPI.getBrandCategories()
+      .then(({ data }) => { if (mountedRef.current) setTierMap(buildTierMap(Array.isArray(data) ? data : [])); })
+      .catch(() => { /* sem tiers: tudo fica em "Sem classificação" */ });
     searchAPI.brands()
       .then(({ data }) => { if (mountedRef.current) setBrandOptions((data?.brands || []).map((b) => b.brand)); })
       .catch(() => { /* sem sugestões, o campo continua livre */ });
@@ -526,7 +539,8 @@ const Pesquisa = () => {
 
       {!loading && mode === 'quick' && quickResult && (
         <Card>
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-2 flex flex-row items-start justify-between gap-3 space-y-0">
+            <div className="min-w-0">
             <CardTitle className="text-base">
               {quickOffers.length} ofertas{grouped && quickOffers.length ? ` em ${groupOffers(quickOffers).length} pneus` : ''} para <span className="font-mono">{quickResult.size || lastQuery?.size}</span>
             </CardTitle>
@@ -534,10 +548,23 @@ const Pesquisa = () => {
               Gerado {formatDateTime(quickResult.generated_at)}
               {hiddenStale > 0 && ` · ${hiddenStale} ofertas desactualizadas ocultas`}
             </p>
+            </div>
+            <div className="flex rounded-md border text-xs overflow-hidden flex-shrink-0" role="group" aria-label="Vista dos resultados">
+              <button type="button" onClick={() => changeLayout('list')} aria-pressed={layout === 'list'} data-testid="layout-list"
+                className={`inline-flex items-center gap-1 px-2 py-1 ${layout === 'list' ? 'bg-muted font-medium' : ''}`}>
+                <List size={14} /> Lista
+              </button>
+              <button type="button" onClick={() => changeLayout('tiers')} aria-pressed={layout === 'tiers'} data-testid="layout-tiers"
+                className={`inline-flex items-center gap-1 px-2 py-1 border-l ${layout === 'tiers' ? 'bg-muted font-medium' : ''}`}>
+                <Columns3 size={14} /> Comparativa
+              </button>
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             {quickOffers.length ? (
-              <OffersTable offers={quickOffers} sortDir={sortDir} onToggleSort={toggleSort} grouped={grouped} />
+              layout === 'tiers'
+                ? <TierColumns offers={quickOffers} tierMap={tierMap} sortDir={sortDir} grouped={grouped} />
+                : <OffersTable offers={quickOffers} sortDir={sortDir} onToggleSort={toggleSort} grouped={grouped} />
             ) : (
               <EmptyState
                 title="Sem ofertas para estes critérios"
