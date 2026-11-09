@@ -62,6 +62,7 @@ export function StockBadge({ status, qty, location }) {
   const title = location || undefined;
   if (status === 'available') return <ToneBadge tone="green" title={title}>Disponível{extra}</ToneBadge>;
   if (status === 'unavailable') return <ToneBadge tone="red" title={title}>Indisponível{extra}</ToneBadge>;
+  if (location === 'Sob consulta') return <ToneBadge tone="amber" title="O fornecedor não divulga a quantidade no portal">Sob consulta</ToneBadge>;
   return <ToneBadge tone="slate" title={title}>Desconhecido{extra}</ToneBadge>;
 }
 
