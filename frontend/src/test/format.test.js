@@ -62,7 +62,7 @@ describe('parseSize camião', () => {
   });
   it('aceita larguras de camião e medidas sem perfil', () => {
     expect(parseSize('445/45R19.5')?.display).toBe('445/45R19.5');
-    expect(parseSize('12R22.5')).toMatchObject({ display: '12R22.5', key: '12-22.5', aspect: null });
+    expect(parseSize('12R22.5')).toMatchObject({ display: '12R22.5', key: '12R22.5', aspect: null });
   });
   it('mantém ligeiros', () => {
     expect(parseSize('2055516')?.display).toBe('205/55R16');
@@ -76,5 +76,21 @@ describe('parseSize polegadas', () => {
   it('não troca medidas métricas nem de camião', () => {
     expect(parseSize('2055516')?.display).toBe('205/55R16');
     expect(parseSize('31570225')?.display).toBe('315/70R22.5');
+  });
+});
+
+describe('parseSize agrícola, empilhador e OTR', () => {
+  it.each([
+    ['11.2R24', '11.2R24'], ['7.50-20', '7.5R20'], ['12.00R20', '12R20'], ['16.9-28', '16.9R28'],
+    ['17.5R25', '17.5R25'], ['10-16.5', '10R16.5'], ['18x7-8', '18X7-8'], ['28x9-15', '28X9-15'],
+    ['250-15', '250-15'], ['10.5/80-18', '10.5/80R18'], ['16/70-20', '16/70R20'],
+    ['600/65R34', '6006534'], ['440/80R28', '4408028'], ['185R14C', '185-14C'],
+  ])('%s → %s', (input, key) => {
+    expect(parseSize(input)?.key).toBe(key);
+  });
+  it('mantém jipe e ligeiros', () => {
+    expect(parseSize('37x12.5-17')?.key).toBe('37X12.50R17');
+    expect(parseSize('205/55-16')?.display).toBe('205/55R16');
+    expect(parseSize('400/70-20')?.display).toBe('400/70-20');
   });
 });

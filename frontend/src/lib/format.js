@@ -73,9 +73,24 @@ function flotationSize(d, w, rim) {
   };
 }
 
+const num = (v) => (Number.isInteger(v) ? String(v) : String(parseFloat(v.toFixed(2))));
+
+// Empilhador: 18x7-8 · 28x9-15 (largura inteira, diagonal)
+function forkliftSize(d, w, rim) {
+  if (!(d >= 10 && d <= 40 && Number.isInteger(w) && w >= 4 && w <= 20 && rim >= 8 && rim <= 24)) return null;
+  return {
+    width: d, aspect: w * 100, rim, construction: 'D', commercial: false, flotation: true,
+    display: `${d}x${w}-${num(rim)}`, key: `${d}X${w}-${num(rim)}`,
+  };
+}
+
 function parseFlotation(text, digits) {
-  const m = digits.match(/^(?:LT)?(\d{2})[X×](\d{1,2}(?:\.\d{1,2})?)(?:LT)?(?:ZR|R|-)?(\d{2}(?:\.5)?)(?:LT)?$/);
-  if (m) return flotationSize(parseInt(m[1], 10), parseFloat(m[2]), parseFloat(m[3]));
+  const m = digits.match(/^(?:LT)?(\d{2})[X×](\d{1,2}(?:\.\d{1,2})?)(?:LT)?(ZR|R|-)?(\d{1,2}(?:\.5)?)(?:LT)?$/);
+  if (m) {
+    const w = parseFloat(m[2]);
+    if (Number.isInteger(w)) return forkliftSize(parseInt(m[1], 10), w, parseFloat(m[4]));
+    return flotationSize(parseInt(m[1], 10), w, parseFloat(m[4]));
+  }
   const c = digits.match(/^(\d{2})(\d{2,4})(\d{2})$/);
   if (!c) return null;
   const wd = c[2];
@@ -93,14 +108,51 @@ export function parseSize(input) {
   const flot = parseFlotation(text, digits);
   if (flot) return flot;
 
-  // Camião sem perfil: 12R22.5, 13 R 22.5
-  const truck = digits.match(/^(1[0-4]|[7-9])R((?:17|19|22|24)\.5)$/);
-  if (truck) {
-    const width = parseInt(truck[1], 10);
-    return {
-      width, aspect: null, rim: parseFloat(truck[2]), construction: 'R', commercial: false,
-      display: `${width}R${truck[2]}`, key: `${width}-${truck[2]}`,
-    };
+  // Largura em polegadas, sem perfil (camião, agrícola, OTR, empilhador):
+  // 12R22.5 · 11.2R24 · 16.9-28 · 7.50-20 · 12.00R20 · 10-16.5
+  const inch = digits.match(/^(\d{1,2}(?:\.\d{1,2})?)(R|-)(\d{1,2}(?:\.5)?)$/);
+  if (inch) {
+    const w = parseFloat(inch[1]);
+    const rim = parseFloat(inch[3]);
+    if (w >= 4 && w <= 40 && rim >= 8 && rim <= 54) {
+      return {
+        width: w, aspect: null, rim, construction: inch[2] === '-' ? 'D' : 'R', commercial: false,
+        display: `${inch[1]}${inch[2]}${inch[3]}`, key: `${num(w)}R${num(rim)}`,
+      };
+    }
+  }
+
+  // Métrica com largura decimal ou em polegadas: 10.5/80-18 · 16/70-20
+  const dec = digits.match(/^(\d{1,2}(?:\.\d)?)\/(\d{2})(R|-)(\d{2}(?:\.5)?)$/);
+  if (dec) {
+    const w = parseFloat(dec[1]);
+    const a = parseInt(dec[2], 10);
+    const rim = parseFloat(dec[4]);
+    if (w >= 4 && w <= 40 && a >= 25 && a <= 95 && rim >= 10 && rim <= 54) {
+      return {
+        width: w, aspect: a, rim, construction: dec[3] === '-' ? 'D' : 'R', commercial: false,
+        display: `${dec[1]}/${a}${dec[3]}${dec[4]}`, key: `${num(w)}/${a}R${num(rim)}`,
+      };
+    }
+  }
+
+  // Sem perfil (195R14C) e industrial (250-15)
+  const noAsp = digits.match(/^(\d{3})R(\d{2})(C)?$/);
+  if (noAsp) {
+    const width = parseInt(noAsp[1], 10);
+    const rim = parseInt(noAsp[2], 10);
+    if (width >= 125 && width <= 235 && width % 5 === 0 && rim >= 10 && rim <= 24) {
+      const c = noAsp[3] ? 'C' : '';
+      return { width, aspect: null, rim, construction: 'R', commercial: Boolean(c), display: `${width}R${rim}${c}`, key: `${width}-${rim}${c}` };
+    }
+  }
+  const ind = digits.match(/^(\d{3})-(\d{1,2})$/);
+  if (ind) {
+    const width = parseInt(ind[1], 10);
+    const rim = parseInt(ind[2], 10);
+    if (width >= 140 && width <= 355 && width % 5 === 0 && rim >= 8 && rim <= 20) {
+      return { width, aspect: null, rim, construction: 'D', commercial: false, display: `${width}-${rim}`, key: `${width}-${rim}` };
+    }
   }
 
   let m = text.match(/^(\d{3})\s*[/\s-]?\s*(\d{2})\s*(ZR|R|D|B|-)?\s*(\d{2}(?:\.\d)?)\s*(C)?$/);
@@ -115,7 +167,9 @@ export function parseSize(input) {
   const width = parseInt(m[1], 10);
   const aspect = parseInt(m[2], 10);
   const rim = parseFloat(m[4]);
-  if (width < 100 || width > 495 || aspect < 20 || aspect > 95 || rim < 10 || rim > 26) return null;
+  if (width < 100 || width > 900 || aspect < 20 || aspect > 95 || rim < 10 || rim > 54) return null;
+  if (rim > 26 && aspect < 60) return null;   // jantes grandes só com perfil alto (agrícolas)
+  const bias = m[3] === '-' && width >= 300;   // agrícola/industrial: 400/70-20 é diagonal
   const construction = m[3] && m[3] !== '-' ? m[3] : 'R';
   const commercial = Boolean(m[5]);
   const rimStr = String(rim);
@@ -125,7 +179,7 @@ export function parseSize(input) {
     rim,
     construction,
     commercial,
-    display: `${width}/${aspect}${construction}${rimStr}${commercial ? 'C' : ''}`,
+    display: `${width}/${aspect}${bias ? '-' : construction}${rimStr}${commercial ? 'C' : ''}`,
     key: `${width}${aspect}${rimStr}${commercial ? 'C' : ''}`,
   };
 }
