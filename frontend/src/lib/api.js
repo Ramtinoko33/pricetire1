@@ -126,7 +126,11 @@ export const alertsAPI = {
   testEmail: (email_to) => api.post('/alerts/test-email', { email_to }),
   evaluate: () => api.post('/alerts/evaluate'),
   getBrandCategories: () => api.get('/brand-categories'),
-  putBrandCategories: (list) => api.put('/brand-categories', list),
+};
+
+export const brandsAPI = {
+  overview: () => api.get('/brands/overview'),
+  setTier: (brand, category, note) => api.put(`/brand-categories/${encodeURIComponent(brand)}`, { category: category || null, note: note || undefined }),
 };
 
 export const jobsAPI = {

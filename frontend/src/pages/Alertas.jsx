@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Loader2, Mail, Pencil, Play, Plus, Power, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { TIER_OPTIONS } from '@/lib/tiers';
 import { alertsAPI, catalogAPI } from '@/lib/api';
 import { errorMessage, formatDateTime, formatPct, formatPrice } from '@/lib/format';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -374,88 +373,6 @@ function EventsTab() {
   );
 }
 
-function BrandCategoriesTab() {
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const { data } = await alertsAPI.getBrandCategories();
-      setRows(Array.isArray(data) ? data.map((r) => ({ brand: r.brand || '', category: r.category || '' })) : []);
-      setDirty(false);
-    } catch (err) {
-      setError(errorMessage(err, 'Erro ao carregar categorias'));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const update = (i, k, v) => { setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, [k]: v } : r))); setDirty(true); };
-  const add = () => { setRows((rs) => [...rs, { brand: '', category: '' }]); setDirty(true); };
-  const del = (i) => { setRows((rs) => rs.filter((_, idx) => idx !== i)); setDirty(true); };
-
-  const save = async () => {
-    const clean = rows
-      .map((r) => ({ brand: r.brand.trim().toUpperCase(), category: r.category.trim() }))
-      .filter((r) => r.brand && r.category);
-    setSaving(true);
-    try {
-      await alertsAPI.putBrandCategories(clean);
-      toast.success('Categorias guardadas');
-      load();
-    } catch (err) {
-      toast.error(errorMessage(err, 'Erro ao guardar categorias'));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base">Tiers de marca</CardTitle>
-        <p className="text-xs text-muted-foreground">Usados na vista comparativa da Pesquisa (Premium, Quality, Budget) e nos alertas por categoria.</p>
-        <p className="text-xs text-muted-foreground">Usadas pelas regras de âmbito "Categoria" (ex.: Premium, Qualidade/preço, Económica).</p>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {error && <ErrorState message={error} onRetry={load} />}
-        {loading ? <TableSkeleton rows={4} cols={2} /> : (
-          <>
-            {rows.length === 0 && <p className="text-sm text-muted-foreground">Sem categorias definidas.</p>}
-            <div className="space-y-2">
-              {rows.map((r, i) => (
-                <div key={i} className="flex gap-2">
-                  <Input placeholder="Marca" value={r.brand} onChange={(e) => update(i, 'brand', e.target.value)} aria-label="Marca" />
-                  <NativeSelect value={r.category} onChange={(e) => update(i, 'category', e.target.value)} aria-label="Tier">
-                    <option value="">Tier…</option>
-                    {TIER_OPTIONS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                    {r.category && !TIER_OPTIONS.some((t) => t.value === r.category) && <option value={r.category}>{r.category}</option>}
-                  </NativeSelect>
-                  <Button variant="outline" size="icon" onClick={() => del(i)} aria-label="Remover linha"><Trash2 size={14} className="text-red-600" /></Button>
-                </div>
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={add}><Plus size={16} className="mr-2" /> Adicionar linha</Button>
-              <Button onClick={save} disabled={saving || !dirty}>
-                {saving ? <Loader2 size={16} className="mr-2 animate-spin" /> : <Save size={16} className="mr-2" />}
-                Guardar categorias
-              </Button>
-            </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 const Alertas = () => (
   <div className="space-y-6" data-testid="alertas-page">
     <PageHeader title="Alertas" description="Aviso por e-mail quando um fornecedor tem uma referência do catálogo abaixo do seu preço de referência." />
@@ -463,11 +380,9 @@ const Alertas = () => (
       <TabsList className="flex-wrap h-auto">
         <TabsTrigger value="events">Eventos</TabsTrigger>
         <TabsTrigger value="rules">Regras</TabsTrigger>
-        <TabsTrigger value="categories">Categorias de marca</TabsTrigger>
       </TabsList>
       <TabsContent value="events" className="mt-4"><EventsTab /></TabsContent>
       <TabsContent value="rules" className="mt-4"><RulesTab /></TabsContent>
-      <TabsContent value="categories" className="mt-4"><BrandCategoriesTab /></TabsContent>
     </Tabs>
   </div>
 );

@@ -464,7 +464,17 @@ function route(config) {
   if (url === '/alerts/test-email') return ok(config, { ok: true });
   if (url === '/alerts/evaluate') return ok(config, { created: 0 });
   if (url === '/brand-categories' && method === 'get') return ok(config, db.brandCategories);
-  if (url === '/brand-categories' && method === 'put') { db.brandCategories = Array.isArray(body) ? body : []; return ok(config, db.brandCategories); }
+  if (url === '/brands/overview') {
+    const cats = new Map((db.brandCategories || []).map((c) => [c.brand, c]));
+    return ok(config, BRANDS.map((brand) => ({ brand, category: cats.get(brand)?.category || null, note: cats.get(brand)?.note || null,
+      source: null, updated_at: cats.get(brand)?.updated_at || null, updated_by: cats.get(brand)?.updated_by || null, offers: 10, suppliers: 5 })));
+  }
+  if ((mm = m(/^\/brand-categories\/(.+)$/)) && method === 'put') {
+    const brand = decodeURIComponent(mm[1]).toUpperCase();
+    db.brandCategories = (db.brandCategories || []).filter((c) => c.brand !== brand);
+    if (body.category) db.brandCategories.push({ brand, category: body.category, updated_at: new Date().toISOString(), updated_by: 'admin@exemplo.test' });
+    return ok(config, { brand, category: body.category || null, updated_at: new Date().toISOString(), updated_by: 'admin@exemplo.test' });
+  }
 
   if (url === '/jobs' && method === 'get') return ok(config, db.excelJobs);
   if (url === '/jobs/upload') {

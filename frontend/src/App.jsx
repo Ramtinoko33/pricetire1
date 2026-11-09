@@ -18,6 +18,7 @@ const Alertas = lazy(() => import('./pages/Alertas'));
 const Operacao = lazy(() => import('./pages/Operacao'));
 const Conta = lazy(() => import('./pages/Conta'));
 const Admin = lazy(() => import('./pages/Admin'));
+const Marcas = lazy(() => import('./pages/Marcas'));
 
 export function AppRoutes() {
   return (
@@ -42,6 +43,7 @@ export function AppRoutes() {
                   <Route path="/logs" element={<Navigate to="/operacao" replace />} />
                   <Route path="/conta" element={<Conta />} />
                   <Route path="/admin" element={<RequireAdmin><Admin /></RequireAdmin>} />
+                  <Route path="/marcas" element={<RequireAdmin><Marcas /></RequireAdmin>} />
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
               </Suspense>
