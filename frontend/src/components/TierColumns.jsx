@@ -5,11 +5,12 @@ import { formatAge, formatLoadSpeed, formatPrice } from '@/lib/format';
 import { groupOffers } from '@/lib/groupOffers';
 import { splitByTier } from '@/lib/tiers';
 import { cn } from '@/lib/utils';
+import SupplierLink from './SupplierLink';
 
 function OtherRow({ o }) {
   return (
     <div className="flex items-center justify-between gap-2 py-1 text-xs" data-testid="tier-other">
-      <span className="truncate">{o.supplier_name}</span>
+      <SupplierLink offer={o} className="truncate" />
       <span className="flex items-center gap-2 flex-shrink-0">
         <StockBadge status={o.stock_status} qty={o.stock_qty} location={o.stock_location || o.delivery_info} />
         <span className="font-mono font-semibold">{formatPrice(o.price, o.currency)}</span>
@@ -23,7 +24,7 @@ function TyreCard({ group }) {
   const o = group.best;
   const Icon = open ? ChevronUp : ChevronDown;
   return (
-    <div className={cn('rounded-md border bg-card p-3 space-y-1.5', o.fresh === false && 'opacity-75')} data-testid="tier-card">
+    <div className={cn('rounded-md border bg-card p-3 space-y-1.5 transition-shadow', o.fresh === false && !open && 'opacity-75', open && 'ring-2 ring-indigo-500/70 shadow-md')} data-testid="tier-card">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-semibold truncate" title={o.description || undefined}>{o.brand} <span className="font-normal">{o.model}</span></p>
@@ -35,7 +36,7 @@ function TyreCard({ group }) {
         <p className="font-mono font-bold whitespace-nowrap">{formatPrice(o.price, o.currency)}</p>
       </div>
       <div className="flex items-center justify-between gap-2 text-xs">
-        <span className="truncate">{o.supplier_name}</span>
+        <SupplierLink offer={o} className="truncate" />
         <StockBadge status={o.stock_status} qty={o.stock_qty} location={o.stock_location || o.delivery_info} />
       </div>
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -48,7 +49,8 @@ function TyreCard({ group }) {
         )}
       </div>
       {open && (
-        <div className="border-t pt-1 divide-y divide-border">
+        <div className="-mx-3 -mb-3 mt-2 px-3 pb-2 pt-1 rounded-b-md bg-indigo-100/70 dark:bg-indigo-500/15 border-t border-indigo-200 dark:border-indigo-500/30 divide-y divide-indigo-100 dark:divide-indigo-500/15">
+          <p className="text-[10px] uppercase tracking-wide text-indigo-700/80 dark:text-indigo-300/80 pt-1">Outros fornecedores</p>
           {group.others.map((x) => <OtherRow key={x.id ?? `${x.supplier_id}-${x.price}`} o={x} />)}
         </div>
       )}

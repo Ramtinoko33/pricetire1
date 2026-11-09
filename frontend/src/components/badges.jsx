@@ -57,7 +57,8 @@ export function MatchBadge({ matchClass, details, reasons }) {
 }
 
 export function StockBadge({ status, qty, location }) {
-  const extra = qty !== null && qty !== undefined ? ` (${qty})` : '';
+  const upTo = typeof location === 'string' ? location.match(/^até \d+/) : null;
+  const extra = qty !== null && qty !== undefined ? ` (${qty})` : (upTo ? ` (${upTo[0]})` : '');
   const title = location || undefined;
   if (status === 'available') return <ToneBadge tone="green" title={title}>Disponível{extra}</ToneBadge>;
   if (status === 'unavailable') return <ToneBadge tone="red" title={title}>Indisponível{extra}</ToneBadge>;

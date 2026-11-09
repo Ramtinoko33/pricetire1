@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { FreshnessCell, MatchBadge, OfferFlags, StockBadge, WithTooltip, StaleBadge } from './badges';
 import { formatAge, formatDateTime, formatLoadSpeed, formatPrice } from '@/lib/format';
-import { supplierSearchUrl } from '@/lib/supplierLinks';
+import SupplierLink from './SupplierLink';
 import { cn } from '@/lib/utils';
 import { groupOffers } from '@/lib/groupOffers';
 
@@ -20,13 +20,7 @@ export function sortOffersByPrice(offers, dir = 'asc') {
 }
 
 function SupplierCell({ offer }) {
-  const url = supplierSearchUrl(offer.supplier_name, offer.size_key);
-  if (!url) return <span className="whitespace-nowrap">{offer.supplier_name || '—'}</span>;
-  return (
-    <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 hover:underline whitespace-nowrap" title="Abrir o portal do fornecedor">
-      {offer.supplier_name} <ExternalLink size={12} />
-    </a>
-  );
+  return <SupplierLink offer={offer} />;
 }
 
 function MatchCell({ offer }) {
@@ -71,14 +65,21 @@ export default function OffersTable({ offers, sortDir = 'asc', onToggleSort, sho
     return next;
   });
 
-  const desktopRow = (o, { sub = false, group = null } = {}) => (
+  const desktopRow = (o, { sub = false, group = null, last = false } = {}) => {
+    const expanded = Boolean(group && open.has(group.key));
+    return (
     <TableRow
       key={offerKey(o)}
       data-testid={sub ? 'offer-subrow' : 'offer-row'}
-      className={cn(o.fresh === false && 'opacity-75', sub && 'bg-muted/40 text-sm',
-        highlightId && o.id === highlightId && 'bg-emerald-50 dark:bg-emerald-500/10')}
+      className={cn(
+        o.fresh === false && !sub && 'opacity-75',
+        expanded && 'bg-indigo-100/80 dark:bg-indigo-500/20 border-b-0 font-semibold hover:bg-indigo-100/80 dark:hover:bg-indigo-500/20',
+        sub && 'bg-indigo-50 dark:bg-indigo-500/10 hover:bg-indigo-100/60 dark:hover:bg-indigo-500/15 text-sm border-b border-indigo-100 dark:border-indigo-500/20',
+        sub && last && 'border-b-2 border-b-indigo-200 dark:border-b-indigo-500/30',
+        highlightId && o.id === highlightId && 'bg-emerald-50 dark:bg-emerald-500/10',
+      )}
     >
-      <TableCell className={cn('font-medium whitespace-nowrap', sub && 'pl-8 font-normal text-muted-foreground')}>{sub ? '↳' : (o.brand || '—')}</TableCell>
+      <TableCell className={cn('font-medium whitespace-nowrap', expanded && 'border-l-4 border-l-indigo-600 dark:border-l-indigo-400', sub && 'border-l-4 border-l-indigo-600/70 dark:border-l-indigo-400/70 pl-6 font-normal text-indigo-700/80 dark:text-indigo-300/80 text-xs uppercase tracking-wide')}>{sub ? 'outro fornecedor' : (o.brand || '—')}</TableCell>
       <TableCell className="max-w-[220px]">
         <WithTooltip content={o.description}>
           <span className={cn('block truncate cursor-help', sub && 'text-muted-foreground')} title={o.description || undefined}>{o.model || o.description || '—'}</span>
@@ -97,12 +98,13 @@ export default function OffersTable({ offers, sortDir = 'asc', onToggleSort, sho
         </TableCell>
       )}
     </TableRow>
-  );
+    );
+  };
 
   const mobileCard = (o, { sub = false, group = null } = {}) => (
     <div
       key={offerKey(o)}
-      className={cn('p-3 space-y-2', sub && 'bg-muted/40 pl-6', highlightId && o.id === highlightId && 'bg-emerald-50 dark:bg-emerald-500/10')}
+      className={cn('p-3 space-y-2', sub && 'bg-indigo-50/50 dark:bg-indigo-500/[0.07] border-l-[3px] border-indigo-300 dark:border-indigo-400/60 pl-5', group && open.has(group.key) && 'bg-indigo-50/70 dark:bg-indigo-500/10 border-l-[3px] border-indigo-500', highlightId && o.id === highlightId && 'bg-emerald-50 dark:bg-emerald-500/10')}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -158,7 +160,7 @@ export default function OffersTable({ offers, sortDir = 'asc', onToggleSort, sho
             {groups.map((g) => (
               <React.Fragment key={g.key}>
                 {desktopRow(g.best, { group: grouped ? g : null })}
-                {open.has(g.key) && g.others.map((o) => desktopRow(o, { sub: true }))}
+                {open.has(g.key) && g.others.map((o, i) => desktopRow(o, { sub: true, last: i === g.others.length - 1 }))}
               </React.Fragment>
             ))}
           </TableBody>
