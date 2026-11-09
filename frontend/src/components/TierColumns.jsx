@@ -6,6 +6,7 @@ import { groupOffers } from '@/lib/groupOffers';
 import { splitByTier } from '@/lib/tiers';
 import { cn } from '@/lib/utils';
 import SupplierLink from './SupplierLink';
+import MultiBrandSelect from './MultiBrandSelect';
 
 function OtherRow({ o }) {
   return (
@@ -69,10 +70,14 @@ export function brandCounts(offers) {
 }
 
 function TierColumn({ col, sortDir, grouped }) {
-  const [brand, setBrand] = useState('');
+  const [picked, setPicked] = useState([]);
   const brands = useMemo(() => brandCounts(col.offers), [col.offers]);
-  const active = brand && brands.some((b) => b.brand === brand) ? brand : '';
-  const offers = useMemo(() => (active ? col.offers.filter((o) => (o.brand || '—') === active) : col.offers), [col.offers, active]);
+  const active = useMemo(() => picked.filter((b) => brands.some((x) => x.brand === b)), [picked, brands]);
+  const offers = useMemo(() => {
+    if (!active.length) return col.offers;
+    const set = new Set(active);
+    return col.offers.filter((o) => set.has(o.brand || '—'));
+  }, [col.offers, active]);
   const groups = useMemo(() => {
     const g = groupOffers(offers, sortDir);
     return grouped ? g : g.flatMap((x) => [x.best, ...x.others]).map((o) => ({ key: o.id, best: o, others: [] }));
@@ -86,16 +91,15 @@ function TierColumn({ col, sortDir, grouped }) {
         <p className="text-xs text-muted-foreground">
           {groups.length} pneu(s) · {offers.length} oferta(s){best != null ? ` · desde ${formatPrice(best)}` : ''}
         </p>
-        <select
+        <MultiBrandSelect
+          id={`tier-brand-${col.key}`}
+          testId={`tier-brand-${col.key}`}
           value={active}
-          onChange={(e) => setBrand(e.target.value)}
-          aria-label={`Filtrar ${col.label} por marca`}
-          data-testid={`tier-brand-${col.key}`}
-          className={cn('w-full h-8 rounded-md border bg-background px-2 text-xs', active && 'border-indigo-400 ring-1 ring-indigo-300 font-medium')}
-        >
-          <option value="">Todas as marcas ({brands.length})</option>
-          {brands.map((b) => <option key={b.brand} value={b.brand}>{b.brand} ({b.count})</option>)}
-        </select>
+          onChange={setPicked}
+          options={brands.map((b) => ({ value: b.brand, count: b.count }))}
+          placeholder={`Todas as marcas (${brands.length})`}
+          compact
+        />
       </header>
       <div className="p-2 space-y-2 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 260px)', minHeight: '200px' }}>
         {groups.length === 0

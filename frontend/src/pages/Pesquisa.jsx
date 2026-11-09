@@ -15,6 +15,7 @@ import { EmptyState, ErrorState, Field, NativeSelect, PageHeader, TableSkeleton 
 import { ERROR_KIND_LABELS, JOB_FINISHED, JobStatusBadge, OfferFlags, StaleBadge, StockBadge, ToneBadge } from '@/components/badges';
 import OffersTable, { sortOffersByPrice } from '@/components/OffersTable';
 import BrandInput from '@/components/BrandInput';
+import MultiBrandSelect from '@/components/MultiBrandSelect';
 import { groupOffers } from '@/lib/groupOffers';
 
 const POLL_MS = 3000;
@@ -22,7 +23,7 @@ const REFRESH_TIMEOUT_MS = 30 * 60 * 1000;
 const FINISHED = JOB_FINISHED;
 
 const EMPTY_FILTERS = {
-  brand: '', model: '', load_index: '', speed_index: '', xl: '', runflat: '', season: '',
+  brand: [], model: '', load_index: '', speed_index: '', xl: '', runflat: '', season: '',
   supplier_id: '', min_price: '', max_price: '', in_stock: false, show_stale: true, include_unlisted: false, include_incompatible: false,
 };
 
@@ -227,7 +228,7 @@ const Pesquisa = () => {
     try {
       const { data } = await searchAPI.offers({
         size,
-        brand: f.brand.trim(),
+        brand: (f.brand || []).join(','),
         model: f.model.trim(),
         load_index: f.load_index.trim(),
         speed_index: f.speed_index.trim().toUpperCase(),
@@ -485,7 +486,7 @@ const Pesquisa = () => {
               <div className="mt-3 grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
                 {mode === 'quick' && (
                   <>
-                    <Field label="Marca" htmlFor="f-brand"><BrandInput id="f-brand" value={filters.brand} onChange={setF('brand')} options={brandOptions} /></Field>
+                    <Field label="Marca" htmlFor="f-brand"><MultiBrandSelect id="f-brand" value={filters.brand} onChange={setF('brand')} options={brandOptions.map((b) => ({ value: b }))} placeholder="" showAllOnFocus={false} /></Field>
                     <Field label="Modelo" htmlFor="f-model"><Input id="f-model" value={filters.model} onChange={(e) => setF('model')(e.target.value)} /></Field>
                     <Field label="Carga" htmlFor="f-load"><Input id="f-load" value={filters.load_index} onChange={(e) => setF('load_index')(e.target.value)} /></Field>
                     <Field label="Velocidade" htmlFor="f-speed"><Input id="f-speed" maxLength={2} value={filters.speed_index} onChange={(e) => setF('speed_index')(e.target.value)} /></Field>
