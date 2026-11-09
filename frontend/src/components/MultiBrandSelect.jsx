@@ -25,6 +25,7 @@ export default function MultiBrandSelect({
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
+  const [focused, setFocused] = useState(false);
   const [active, setActive] = useState(0);
   const inputRef = useRef(null);
   const selected = useMemo(() => new Set(value.map(norm)), [value]);
@@ -58,7 +59,7 @@ export default function MultiBrandSelect({
     <div className="relative" data-testid={testId}>
       <div
         className={cn(
-          'flex flex-wrap items-center gap-1 rounded-md border bg-background px-1.5 cursor-text',
+          'relative flex flex-wrap items-center gap-1 rounded-md border bg-background pl-1.5 pr-7 cursor-text',
           compact ? 'min-h-8 py-0.5' : 'min-h-9 py-1',
           value.length > 0 && 'border-indigo-400 ring-1 ring-indigo-300',
         )}
@@ -81,16 +82,18 @@ export default function MultiBrandSelect({
           aria-expanded={show}
           placeholder={value.length ? '' : placeholder}
           onChange={(e) => { setQuery(e.target.value); setOpen(true); setActive(0); }}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setTimeout(() => setOpen(false), 120)}
+          onFocus={() => { setOpen(true); setFocused(true); }}
+          onBlur={() => { setFocused(false); setTimeout(() => setOpen(false), 120); }}
           onKeyDown={onKeyDown}
-          className={cn('flex-1 min-w-[60px] bg-transparent outline-none', compact ? 'text-xs h-6' : 'text-sm h-7')}
+          // Com marcas escolhidas, o campo só ocupa espaço enquanto se escreve (não empurra nada para baixo).
+          className={cn('bg-transparent outline-none', compact ? 'text-xs h-6' : 'text-sm h-7',
+            !value.length ? 'flex-1 min-w-[60px]' : (focused || query ? 'flex-1 min-w-[3ch]' : 'w-0 min-w-0 flex-1'))}
         />
         {value.length > 0 ? (
-          <button type="button" aria-label="Limpar marcas" onMouseDown={(e) => { e.preventDefault(); onChange([]); }} className="text-muted-foreground hover:text-foreground p-0.5">
+          <button type="button" aria-label="Limpar marcas" onMouseDown={(e) => { e.preventDefault(); onChange([]); }} className={cn('absolute right-1.5 text-muted-foreground hover:text-foreground p-0.5', compact ? 'top-[7px]' : 'top-[9px]')}>
             <X size={14} />
           </button>
-        ) : showAllOnFocus && <ChevronDown size={14} className="text-muted-foreground mr-0.5" />}
+        ) : showAllOnFocus && <ChevronDown size={14} className={cn('absolute right-2 text-muted-foreground pointer-events-none', compact ? 'top-[8px]' : 'top-[10px]')} />}
       </div>
       {show && (
         <ul role="listbox" aria-multiselectable="true" className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-auto rounded-md border bg-popover text-popover-foreground shadow-md py-1">
