@@ -43,7 +43,7 @@ export const MENU_ITEMS = [
   { path: '/precos', label: 'Pesquisa', icon: Search, aliases: ['/scraper'] },
   { path: '/catalogo', label: 'Stock permanente', icon: BookOpen, adminOnly: true },
   { path: '/comparar', label: 'Campanhas', icon: Scale, adminOnly: true },
-  { path: '/results', label: 'Resultados', icon: FileText, adminOnly: true },
+  { path: '/results', label: 'Histórico de campanhas', icon: FileText, adminOnly: true },
   {
     key: 'admin', label: 'Administração', icon: ShieldCheck, adminOnly: true,
     children: [
@@ -79,7 +79,7 @@ function NavLink({ item, active, child = false }) {
       )}
     >
       {!child && <Icon size={18} strokeWidth={1.7} aria-hidden="true" className="flex-shrink-0" />}
-      <span className="truncate">{item.label}</span>
+      <span className="min-w-0 leading-snug">{item.label}</span>
     </Link>
   );
 }

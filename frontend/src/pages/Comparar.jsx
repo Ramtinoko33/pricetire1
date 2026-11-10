@@ -271,7 +271,7 @@ const Comparar = () => {
     try {
       await jobsAPI.save(job.id);
       setSaved(true);
-      toast.success('Tabela guardada! Disponível na aba Resultados.');
+      toast.success('Tabela guardada! Disponível no Histórico de campanhas.');
     } catch (error) {
       console.error('Save error:', error);
       toast.error('Erro ao guardar a tabela');
