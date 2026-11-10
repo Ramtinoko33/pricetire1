@@ -246,7 +246,7 @@ const Results = () => {
       {/* Jobs List */}
       <Card className="border-border">
         <CardHeader>
-          <CardTitle>Selecionar Job</CardTitle>
+          <CardTitle>Campanhas guardadas</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-2">
