@@ -1,12 +1,12 @@
 // Tiers de marca: 1 premium, 2 quality, 3 budget (tabela brand_categories).
 
 export const TIERS = [
-  { key: 1, label: 'Premium', sub: 'Tier 1', tone: 'border-t-violet-500' },
-  { key: 2, label: 'Quality', sub: 'Tier 2', tone: 'border-t-blue-500' },
-  { key: 3, label: 'Budget', sub: 'Tier 3', tone: 'border-t-emerald-500' },
+  { key: 1, label: 'Premium', sub: 'Tier 1', tone: 'border-t-indigo-700 dark:border-t-indigo-300' },
+  { key: 2, label: 'Quality', sub: 'Tier 2', tone: 'border-t-indigo-400' },
+  { key: 3, label: 'Budget', sub: 'Tier 3', tone: 'border-t-slate-400' },
 ];
 
-export const UNCLASSIFIED = { key: 0, label: 'Sem classificação', sub: 'marcas sem tier', tone: 'border-t-slate-400' };
+export const UNCLASSIFIED = { key: 0, label: 'Sem classificação', sub: 'marcas sem tier', tone: 'border-t-slate-200 dark:border-t-slate-700' };
 
 export const TIER_OPTIONS = [
   { value: 'premium', label: 'Premium (tier 1)' },

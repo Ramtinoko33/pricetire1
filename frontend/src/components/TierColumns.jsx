@@ -10,11 +10,11 @@ import MultiBrandSelect from './MultiBrandSelect';
 
 function OtherRow({ o }) {
   return (
-    <div className="flex items-center justify-between gap-2 py-1 text-xs" data-testid="tier-other">
+    <div className="flex items-center justify-between gap-2 py-1.5 text-xs" data-testid="tier-other">
       <SupplierLink offer={o} className="truncate" />
       <span className="flex items-center gap-2 flex-shrink-0">
         <StockBadge status={o.stock_status} qty={o.stock_qty} location={o.stock_location || o.delivery_info} />
-        <span className="font-mono font-semibold">{formatPrice(o.price, o.currency)}</span>
+        <span className="font-bold tabular-nums">{formatPrice(o.price, o.currency)}</span>
       </span>
     </div>
   );
@@ -25,16 +25,17 @@ function TyreCard({ group }) {
   const o = group.best;
   const Icon = open ? ChevronUp : ChevronDown;
   return (
-    <div className={cn('rounded-md border bg-card p-3 space-y-1.5 transition-shadow', o.fresh === false && !open && 'opacity-75', open && 'ring-2 ring-indigo-500/70 shadow-md')} data-testid="tier-card">
+    <div className={cn('rounded-lg border bg-card p-3 space-y-2 transition-shadow', o.fresh === false && !open && 'text-foreground/80', open && 'border-primary ring-1 ring-primary shadow-overlay')} data-testid="tier-card">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-sm font-semibold truncate" title={o.description || undefined}>{o.brand} <span className="font-normal">{o.model}</span></p>
-          <div className="flex flex-wrap items-center gap-1 text-xs">
-            <span className="font-mono">{formatLoadSpeed(o)}</span>
+          <p className="truncate text-sm font-bold uppercase" title={o.description || undefined}>{o.brand}</p>
+          <p className="truncate text-xs uppercase text-muted-foreground" title={o.description || undefined}>{o.model}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-1 text-xs">
+            <span className="mr-1 font-semibold tabular-nums">{formatLoadSpeed(o)}</span>
             <OfferFlags offer={o} />
           </div>
         </div>
-        <p className="font-mono font-bold whitespace-nowrap">{formatPrice(o.price, o.currency)}</p>
+        <p className="whitespace-nowrap text-base font-extrabold tabular-nums tracking-[-0.02em]">{formatPrice(o.price, o.currency)}</p>
       </div>
       <div className="flex items-center justify-between gap-2 text-xs">
         <SupplierLink offer={o} className="truncate" />
@@ -44,14 +45,14 @@ function TyreCard({ group }) {
         <span className="flex items-center gap-1">{o.age_hours != null ? formatAge(o.age_hours) : formatAge(o.last_seen_at)}{o.fresh === false && <StaleBadge />}</span>
         {group.others.length > 0 && (
           <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} data-testid="tier-more"
-            className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 hover:bg-muted text-foreground">
+            className={cn('inline-flex min-h-7 items-center gap-1 rounded-md border px-2 font-semibold', open ? 'border-primary bg-primary text-primary-foreground hover:bg-primary-hover' : 'border-input text-foreground hover:border-primary hover:bg-accent')}>
             {open ? 'Ver menos' : `Ver mais (${group.others.length})`} <Icon size={12} />
           </button>
         )}
       </div>
       {open && (
-        <div className="-mx-3 -mb-3 mt-2 px-3 pb-2 pt-1 rounded-b-md bg-indigo-100/70 dark:bg-indigo-500/15 border-t border-indigo-200 dark:border-indigo-500/30 divide-y divide-indigo-100 dark:divide-indigo-500/15">
-          <p className="text-[10px] uppercase tracking-wide text-indigo-700/80 dark:text-indigo-300/80 pt-1">Outros fornecedores</p>
+        <div className="-mx-3 -mb-3 mt-2 divide-y divide-primary/10 rounded-b-lg border-t border-primary/20 bg-accent px-3 pb-2 pt-1.5">
+          <p className="pb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">Outros fornecedores</p>
           {group.others.map((x) => <OtherRow key={x.id ?? `${x.supplier_id}-${x.price}`} o={x} />)}
         </div>
       )}
@@ -85,10 +86,10 @@ function TierColumn({ col, sortDir, grouped }) {
   const best = offers.reduce((m, o) => (o.price != null && (m == null || o.price < m) ? o.price : m), null);
 
   return (
-    <section className={cn('rounded-md border border-t-4 bg-muted/30 flex flex-col min-w-0', col.tone)} data-testid={`tier-col-${col.key}`}>
-      <header className="px-3 py-2 border-b bg-card rounded-t-md space-y-1.5">
-        <p className="text-sm font-semibold">{col.label} <span className="text-xs font-normal text-muted-foreground">{col.sub}</span></p>
-        <p className="text-xs text-muted-foreground">
+    <section className={cn('flex min-w-0 flex-col rounded-lg border border-t-[3px] bg-muted/50', col.tone)} data-testid={`tier-col-${col.key}`}>
+      <header className="space-y-2 rounded-t-lg border-b bg-card px-3 py-3">
+        <p className="text-sm font-bold">{col.label} <span className="ml-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{col.sub}</span></p>
+        <p className="text-xs tabular-nums text-muted-foreground">
           {groups.length} pneu(s) · {offers.length} oferta(s){best != null ? ` · desde ${formatPrice(best)}` : ''}
         </p>
         <MultiBrandSelect

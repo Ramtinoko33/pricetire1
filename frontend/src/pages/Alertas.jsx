@@ -375,7 +375,7 @@ function EventsTab() {
 
 const Alertas = () => (
   <div className="space-y-6" data-testid="alertas-page">
-    <PageHeader title="Alertas" description="Aviso por e-mail quando um fornecedor tem uma referência do catálogo abaixo do seu preço de referência." />
+    <PageHeader eyebrow="Administração" title="Alertas" description="Aviso por e-mail quando um fornecedor tem uma referência do catálogo abaixo do seu preço de referência." />
     <Tabs defaultValue="events">
       <TabsList className="flex-wrap h-auto">
         <TabsTrigger value="events">Eventos</TabsTrigger>

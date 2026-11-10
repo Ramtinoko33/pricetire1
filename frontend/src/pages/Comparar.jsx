@@ -353,7 +353,8 @@ const Comparar = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-        <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-slate-100">Comparar Preços Excel</h1>
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Comparações por ficheiro</p>
+        <h1 className="text-2xl sm:text-[28px] font-extrabold leading-tight tracking-[-0.02em] text-foreground">Comparar Preços Excel</h1>
          <p className="text-slate-500 dark:text-slate-400">Carregue um ficheiro Excel e compare com os preços dos fornecedores</p>
         </div>
         {step > 1 && (

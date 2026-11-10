@@ -182,7 +182,8 @@ const Results = () => {
     <div className="space-y-6" data-testid="results-page">
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-3">
         <div>
-          <h2 className="text-xl sm:text-2xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>Resultados</h2>
+          <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Comparações por ficheiro</p>
+          <h1 className="text-2xl sm:text-[28px] font-extrabold leading-tight tracking-[-0.02em]">Resultados</h1>
           <p className="text-sm text-muted-foreground mt-1">{jobs.length} comparações guardadas</p>
         </div>
         <div className="flex flex-wrap gap-2">

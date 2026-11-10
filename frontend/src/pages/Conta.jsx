@@ -48,7 +48,7 @@ const Conta = () => {
 
   return (
     <div className="space-y-6 max-w-2xl" data-testid="conta-page">
-      <PageHeader title="Conta" description="Dados da sessão e alteração de password" />
+      <PageHeader eyebrow="Sessão" title="Conta" description="Dados da sessão e alteração de password" />
       <Card>
         <CardHeader><CardTitle className="text-base">Utilizador</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">

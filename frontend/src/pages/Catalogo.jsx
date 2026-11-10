@@ -532,7 +532,7 @@ const Catalogo = () => {
 
   return (
     <div className="space-y-6" data-testid="catalogo-page">
-      <PageHeader title="Catálogo" description="Referências compradas habitualmente, monitorizadas e comparadas com os preços dos fornecedores." />
+      <PageHeader eyebrow="Referências habituais" title="Catálogo" description="Referências compradas habitualmente, monitorizadas e comparadas com os preços dos fornecedores." />
       <Tabs defaultValue="items">
         <TabsList>
           <TabsTrigger value="items">Referências</TabsTrigger>

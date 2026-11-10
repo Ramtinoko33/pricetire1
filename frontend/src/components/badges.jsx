@@ -4,16 +4,35 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { cn } from '@/lib/utils';
 import { formatAge, formatDateTime, SEASON_LABELS } from '@/lib/format';
 
+// Cores semânticas da identidade C: verde = disponível/poupança exacta, âmbar = atenção,
+// vermelho = falha, azul = informação/alternativa, laranja = desactualizado, petróleo = atributo.
 const TONES = {
-  green: 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30',
-  red: 'bg-red-100 text-red-800 border-red-300 dark:bg-red-500/15 dark:text-red-300 dark:border-red-500/30',
-  amber: 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30',
-  blue: 'bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-500/15 dark:text-blue-300 dark:border-blue-500/30',
-  sky: 'bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-500/15 dark:text-sky-300 dark:border-sky-500/30',
-  purple: 'bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/30',
-  slate: 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-500/15 dark:text-slate-300 dark:border-slate-500/30',
-  orange: 'bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-500/15 dark:text-orange-300 dark:border-orange-500/30',
+  green: 'bg-success-subtle text-success border-success/25',
+  red: 'bg-danger-subtle text-danger border-danger/25',
+  amber: 'bg-warning-subtle text-warning border-warning/25',
+  blue: 'bg-info-subtle text-info border-info/25',
+  sky: 'bg-info-subtle text-info border-info/25',
+  purple: 'bg-accent text-accent-foreground border-primary/20',
+  slate: 'bg-muted text-muted-foreground border-border',
+  orange: 'bg-orange-50 text-orange-700 border-orange-700/25 dark:bg-orange-500/15 dark:text-orange-300 dark:border-orange-400/30',
 };
+
+// Estado de stock: sinal + texto (sem caixa), como na maqueta; o texto é sempre explícito.
+const STOCK_TONES = {
+  green: 'text-success',
+  red: 'text-danger',
+  amber: 'text-warning',
+  slate: 'text-muted-foreground',
+};
+
+function StockText({ tone, title, children }) {
+  return (
+    <span className={cn('inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-semibold', STOCK_TONES[tone])} title={title} data-testid="stock-badge">
+      <span aria-hidden="true" className={cn('h-1.5 w-1.5 flex-shrink-0 rounded-full bg-current', tone === 'slate' && 'bg-transparent ring-1 ring-current')} />
+      {children}
+    </span>
+  );
+}
 
 export function ToneBadge({ tone = 'slate', className, children, ...props }) {
   return (
@@ -60,10 +79,10 @@ export function StockBadge({ status, qty, location }) {
   const upTo = typeof location === 'string' ? location.match(/^até \d+/) : null;
   const extra = qty !== null && qty !== undefined ? ` (${qty})` : (upTo ? ` (${upTo[0]})` : '');
   const title = location || undefined;
-  if (status === 'available') return <ToneBadge tone="green" title={title}>Disponível{extra}</ToneBadge>;
-  if (status === 'unavailable') return <ToneBadge tone="red" title={title}>Indisponível{extra}</ToneBadge>;
-  if (location === 'Sob consulta') return <ToneBadge tone="amber" title="O fornecedor não divulga a quantidade no portal">Sob consulta</ToneBadge>;
-  return <ToneBadge tone="slate" title={title}>Desconhecido{extra}</ToneBadge>;
+  if (status === 'available') return <StockText tone="green" title={title}>{`Disponível${extra}`}</StockText>;
+  if (status === 'unavailable') return <StockText tone="red" title={title}>{`Indisponível${extra}`}</StockText>;
+  if (location === 'Sob consulta') return <StockText tone="amber" title="O fornecedor não divulga a quantidade no portal">Sob consulta</StockText>;
+  return <StockText tone="slate" title={title}>{`Desconhecido${extra}`}</StockText>;
 }
 
 export function StaleBadge() {
@@ -72,8 +91,8 @@ export function StaleBadge() {
 
 export function FreshnessCell({ at, ageHours, fresh }) {
   return (
-    <div className="flex flex-col gap-0.5 text-xs">
-      <span className="font-mono whitespace-nowrap">{formatDateTime(at)}</span>
+    <div className="flex flex-col items-start gap-0.5 text-xs">
+      <span className="whitespace-nowrap font-medium text-foreground tabular-nums">{formatDateTime(at)}</span>
       <span className="text-muted-foreground whitespace-nowrap">
         {ageHours !== undefined && ageHours !== null ? formatAge(ageHours) : formatAge(at)}
       </span>
@@ -182,10 +201,10 @@ export function HealthDetails({ health }) {
   if (!health) return <span className="text-xs text-muted-foreground">—</span>;
   return (
     <div className="text-xs space-y-0.5 min-w-[180px]">
-      <div>Último sucesso: <span className="font-mono">{formatDateTime(health.last_success_at)}</span>{health.last_success_at && <span className="text-muted-foreground"> ({formatAge(health.last_success_at)})</span>}</div>
+      <div>Último sucesso: <span className="tabular-nums">{formatDateTime(health.last_success_at)}</span>{health.last_success_at && <span className="text-muted-foreground"> ({formatAge(health.last_success_at)})</span>}</div>
       {health.last_failure_at && (
         <div className="text-red-700 dark:text-red-400">
-          Última falha: <span className="font-mono">{formatDateTime(health.last_failure_at)}</span>
+          Última falha: <span className="tabular-nums">{formatDateTime(health.last_failure_at)}</span>
           {health.last_error_kind && <> · {ERROR_KIND_LABELS[health.last_error_kind] || health.last_error_kind}</>}
           {health.last_error && (
             <WithTooltip content={health.last_error}>

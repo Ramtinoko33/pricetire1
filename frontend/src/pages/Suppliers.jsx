@@ -136,6 +136,7 @@ const Suppliers = () => {
   return (
     <div className="space-y-6" data-testid="suppliers-page">
       <PageHeader
+        eyebrow="Administração"
         title="Fornecedores"
         description={`${suppliers.length} fornecedores · estado de saúde das recolhas e credenciais`}
         actions={(

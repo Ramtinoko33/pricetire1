@@ -44,14 +44,35 @@ function MoreButton({ count, open, onClick }) {
   const Icon = open ? ChevronUp : ChevronDown;
   return (
     <button type="button" onClick={onClick} aria-expanded={open} data-testid="offers-more"
-      className="inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs whitespace-nowrap hover:bg-muted">
-      {open ? 'Ver menos' : `Ver mais (${count})`} <Icon size={12} />
+      className={cn(
+        'inline-flex min-h-8 items-center gap-1 whitespace-nowrap rounded-md border px-2.5 text-xs font-semibold transition-colors',
+        open ? 'border-primary bg-primary text-primary-foreground hover:bg-primary-hover' : 'border-input bg-card text-foreground hover:border-primary hover:bg-accent',
+      )}>
+      {open ? 'Ver menos' : `Ver mais (${count})`} <Icon size={13} aria-hidden="true" />
     </button>
   );
 }
 
-// Tabela de ofertas (desktop) + cartões (mobile). Com `grouped`, uma linha por pneu (a oferta
-// mais barata) e "Ver mais" mostra os restantes fornecedores desse pneu.
+function TyreName({ o, sub }) {
+  return (
+    <div className="min-w-0">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        {sub
+          ? <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">Outro fornecedor</span>
+          : <span className="font-bold uppercase tracking-[0.01em]">{o.brand || '—'}</span>}
+        {!sub && <OfferFlags offer={o} />}
+      </div>
+      <WithTooltip content={o.description}>
+        <span className="mt-0.5 block max-w-[280px] truncate text-xs uppercase text-muted-foreground cursor-help" title={o.description || undefined}>
+          {o.model || o.description || '—'}
+        </span>
+      </WithTooltip>
+    </div>
+  );
+}
+
+// Tabela de ofertas (ecrãs largos) + cartões (tablet/mobile). Com `grouped`, uma linha por pneu
+// (a oferta mais barata) e "Ver mais" mostra os restantes fornecedores desse pneu.
 export default function OffersTable({ offers, sortDir = 'asc', onToggleSort, showMatch = false, highlightId = null, grouped = false, testId = 'offers-table' }) {
   const rows = offers || [];
   const SortIcon = sortDir === 'desc' ? ArrowDown : ArrowUp;
@@ -72,24 +93,20 @@ export default function OffersTable({ offers, sortDir = 'asc', onToggleSort, sho
       key={offerKey(o)}
       data-testid={sub ? 'offer-subrow' : 'offer-row'}
       className={cn(
-        o.fresh === false && !sub && 'opacity-75',
-        expanded && 'bg-indigo-100/80 dark:bg-indigo-500/20 border-b-0 font-semibold hover:bg-indigo-100/80 dark:hover:bg-indigo-500/20',
-        sub && 'bg-indigo-50 dark:bg-indigo-500/10 hover:bg-indigo-100/60 dark:hover:bg-indigo-500/15 text-sm border-b border-indigo-100 dark:border-indigo-500/20',
-        sub && last && 'border-b-2 border-b-indigo-200 dark:border-b-indigo-500/30',
-        highlightId && o.id === highlightId && 'bg-emerald-50 dark:bg-emerald-500/10',
+        o.fresh === false && !sub && !expanded && 'text-foreground/80',
+        expanded && 'bg-accent hover:bg-accent border-b-0',
+        sub && 'bg-accent/45 hover:bg-accent/70 border-b border-primary/10',
+        sub && last && 'border-b-2 border-b-primary/30',
+        highlightId && o.id === highlightId && 'bg-success-subtle hover:bg-success-subtle',
       )}
     >
-      <TableCell className={cn('font-medium whitespace-nowrap', expanded && 'border-l-4 border-l-indigo-600 dark:border-l-indigo-400', sub && 'border-l-4 border-l-indigo-600/70 dark:border-l-indigo-400/70 pl-6 font-normal text-indigo-700/80 dark:text-indigo-300/80 text-xs uppercase tracking-wide')}>{sub ? 'outro fornecedor' : (o.brand || '—')}</TableCell>
-      <TableCell className="max-w-[220px]">
-        <WithTooltip content={o.description}>
-          <span className={cn('block truncate cursor-help', sub && 'text-muted-foreground')} title={o.description || undefined}>{o.model || o.description || '—'}</span>
-        </WithTooltip>
+      <TableCell className={cn('py-3', expanded && 'shadow-[inset_4px_0_0_hsl(var(--primary))]', sub && 'pl-8 shadow-[inset_4px_0_0_hsl(var(--primary)/0.55)]')}>
+        <TyreName o={o} sub={sub} />
       </TableCell>
-      <TableCell className="font-mono text-xs whitespace-nowrap">{formatLoadSpeed(o)}</TableCell>
-      <TableCell><OfferFlags offer={o} /></TableCell>
-      {showMatch && <TableCell className="max-w-[260px]"><MatchCell offer={o} /></TableCell>}
-      <TableCell className="text-sm"><SupplierCell offer={o} /></TableCell>
-      <TableCell className="text-right font-mono font-semibold whitespace-nowrap">{formatPrice(o.price, o.currency)}</TableCell>
+      <TableCell className="whitespace-nowrap text-[13px] font-medium tabular-nums">{formatLoadSpeed(o)}</TableCell>
+      {showMatch && <TableCell className="min-w-[260px] max-w-[340px]"><MatchCell offer={o} /></TableCell>}
+      <TableCell className="text-[13px]"><SupplierCell offer={o} /></TableCell>
+      <TableCell className={cn('whitespace-nowrap text-right tabular-nums tracking-[-0.02em]', sub ? 'text-[15px] font-bold' : 'text-base font-extrabold')}>{formatPrice(o.price, o.currency)}</TableCell>
       <TableCell><StockBadge status={o.stock_status} qty={o.stock_qty} location={o.stock_location || o.delivery_info} /></TableCell>
       <TableCell><FreshnessCell at={o.last_seen_at} ageHours={o.age_hours} fresh={o.fresh} /></TableCell>
       {grouped && (
@@ -101,58 +118,69 @@ export default function OffersTable({ offers, sortDir = 'asc', onToggleSort, sho
     );
   };
 
-  const mobileCard = (o, { sub = false, group = null } = {}) => (
+  const mobileCard = (o, { sub = false, group = null } = {}) => {
+    const expanded = Boolean(group && open.has(group.key));
+    return (
     <div
       key={offerKey(o)}
-      className={cn('p-3 space-y-2', sub && 'bg-indigo-50/50 dark:bg-indigo-500/[0.07] border-l-[3px] border-indigo-300 dark:border-indigo-400/60 pl-5', group && open.has(group.key) && 'bg-indigo-50/70 dark:bg-indigo-500/10 border-l-[3px] border-indigo-500', highlightId && o.id === highlightId && 'bg-emerald-50 dark:bg-emerald-500/10')}
+      data-testid={sub ? 'offer-card-sub' : 'offer-card'}
+      className={cn(
+        'grid gap-x-6 gap-y-2.5 px-4 py-3.5 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto] sm:items-center sm:px-5',
+        sub && 'bg-accent/45 pl-7 shadow-[inset_3px_0_0_hsl(var(--primary)/0.55)] sm:pl-8',
+        expanded && 'bg-accent shadow-[inset_3px_0_0_hsl(var(--primary))]',
+        highlightId && o.id === highlightId && 'bg-success-subtle',
+      )}
     >
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 items-start justify-between gap-3 sm:block">
         <div className="min-w-0">
-          <p className="font-semibold">{o.brand || '—'} <span className="font-normal">{o.model || ''}</span></p>
-          <p className="text-xs text-muted-foreground break-words">{o.description}</p>
+          {sub
+            ? <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">Outro fornecedor</p>
+            : <p className="font-bold uppercase">{o.brand || '—'}</p>}
+          <p className="text-xs uppercase text-muted-foreground">{o.model || ''}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground break-words">{o.description}</p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1 text-xs">
+            <span className="mr-1 font-semibold tabular-nums">{formatLoadSpeed(o)}</span>
+            <OfferFlags offer={o} />
+          </div>
+          {showMatch && <div className="mt-2"><MatchCell offer={o} /></div>}
         </div>
-        <p className="font-mono font-bold text-lg whitespace-nowrap">{formatPrice(o.price, o.currency)}</p>
+        <p className="whitespace-nowrap text-lg font-extrabold tabular-nums tracking-[-0.02em] sm:hidden">{formatPrice(o.price, o.currency)}</p>
       </div>
-      <div className="flex flex-wrap items-center gap-1 text-xs">
-        <span className="font-mono">{formatLoadSpeed(o)}</span>
-        <OfferFlags offer={o} />
-      </div>
-      {showMatch && <MatchCell offer={o} />}
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-        <SupplierCell offer={o} />
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 text-xs sm:flex-col sm:items-start sm:justify-center">
+        <span className="text-[13px] font-medium"><SupplierCell offer={o} /></span>
         <StockBadge status={o.stock_status} qty={o.stock_qty} location={o.stock_location || o.delivery_info} />
-      </div>
-      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span className="flex items-center gap-2">
-          {formatDateTime(o.last_seen_at)} · {o.age_hours != null ? formatAge(o.age_hours) : formatAge(o.last_seen_at)}
+        <span className="flex w-full flex-wrap items-center gap-2 text-muted-foreground sm:w-auto">
+          <span className="tabular-nums">{formatDateTime(o.last_seen_at)}</span> · {o.age_hours != null ? formatAge(o.age_hours) : formatAge(o.last_seen_at)}
           {o.fresh === false && <StaleBadge />}
         </span>
-        {group && <MoreButton count={group.others.length} open={open.has(group.key)} onClick={() => toggle(group.key)} />}
+      </div>
+      <div className="flex items-center justify-end gap-3 sm:flex-col sm:items-end sm:justify-center">
+        <p className="hidden whitespace-nowrap text-lg font-extrabold tabular-nums tracking-[-0.02em] sm:block">{formatPrice(o.price, o.currency)}</p>
+        {group && <MoreButton count={group.others.length} open={expanded} onClick={() => toggle(group.key)} />}
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <div data-testid={testId}>
-      <div className="hidden md:block">
+      <div className={showMatch ? 'hidden 2xl:block' : 'hidden xl:block'}>
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Marca</TableHead>
-              <TableHead>Modelo</TableHead>
+              <TableHead>Pneu / Modelo</TableHead>
               <TableHead>Índice</TableHead>
-              <TableHead>Características</TableHead>
               {showMatch && <TableHead>Correspondência</TableHead>}
               <TableHead>Fornecedor</TableHead>
-              <TableHead className="text-right">
+              <TableHead className="text-right" aria-sort={onToggleSort ? (sortDir === 'desc' ? 'descending' : 'ascending') : undefined}>
                 {onToggleSort ? (
-                  <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={onToggleSort} data-testid="sort-price">
-                    Preço <SortIcon size={12} />
+                  <button className="inline-flex items-center gap-1 rounded-sm hover:text-foreground" onClick={onToggleSort} data-testid="sort-price">
+                    Preço de compra <SortIcon size={12} aria-hidden="true" />
                   </button>
-                ) : 'Preço'}
+                ) : 'Preço de compra'}
               </TableHead>
               <TableHead>Stock</TableHead>
-              <TableHead>Actualizado</TableHead>
+              <TableHead>Recolha do preço</TableHead>
               {grouped && <TableHead className="text-right">Fornecedores</TableHead>}
             </TableRow>
           </TableHeader>
@@ -167,11 +195,12 @@ export default function OffersTable({ offers, sortDir = 'asc', onToggleSort, sho
         </Table>
       </div>
 
-      <div className="md:hidden divide-y divide-border">
+      <div className={cn('divide-y divide-border', showMatch ? '2xl:hidden' : 'xl:hidden')}>
         {onToggleSort && (
-          <div className="flex justify-end p-2">
-            <button className="inline-flex items-center gap-1 text-xs text-muted-foreground" onClick={onToggleSort}>
-              Ordenar por preço <SortIcon size={12} />
+          <div className="flex items-center justify-between bg-muted/70 px-4 py-2 sm:px-5">
+            <span className="text-xs font-semibold text-muted-foreground">{groups.length} {grouped ? 'pneus' : 'ofertas'}</span>
+            <button className="inline-flex min-h-8 items-center gap-1 rounded-md px-2 text-xs font-semibold text-muted-foreground hover:text-foreground" onClick={onToggleSort}>
+              Preço de compra <SortIcon size={12} aria-hidden="true" />
             </button>
           </div>
         )}

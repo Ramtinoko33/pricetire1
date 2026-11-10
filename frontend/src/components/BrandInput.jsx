@@ -67,7 +67,7 @@ export default function BrandInput({ id, value, onChange, options }) {
           id={`${id}-list`}
           role="listbox"
           data-testid="brand-suggestions"
-          className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-auto rounded-md border bg-popover text-popover-foreground shadow-md"
+          className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-auto rounded-lg border bg-popover text-popover-foreground shadow-overlay"
         >
           {items.map((b, i) => (
             <li

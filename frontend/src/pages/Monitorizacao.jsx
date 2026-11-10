@@ -248,6 +248,7 @@ const Monitorizacao = () => {
   return (
     <div className="space-y-4" data-testid="monitorizacao">
       <PageHeader
+        eyebrow="Administração"
         title="Medidas monitorizadas"
         description={`Medidas que a aplicação recolhe automaticamente nos fornecedores, por categoria e horário (hora de ${data?.timezone === 'Europe/Lisbon' ? 'Lisboa' : data?.timezone || 'Lisboa'}). As categorias arrancam desfasadas e cada recolha começa com uma variação de até 10 minutos, para não sobrecarregar a aplicação nem os portais.`}
       />

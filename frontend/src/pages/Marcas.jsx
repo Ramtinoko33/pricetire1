@@ -81,6 +81,7 @@ const Marcas = () => {
   return (
     <div className="space-y-4" data-testid="marcas">
       <PageHeader
+        eyebrow="Administração"
         title="Marcas"
         description="Tier de cada marca, usado na vista comparativa da Pesquisa (Premium, Quality, Budget) e nos alertas por categoria. Cada alteração fica gravada de imediato."
       />

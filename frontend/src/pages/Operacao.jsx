@@ -210,6 +210,7 @@ const Operacao = () => {
   return (
     <div className="space-y-6" data-testid="operacao-page">
       <PageHeader
+        eyebrow="Administração"
         title="Operação"
         description={`Fila, workers, agendador e saúde dos fornecedores · actualização automática a cada 15 s${lastRefresh ? ` · ${lastRefresh.toLocaleTimeString('pt-PT')}` : ''}`}
         actions={(

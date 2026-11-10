@@ -315,7 +315,7 @@ function ApiKeysTab() {
 
 const Admin = () => (
   <div className="space-y-6" data-testid="admin-page">
-    <PageHeader title="Administração" description="Utilizadores e chaves de API" />
+    <PageHeader eyebrow="Administração" title="Utilizadores" description="Utilizadores e chaves de API" />
     <Tabs defaultValue="users">
       <TabsList>
         <TabsTrigger value="users">Utilizadores</TabsTrigger>

@@ -59,16 +59,16 @@ export default function MultiBrandSelect({
     <div className="relative" data-testid={testId}>
       <div
         className={cn(
-          'relative flex flex-wrap items-center gap-1 rounded-md border bg-background pl-1.5 pr-7 cursor-text',
-          compact ? 'min-h-8 py-0.5' : 'min-h-9 py-1',
-          value.length > 0 && 'border-indigo-400 ring-1 ring-indigo-300',
+          'relative flex flex-wrap items-center gap-1 rounded-lg border border-input bg-card pl-2 pr-7 cursor-text hover:border-foreground/50 focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/25',
+          compact ? 'min-h-8 py-0.5' : 'min-h-10 py-1',
+          value.length > 0 && 'border-primary',
         )}
         onClick={() => { inputRef.current?.focus(); setOpen(true); }}
       >
         {value.map((v) => (
-          <span key={v} className="inline-flex items-center gap-0.5 rounded bg-indigo-100 dark:bg-indigo-500/20 text-indigo-800 dark:text-indigo-200 px-1.5 py-0.5 text-xs font-medium">
+          <span key={v} className="inline-flex items-center gap-0.5 rounded-sm bg-accent text-accent-foreground px-1.5 py-0.5 text-xs font-semibold">
             {v}
-            <button type="button" aria-label={`Remover ${v}`} onMouseDown={(e) => { e.preventDefault(); toggle(v); }} className="hover:text-indigo-950 dark:hover:text-white">
+            <button type="button" aria-label={`Remover ${v}`} onMouseDown={(e) => { e.preventDefault(); toggle(v); }} className="hover:text-foreground">
               <X size={11} />
             </button>
           </span>
@@ -96,7 +96,7 @@ export default function MultiBrandSelect({
         ) : showAllOnFocus && <ChevronDown size={14} className={cn('absolute right-2 text-muted-foreground pointer-events-none', compact ? 'top-[8px]' : 'top-[10px]')} />}
       </div>
       {show && (
-        <ul role="listbox" aria-multiselectable="true" className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-auto rounded-md border bg-popover text-popover-foreground shadow-md py-1">
+        <ul role="listbox" aria-multiselectable="true" className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-auto rounded-lg border bg-popover text-popover-foreground shadow-overlay py-1">
           {items.map((o, i) => {
             const on = selected.has(norm(o.value));
             return (
@@ -108,7 +108,7 @@ export default function MultiBrandSelect({
                 onMouseEnter={() => setActive(i)}
                 className={cn('flex items-center gap-2 cursor-pointer px-2.5 py-1.5 text-sm', i === active && 'bg-accent text-accent-foreground')}
               >
-                <span className={cn('flex h-4 w-4 items-center justify-center rounded border', on ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-muted-foreground/40')}>
+                <span className={cn('flex h-4 w-4 items-center justify-center rounded border', on ? 'bg-primary border-primary text-primary-foreground' : 'border-input')}>
                   {on && <Check size={12} />}
                 </span>
                 <span className="flex-1">{o.value}</span>
