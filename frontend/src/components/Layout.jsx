@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard, Scale, Database, FileText, Search, Moon, Sun, Menu, X, BookOpen,
+  LayoutDashboard, Scale, Database, Search, Moon, Sun, Menu, X, BookOpen,
   Bell, Activity, ShieldCheck, LogOut, UserCircle, ChevronDown, Users, Tag, CalendarClock,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
@@ -43,7 +43,6 @@ export const MENU_ITEMS = [
   { path: '/precos', label: 'Pesquisa', icon: Search, aliases: ['/scraper'] },
   { path: '/catalogo', label: 'Stock permanente', icon: BookOpen, adminOnly: true },
   { path: '/comparar', label: 'Campanhas', icon: Scale, adminOnly: true },
-  { path: '/results', label: 'Histórico de campanhas', icon: FileText, adminOnly: true },
   {
     key: 'admin', label: 'Administração', icon: ShieldCheck, adminOnly: true,
     children: [

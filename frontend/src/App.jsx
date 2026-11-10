@@ -1,5 +1,5 @@
 import React, { Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import Layout from './components/Layout';
 import { AuthProvider, RequireAdmin, RequireAuth } from './lib/auth';
@@ -9,9 +9,8 @@ import Login from './pages/Login';
 import '@/App.css';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
-const Comparar = lazy(() => import('./pages/Comparar'));
+const Campanhas = lazy(() => import('./pages/Campanhas'));
 const Suppliers = lazy(() => import('./pages/Suppliers'));
-const Results = lazy(() => import('./pages/Results'));
 const Pesquisa = lazy(() => import('./pages/Pesquisa'));
 const Catalogo = lazy(() => import('./pages/Catalogo'));
 const Alertas = lazy(() => import('./pages/Alertas'));
@@ -20,6 +19,13 @@ const Conta = lazy(() => import('./pages/Conta'));
 const Admin = lazy(() => import('./pages/Admin'));
 const Marcas = lazy(() => import('./pages/Marcas'));
 const Monitorizacao = lazy(() => import('./pages/Monitorizacao'));
+
+// O histórico de campanhas passou para um separador de /comparar; ligações antigas continuam a funcionar.
+function ResultsRedirect() {
+  const params = new URLSearchParams(useLocation().search);
+  params.set('tab', 'historico');
+  return <Navigate to={`/comparar?${params.toString()}`} replace />;
+}
 
 export function AppRoutes() {
   return (
@@ -35,10 +41,10 @@ export function AppRoutes() {
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/precos" element={<Pesquisa />} />
                   <Route path="/scraper" element={<Navigate to="/precos" replace />} />
-                  <Route path="/comparar" element={<RequireAdmin><Comparar /></RequireAdmin>} />
+                  <Route path="/comparar" element={<RequireAdmin><Campanhas /></RequireAdmin>} />
                   <Route path="/catalogo" element={<RequireAdmin><Catalogo /></RequireAdmin>} />
                   <Route path="/alertas" element={<RequireAdmin><Alertas /></RequireAdmin>} />
-                  <Route path="/results" element={<RequireAdmin><Results /></RequireAdmin>} />
+                  <Route path="/results" element={<ResultsRedirect />} />
                   <Route path="/suppliers" element={<RequireAdmin><Suppliers /></RequireAdmin>} />
                   <Route path="/operacao" element={<RequireAdmin><Operacao /></RequireAdmin>} />
                   <Route path="/logs" element={<Navigate to="/operacao" replace />} />

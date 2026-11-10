@@ -12,7 +12,7 @@ import { ToneBadge } from '../components/badges';
 import { downloadBlob } from '../lib/api';
 import { errorMessage, formatDateTime, formatPrice } from '../lib/format';
 
-const Results = () => {
+const Results = ({ embedded = false }) => {
   const [jobs, setJobs] = useState([]);
   const [selectedJob, setSelectedJob] = useState(null);
   const [results, setResults] = useState([]);
@@ -183,9 +183,13 @@ const Results = () => {
     <div className="space-y-6" data-testid="results-page">
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-3">
         <div>
-          <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Campanhas de fornecedores</p>
-          <h1 className="text-2xl sm:text-[28px] font-extrabold leading-tight tracking-[-0.02em]">Histórico de campanhas</h1>
-          <p className="text-sm text-muted-foreground mt-1">{jobs.length} {jobs.length === 1 ? "campanha guardada" : "campanhas guardadas"}</p>
+          {!embedded && (
+            <>
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Campanhas de fornecedores</p>
+              <h1 className="text-2xl sm:text-[28px] font-extrabold leading-tight tracking-[-0.02em]">Histórico de campanhas</h1>
+            </>
+          )}
+          <p className={embedded ? "text-sm text-muted-foreground" : "text-sm text-muted-foreground mt-1"}>{jobs.length} {jobs.length === 1 ? "campanha guardada" : "campanhas guardadas"}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {!selectMode && jobs.length > 0 && (

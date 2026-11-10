@@ -9,7 +9,7 @@ import ComparisonResultsTable, { summarizeResults } from '../components/Comparis
 import { errorMessage, formatPrice } from '../lib/format';
 import { ERROR_KIND_LABELS } from '../components/badges';
 
-const Comparar = () => {
+const Comparar = ({ embedded = false, onSaved }) => {
   // State
   const [step, setStep] = useState(1); // 1: upload, 2: compare, 3: results
   const [file, setFile] = useState(null);
@@ -271,7 +271,8 @@ const Comparar = () => {
     try {
       await jobsAPI.save(job.id);
       setSaved(true);
-      toast.success('Tabela guardada! Disponível no Histórico de campanhas.');
+      toast.success('Campanha guardada no Histórico.');
+      onSaved?.(job.id);
     } catch (error) {
       console.error('Save error:', error);
       toast.error('Erro ao guardar a tabela');
@@ -351,18 +352,22 @@ const Comparar = () => {
   return (
     <div className="space-y-6" data-testid="comparar-page">
       {/* Header */}
+      {(!embedded || step > 1) && (
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Campanhas de fornecedores</p>
-        <h1 className="text-2xl sm:text-[28px] font-extrabold leading-tight tracking-[-0.02em] text-foreground">Comparar campanhas</h1>
-         <p className="text-slate-500 dark:text-slate-400">Carregue a lista da campanha do fornecedor e compare com o seu preço</p>
-        </div>
+        {!embedded && (
+          <div>
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Campanhas de fornecedores</p>
+            <h1 className="text-2xl sm:text-[28px] font-extrabold leading-tight tracking-[-0.02em] text-foreground">Comparar campanhas</h1>
+            <p className="text-slate-500 dark:text-slate-400">Carregue a lista da campanha do fornecedor e compare com o seu preço</p>
+          </div>
+        )}
         {step > 1 && (
-          <Button variant="outline" onClick={resetFlow}>
+          <Button variant="outline" onClick={resetFlow} className="sm:ml-auto">
             Nova Comparação
           </Button>
         )}
       </div>
+      )}
 
       {/* Progress Steps */}
       <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-4 py-4 text-sm sm:text-base">
