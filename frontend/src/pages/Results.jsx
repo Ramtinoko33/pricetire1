@@ -8,6 +8,7 @@ import { Download, Trash2, Loader2, RotateCcw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import ComparisonResultsTable from '../components/ComparisonResultsTable';
 import { ConfirmDialog, EmptyState, TableSkeleton } from '../components/common';
+import { ToneBadge } from '../components/badges';
 import { downloadBlob } from '../lib/api';
 import { errorMessage, formatDateTime, formatPrice } from '../lib/format';
 
@@ -154,22 +155,22 @@ const Results = () => {
 
   const getStatusBadge = (status) => {
     if (status === 'no_brand_match') {
-      return <Badge variant="outline" className="text-amber-700 border-amber-400 bg-amber-50">OUTRA MARCA</Badge>;
+      return <ToneBadge tone="amber">Outra marca</ToneBadge>;
     }
     if (status === 'no_data') {
-      return <Badge variant="outline" className="text-muted-foreground">SEM DADOS</Badge>;
+      return <ToneBadge>Sem dados</ToneBadge>;
     }
-    const variants = {
-      completed: 'default',
-      running: 'secondary',
-      pending: 'outline',
-      failed: 'destructive',
-      found: 'default',
-      not_found: 'secondary',
-      processing: 'secondary',
-      error: 'destructive',
-    };
-    return <Badge variant={variants[status] || 'outline'}>{status.toUpperCase()}</Badge>;
+    const meta = {
+      completed: ['Concluído', 'green'],
+      running: ['A correr', 'blue'],
+      pending: ['Em espera', 'slate'],
+      failed: ['Falhou', 'red'],
+      found: ['Encontrado', 'green'],
+      not_found: ['Não encontrado', 'slate'],
+      processing: ['A processar', 'blue'],
+      error: ['Erro', 'red'],
+    }[status];
+    return <ToneBadge tone={meta?.[1] || 'slate'} title={status}>{meta?.[0] || status}</ToneBadge>;
   };
 
   if (loading) {
@@ -252,7 +253,7 @@ const Results = () => {
             {jobs.map((job) => (
               <div
               key={job.id}
-              className={`flex items-center gap-3 p-4 border rounded-sm transition-colors ${
+              className={`flex items-center gap-3 p-3 sm:p-4 border rounded-lg transition-colors ${
                 selectMode && selectedIds.includes(job.id)
                   ? 'border-red-400 bg-red-50 dark:bg-red-500/10'
                   : selectedJob === job.id
@@ -271,19 +272,19 @@ const Results = () => {
               )}
               <button
                 onClick={() => selectMode ? toggleSelectId(job.id) : loadJobResults(job.id)}
-                className="flex-1 text-left"
+                className="min-w-0 flex-1 text-left"
                 data-testid={`job-select-${job.id}`}
               >
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <p className="font-medium text-sm">{job.filename}</p>
-                      <p className="text-xs text-muted-foreground mt-1">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-sm [overflow-wrap:anywhere]">{job.filename}</p>
+                      <p className="text-xs text-muted-foreground mt-1 tabular-nums">
                         {formatDateTime(job.created_at)} • {job.total_items} itens
                       </p>
                     </div>
-                    <div className="flex items-center gap-4">
-                      <div className="text-right">
-                        <p className="text-sm font-mono font-bold text-green-700 dark:text-green-400">
+                    <div className="flex flex-shrink-0 items-center justify-between gap-4 sm:justify-end">
+                      <div className="sm:text-right">
+                        <p className="text-sm font-extrabold tabular-nums text-success">
                           {formatPrice(job.total_savings ?? 0)}
                         </p>
                         <p className="text-xs text-muted-foreground">poupança (exactos)</p>
@@ -302,8 +303,8 @@ const Results = () => {
       {selectedJob && (
         <Card className="border-border">
           <CardHeader>
-            <div className="flex justify-between items-center">
-              <CardTitle>Detalhes - {currentJob?.filename}</CardTitle>
+            <div className="flex flex-wrap justify-between items-center gap-2">
+              <CardTitle className="min-w-0 [overflow-wrap:anywhere]">Detalhes — {currentJob?.filename}</CardTitle>
               {currentJob?.status === 'running' && (
                 <Badge variant="secondary">Processando: {currentJob.processed_items}/{currentJob.total_items}</Badge>
               )}

@@ -129,6 +129,87 @@
     }
 }
 
+/* Tabelas em cartões no telemóvel (ver components/ui/table.jsx): a 1.ª célula é o título do
+   cartão (rótulo por cima); as restantes mostram rótulo à esquerda e valor à direita. */
+@media (max-width: 767.98px) {
+    table[data-stack="true"] > thead {
+        display: none;
+    }
+    table[data-stack="true"],
+    table[data-stack="true"] > tbody {
+        display: block;
+        width: 100%;
+    }
+    table[data-stack="true"] > tbody > tr {
+        display: block;
+        padding: 0.75rem 1rem 0.85rem;
+    }
+    table[data-stack="true"] > tbody > tr > td {
+        display: grid;
+        grid-template-columns: minmax(5.5rem, 40%) minmax(0, 1fr);
+        column-gap: 0.75rem;
+        row-gap: 0.25rem;
+        align-items: start;
+        justify-items: end;
+        min-width: 0;
+        max-width: none;
+        padding: 0.3rem 0 !important;
+        text-align: right;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+    table[data-stack="true"] > tbody > tr > td > * {
+        grid-column: 2;
+        min-width: 0;
+        max-width: 100%;
+    }
+    table[data-stack="true"] > tbody > tr > td::before {
+        content: attr(data-label);
+        grid-column: 1;
+        grid-row: 1;
+        justify-self: start;
+        padding-top: 0.1rem;
+        text-align: left;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: hsl(var(--muted-foreground));
+        white-space: normal;
+        overflow-wrap: normal;
+    }
+    /* Título do cartão */
+    table[data-stack="true"] > tbody > tr > td:first-child {
+        display: block;
+        padding-bottom: 0.4rem !important;
+        text-align: left;
+        font-weight: 600;
+    }
+    table[data-stack="true"] > tbody > tr > td:first-child > * {
+        text-align: left;
+        justify-content: flex-start;
+    }
+    table[data-stack="true"] > tbody > tr > td:first-child::before {
+        display: block;
+        margin-bottom: 0.15rem;
+        font-size: 0.6875rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+    }
+    /* Células sem título de coluna (acções) */
+    table[data-stack="true"] > tbody > tr > td[data-label=""],
+    table[data-stack="true"] > tbody > tr > td:not([data-label]) {
+        grid-template-columns: minmax(0, 1fr);
+        padding-top: 0.5rem !important;
+    }
+    table[data-stack="true"] > tbody > tr > td[data-label=""] > *,
+    table[data-stack="true"] > tbody > tr > td:not([data-label]) > * {
+        grid-column: 1;
+    }
+    table[data-stack="true"] > tbody > tr > td[data-label=""]::before,
+    table[data-stack="true"] > tbody > tr > td:not([data-label])::before {
+        content: none;
+    }
+}
+
 @layer base {
     [data-debug-wrapper="true"] {
         display: contents !important;

@@ -2,14 +2,46 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-const Table = React.forwardRef(({ className, ...props }, ref) => (
-  <div className="relative w-full overflow-auto">
-    <table
-      ref={ref}
-      className={cn("w-full caption-bottom text-sm", className)}
-      {...props} />
-  </div>
-))
+// Em ecrãs < 768 px (stack=true), cada linha passa a cartão: as células mostram o título da
+// coluna como rótulo (data-label, lido do cabeçalho) e deixa de haver scroll horizontal.
+const Table = React.forwardRef(({ className, stack = true, ...props }, ref) => {
+  const innerRef = React.useRef(null)
+  const setRefs = React.useCallback((node) => {
+    innerRef.current = node
+    if (typeof ref === "function") ref(node)
+    else if (ref) ref.current = node
+  }, [ref])
+
+  React.useLayoutEffect(() => {
+    const table = innerRef.current
+    if (!table || !stack) return undefined
+    const label = () => {
+      const heads = [...table.querySelectorAll(":scope > thead > tr:first-child > th")]
+        .map((th) => th.textContent.trim())
+      table.querySelectorAll(":scope > tbody > tr").forEach((tr) => {
+        [...tr.children].forEach((td, i) => {
+          const l = heads[i] || ""
+          if (td.getAttribute("data-label") !== l) td.setAttribute("data-label", l)
+        })
+      })
+    }
+    label()
+    // Só childList/characterData: escrever atributos não volta a disparar o observador.
+    const mo = new MutationObserver(label)
+    mo.observe(table, { childList: true, subtree: true, characterData: true })
+    return () => mo.disconnect()
+  }, [stack])
+
+  return (
+    <div className="relative w-full overflow-auto">
+      <table
+        ref={setRefs}
+        data-stack={stack ? "true" : undefined}
+        className={cn("w-full caption-bottom text-sm", className)}
+        {...props} />
+    </div>
+  )
+})
 Table.displayName = "Table"
 
 const TableHeader = React.forwardRef(({ className, ...props }, ref) => (
