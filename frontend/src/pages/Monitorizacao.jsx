@@ -60,14 +60,58 @@ function SizeChip({ size, onDelete }) {
       {size.recognized
         ? <span className="text-muted-foreground">{size.offers}</span>
         : <span className="text-amber-700 dark:text-amber-300">não reconhecida</span>}
-      <button type="button" aria-label={`Retirar ${size.label}`} onClick={() => onDelete(size)} className="text-muted-foreground opacity-50 group-hover:opacity-100 hover:text-red-600">
-        <X size={12} />
-      </button>
+      {!size.dynamic && (
+        <button type="button" aria-label={`Retirar ${size.label}`} onClick={() => onDelete(size)} className="text-muted-foreground opacity-50 group-hover:opacity-100 hover:text-red-600">
+          <X size={12} />
+        </button>
+      )}
     </div>
   );
 }
 
-function CategoryCard({ category, onChanged, onDelete }) {
+function SupplierToggles({ category, suppliers, onSaved }) {
+  const [saving, setSaving] = useState('');
+  const excluded = new Set(category.excluded_suppliers || []);
+  const toggle = async (name) => {
+    const next = excluded.has(name) ? [...excluded].filter((x) => x !== name) : [...excluded, name];
+    setSaving(name);
+    try {
+      await monitorAPI.updateCategory(category.id, { excluded_suppliers: next });
+      toast.success(`${category.name}: ${excluded.has(name) ? 'volta a pesquisar' : 'deixa de pesquisar'} em ${name}`);
+      onSaved();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Erro ao gravar os fornecedores'));
+    } finally {
+      setSaving('');
+    }
+  };
+  return (
+    <div className="space-y-1.5" data-testid="monitor-suppliers">
+      <p className="text-xs font-medium">Fornecedores onde esta categoria é pesquisada <span className="font-normal text-muted-foreground">(desligue os que não têm estes pneus, para não fazer pesquisas inúteis)</span></p>
+      <div className="flex flex-wrap gap-1.5">
+        {suppliers.map((name) => {
+          const on = !excluded.has(name);
+          return (
+            <button
+              key={name}
+              type="button"
+              onClick={() => toggle(name)}
+              disabled={Boolean(saving)}
+              aria-pressed={on}
+              className={cn('inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs transition-colors',
+                on ? 'bg-emerald-50 border-emerald-300 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200 dark:border-emerald-500/40'
+                  : 'bg-muted text-muted-foreground line-through')}
+            >
+              {saving === name && <Loader2 size={11} className="animate-spin" />} {name}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CategoryCard({ category, suppliers, onChanged, onDelete }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   const [adding, setAdding] = useState(false);
@@ -97,7 +141,7 @@ function CategoryCard({ category, onChanged, onDelete }) {
     setRunning(true);
     try {
       const { data } = await monitorAPI.runNow(category.id);
-      toast.success(`${category.name}: ${data.sizes} medidas em ${data.suppliers} fornecedores (${data.new_jobs} recolhas novas na fila)`);
+      toast.success(`${category.name}: ${data.searches ?? data.sizes} pesquisas em ${data.new_jobs} lote(s) na fila`);
       onChanged();
     } catch (err) {
       toast.error(errorMessage(err, 'Erro ao enfileirar a recolha'));
@@ -115,7 +159,8 @@ function CategoryCard({ category, onChanged, onDelete }) {
             <div className="min-w-0">
               <p className="font-semibold truncate">{category.name}</p>
               <p className="text-xs text-muted-foreground">
-                {category.sizes.length} medida(s)
+                {category.dynamic ? 'automática · ' : ''}{category.sizes.length} medida(s)
+                {category.excluded_suppliers?.length > 0 && <span> · {suppliers.length - category.excluded_suppliers.length} de {suppliers.length} fornecedores</span>}
                 {recognized < category.sizes.length && <span className="text-amber-700 dark:text-amber-300"> · {category.sizes.length - recognized} não reconhecida(s)</span>}
               </p>
             </div>
@@ -135,10 +180,16 @@ function CategoryCard({ category, onChanged, onDelete }) {
         </div>
         {open && (
           <div className="border-t px-4 py-3 space-y-3 bg-muted/20">
+            {category.dynamic && (
+              <p className="text-xs text-muted-foreground">
+                Calculada automaticamente a cada recolha: as medidas mais pesquisadas na aplicação nos últimos 14 dias (pelo menos 2 pesquisas). Não se editam à mão.
+              </p>
+            )}
             {category.sizes.length === 0
               ? <p className="text-sm text-muted-foreground">Sem medidas nesta categoria.</p>
-              : <div className="flex flex-wrap gap-1.5">{category.sizes.map((s) => <SizeChip key={s.id} size={s} onDelete={onDelete} />)}</div>}
-            {category.id && (
+              : <div className="flex flex-wrap gap-1.5">{category.sizes.map((s) => <SizeChip key={s.id ?? s.size_key} size={s} onDelete={onDelete} />)}</div>}
+            {category.id && suppliers.length > 0 && <SupplierToggles category={category} suppliers={suppliers} onSaved={onChanged} />}
+            {category.id && !category.dynamic && (
               <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
                 <textarea
                   value={text}
@@ -207,8 +258,9 @@ const Monitorizacao = () => {
         <>
           <p className="text-xs text-muted-foreground">
             {total} medidas em {cats.length} categorias{lastSeen ? ` · última recolha ${formatAge(lastSeen)}` : ''}. Clique numa categoria para ver e editar as medidas.
+            {data?.pause_seconds && ` Em cada fornecedor: pausa de ${data.pause_seconds[0]}–${data.pause_seconds[1]} s entre pesquisas, lotes de ${data.chunk_size} medidas e sem repetir medidas recolhidas há menos de ${data.skip_fresh_hours} h.`}
           </p>
-          {cats.map((c) => <CategoryCard key={c.id ?? 'none'} category={c} onChanged={load} onDelete={setToDelete} />)}
+          {cats.map((c) => <CategoryCard key={c.id ?? 'none'} category={c} suppliers={data?.suppliers || []} onChanged={load} onDelete={setToDelete} />)}
         </>
       )}
       <ConfirmDialog
