@@ -222,7 +222,7 @@ function ImportDialog({ open, onClose, onDone }) {
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="sm:max-w-[620px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Importar catálogo</DialogTitle>
+          <DialogTitle>Importar stock permanente</DialogTitle>
           <DialogDescription>Ficheiro Excel (.xlsx) ou CSV com as colunas do modelo.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -287,7 +287,7 @@ function ItemsTab({ suppliers }) {
       const { data } = await catalogAPI.getAll({ q: query, active });
       setItems(Array.isArray(data) ? data : []);
     } catch (err) {
-      setError(errorMessage(err, 'Erro ao carregar o catálogo'));
+      setError(errorMessage(err, 'Erro ao carregar o stock permanente'));
     } finally {
       setLoading(false);
     }
@@ -350,7 +350,7 @@ function ItemsTab({ suppliers }) {
         <CardContent className="p-0">
           {loading ? <TableSkeleton rows={6} cols={6} /> : items.length === 0 ? (
             <EmptyState
-              title={query || active ? 'Nenhuma referência corresponde aos filtros' : 'Catálogo vazio'}
+              title={query || active ? 'Nenhuma referência corresponde aos filtros' : 'Stock permanente vazio'}
               description="Adicione referências manualmente ou importe um ficheiro Excel/CSV a partir do modelo."
             />
           ) : (
@@ -410,7 +410,7 @@ function ItemsTab({ suppliers }) {
         open={Boolean(toDelete)}
         onOpenChange={(v) => !v && setToDelete(null)}
         title="Eliminar referência?"
-        description={`A referência ${toDelete?.reference || ''} será eliminada do catálogo. Para a manter sem a monitorizar, desactive-a em vez de eliminar.`}
+        description={`A referência ${toDelete?.reference || ''} será eliminada do stock permanente. Para a manter sem a monitorizar, desactive-a em vez de eliminar.`}
         confirmLabel="Eliminar"
         destructive
         onConfirm={remove}
@@ -532,7 +532,7 @@ const Catalogo = () => {
 
   return (
     <div className="space-y-6" data-testid="catalogo-page">
-      <PageHeader eyebrow="Referências habituais" title="Catálogo" description="Referências compradas habitualmente, monitorizadas e comparadas com os preços dos fornecedores." />
+      <PageHeader eyebrow="Referências habituais" title="Stock permanente" description="Medidas que mantém sempre em stock, monitorizadas nos fornecedores e comparadas com o seu preço de compra." />
       <Tabs defaultValue="items">
         <TabsList>
           <TabsTrigger value="items">Referências</TabsTrigger>

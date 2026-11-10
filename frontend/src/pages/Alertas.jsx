@@ -72,7 +72,7 @@ function RuleDialog({ open, initial, items, onClose, onSaved }) {
     e.preventDefault();
     setError('');
     if (!form.name.trim()) { setError('Indique um nome.'); return; }
-    if (form.scope === 'item' && !form.catalog_item_id) { setError('Escolha a referência do catálogo.'); return; }
+    if (form.scope === 'item' && !form.catalog_item_id) { setError('Escolha a referência do stock permanente.'); return; }
     if (form.scope === 'brand' && !form.brand.trim()) { setError('Indique a marca.'); return; }
     if (form.scope === 'category' && !form.category.trim()) { setError('Indique a categoria.'); return; }
     if (form.min_saving_pct === '' && form.min_saving_eur === '') { setError('Defina pelo menos um limiar (% ou €).'); return; }
@@ -103,7 +103,7 @@ function RuleDialog({ open, initial, items, onClose, onSaved }) {
             </NativeSelect>
           </Field>
           {form.scope === 'item' && (
-            <Field label="Referência do catálogo" htmlFor="r-item">
+            <Field label="Referência do stock permanente" htmlFor="r-item">
               <NativeSelect id="r-item" value={form.catalog_item_id} onChange={set('catalog_item_id')}>
                 <option value="">— escolher —</option>
                 {items.map((it) => (
@@ -122,7 +122,7 @@ function RuleDialog({ open, initial, items, onClose, onSaved }) {
             <Input id="r-email" type="email" value={form.email_to} onChange={set('email_to')} />
           </Field>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.active} onChange={set('active')} /> Regra activa</label>
-          <p className="text-xs text-muted-foreground">Os alertas só são gerados para ofertas com correspondência exacta face à referência do catálogo.</p>
+          <p className="text-xs text-muted-foreground">Os alertas só são gerados para ofertas com correspondência exacta face à referência do stock permanente.</p>
           {error && <p className="text-sm text-red-600 dark:text-red-400" role="alert">{error}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose} disabled={saving}>Cancelar</Button>
@@ -375,7 +375,7 @@ function EventsTab() {
 
 const Alertas = () => (
   <div className="space-y-6" data-testid="alertas-page">
-    <PageHeader eyebrow="Administração" title="Alertas" description="Aviso por e-mail quando um fornecedor tem uma referência do catálogo abaixo do seu preço de referência." />
+    <PageHeader eyebrow="Administração" title="Alertas" description="Aviso por e-mail quando um fornecedor tem uma referência do stock permanente abaixo do seu preço de referência." />
     <Tabs defaultValue="events">
       <TabsList className="flex-wrap h-auto">
         <TabsTrigger value="events">Eventos</TabsTrigger>

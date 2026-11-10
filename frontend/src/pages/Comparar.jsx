@@ -353,9 +353,9 @@ const Comparar = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Comparações por ficheiro</p>
-        <h1 className="text-2xl sm:text-[28px] font-extrabold leading-tight tracking-[-0.02em] text-foreground">Comparar Preços Excel</h1>
-         <p className="text-slate-500 dark:text-slate-400">Carregue um ficheiro Excel e compare com os preços dos fornecedores</p>
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Campanhas de fornecedores</p>
+        <h1 className="text-2xl sm:text-[28px] font-extrabold leading-tight tracking-[-0.02em] text-foreground">Comparar campanhas</h1>
+         <p className="text-slate-500 dark:text-slate-400">Carregue a lista da campanha do fornecedor e compare com o seu preço</p>
         </div>
         {step > 1 && (
           <Button variant="outline" onClick={resetFlow}>

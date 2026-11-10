@@ -41,8 +41,8 @@ function useMediaQuery(query) {
 export const MENU_ITEMS = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/precos', label: 'Pesquisa', icon: Search, aliases: ['/scraper'] },
-  { path: '/catalogo', label: 'Catálogo', icon: BookOpen, adminOnly: true },
-  { path: '/comparar', label: 'Comparar', icon: Scale, adminOnly: true },
+  { path: '/catalogo', label: 'Stock permanente', icon: BookOpen, adminOnly: true },
+  { path: '/comparar', label: 'Campanhas', icon: Scale, adminOnly: true },
   { path: '/results', label: 'Resultados', icon: FileText, adminOnly: true },
   {
     key: 'admin', label: 'Administração', icon: ShieldCheck, adminOnly: true,

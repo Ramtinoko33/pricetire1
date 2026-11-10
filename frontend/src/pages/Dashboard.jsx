@@ -106,7 +106,7 @@ const Dashboard = () => {
     const [st, cmp] = await Promise.allSettled([opsAPI.status(), catalogAPI.comparison(false)]);
     const errs = {};
     if (st.status === 'fulfilled') setStatus(st.value.data); else errs.status = errorMessage(st.reason, 'Erro ao carregar o estado da operação');
-    if (cmp.status === 'fulfilled') setComparison(Array.isArray(cmp.value.data) ? cmp.value.data : []); else errs.comparison = errorMessage(cmp.reason, 'Erro ao carregar a comparação do catálogo');
+    if (cmp.status === 'fulfilled') setComparison(Array.isArray(cmp.value.data) ? cmp.value.data : []); else errs.comparison = errorMessage(cmp.reason, 'Erro ao carregar a comparação do stock permanente');
     setErrors(errs);
     setLoading(false);
   }, []);
@@ -130,7 +130,7 @@ const Dashboard = () => {
       <PageHeader
         eyebrow="Visão geral"
         title="Dashboard"
-        description="Estado das recolhas, pesquisas recentes e oportunidades do catálogo."
+        description="Estado das recolhas, pesquisas recentes e oportunidades do stock permanente."
       />
       {(errors.status || errors.comparison) && (
         <div className="space-y-2">
@@ -157,11 +157,11 @@ const Dashboard = () => {
           {
             title: 'Oportunidades de poupança',
             value: comparison ? opportunities.length : '—',
-            sub: 'Referências do catálogo com preço exacto abaixo do de referência',
+            sub: 'Referências do stock permanente com preço exacto abaixo do de referência',
             testId: 'kpi-opportunities',
           },
           {
-            title: 'Referências no catálogo',
+            title: 'Referências no stock permanente',
             value: comparison ? comparison.length : '—',
             sub: alarms.length ? `${alarms.length} alarme(s) activo(s)` : 'Sem alarmes activos',
             testId: 'kpi-catalog',
@@ -199,8 +199,8 @@ const Dashboard = () => {
             {loading ? <TableSkeleton rows={4} cols={3} /> : opportunities.length === 0 ? (
               <EmptyState
                 title="Sem oportunidades neste momento"
-                description="Quando um fornecedor tiver uma referência do catálogo abaixo do seu preço de referência, aparece aqui."
-                action={isAdmin ? <Link to="/catalogo" className="text-sm font-semibold text-primary hover:underline">Gerir catálogo</Link> : undefined}
+                description="Quando um fornecedor tiver uma referência do stock permanente abaixo do seu preço de referência, aparece aqui."
+                action={isAdmin ? <Link to="/catalogo" className="text-sm font-semibold text-primary hover:underline">Gerir stock permanente</Link> : undefined}
               />
             ) : (
               <div className="divide-y divide-border">
