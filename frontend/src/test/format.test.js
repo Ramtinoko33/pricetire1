@@ -94,3 +94,17 @@ describe('parseSize agrícola, empilhador e OTR', () => {
     expect(parseSize('400/70-20')?.display).toBe('400/70-20');
   });
 });
+
+describe('medidas só com algarismos', () => {
+  it.each([
+    ['951750', '9.5R17.5'], ['95175', '9.5R17.5'], ['1878', '18x7-8'], ['2189', '21x8-9'],
+    ['23910', '23x9-10'], ['25015', '250-15'], ['271012', '27x10-12'], ['28915', '28x9-15'],
+    ['30015', '300-15'], ['5008', '5.00-8'], ['65010', '6.50-10'], ['6009', '6.00-9'],
+    ['70012', '7.00-12'], ['82515', '8.25-15'],
+  ])('%s = %s', (compact, full) => {
+    const a = parseSize(compact);
+    const b = parseSize(full);
+    expect(b).not.toBeNull();
+    expect(a?.key).toBe(b.key);
+  });
+});

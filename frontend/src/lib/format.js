@@ -98,7 +98,7 @@ function parseFlotation(text, digits) {
   return flotationSize(parseInt(c[1], 10), w, parseInt(c[3], 10));
 }
 
-export function parseSize(input) {
+function parseSizeText(input) {
   if (input === null || input === undefined) return null;
   const text = String(input).trim().toUpperCase().replace(',', '.');
   if (!text) return null;
@@ -182,6 +182,36 @@ export function parseSize(input) {
     display: `${width}/${aspect}${bias ? '-' : construction}${rimStr}${commercial ? 'C' : ''}`,
     key: `${width}${aspect}${rimStr}${commercial ? 'C' : ''}`,
   };
+}
+
+// Medidas escritas só com algarismos (igual a expand_compact_digits no backend):
+// 951750 → 9.5R17.5 · 28915 → 28x9-15 · 25015 → 250-15 · 65010 → 6.50-10.
+export function expandCompactDigits(text) {
+  const d = String(text ?? '').replace(/\s+/g, '');
+  if (!/^\d{4,6}$/.test(d)) return null;
+  let m = d.match(/^([7-9])5(175|195|225)0?$/);
+  if (m) return `${m[1]}.5R${m[2].slice(0, 2)}.5`;
+  m = d.match(/^(1[5-9]|[23]\d|40)(\d{2,4})$/);
+  if (m) {
+    const rest = m[2];
+    const ok = [1, 2]
+      .filter((i) => i < rest.length)
+      .map((i) => [rest.slice(0, i), rest.slice(i)])
+      .filter(([a, b]) => a[0] !== '0' && b[0] !== '0' && +a >= 4 && +a <= 16 && +b >= 5 && +b <= 24);
+    if (ok.length === 1) return `${m[1]}x${ok[0][0]}-${ok[0][1]}`;
+  }
+  m = d.match(/^(1[4-9]0|2\d0|3[0-5]0)(\d{1,2})$/);
+  if (m && +m[2] >= 8 && +m[2] <= 24) return `${m[1]}-${m[2]}`;
+  m = d.match(/^([4-9]|1[0-2])(00|25|50|75)(\d{1,2})$/);
+  if (m && m[3][0] !== '0' && +m[3] >= 4 && +m[3] <= 24) return `${m[1]}.${m[2]}-${m[3]}`;
+  return null;
+}
+
+export function parseSize(input) {
+  const parsed = parseSizeText(input);
+  if (parsed) return parsed;
+  const expanded = expandCompactDigits(input);
+  return expanded ? parseSizeText(expanded) : null;
 }
 
 // Lista de medidas separadas por vírgula, ponto e vírgula ou quebra de linha.
