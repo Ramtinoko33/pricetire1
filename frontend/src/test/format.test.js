@@ -116,3 +116,12 @@ describe('medidas equivalentes', () => {
     expect(parseSize(v)?.key).toBe('18X7-8');
   });
 });
+
+describe('ignora R, pontos, hífenes e espaços', () => {
+  it.each([
+    ['1122.5', '11R22.5'], ['11 22.5', '11R22.5'], ['11R225', '11R22.5'], ['13 225', '13R22.5'],
+    ['28-9-15', '28X9-15'], ['650.10', '6.5R10'], ['18.4 30', '18.4R30'],
+  ])('%s = %s', (v, key) => {
+    expect(parseSize(v)?.key).toBe(key);
+  });
+});

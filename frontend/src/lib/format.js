@@ -221,7 +221,13 @@ export function parseSize(input) {
   const parsed = parseSizeText(input);
   if (parsed) return parsed;
   const expanded = expandCompactDigits(input);
-  return expanded ? parseSizeText(expanded) : null;
+  if (expanded) return parseSizeText(expanded);
+  // Formato misto (1122.5, 11 22.5, 205 55 R16): ignora R, pontos, hífenes, barras e espaços.
+  if (/^[\d\sR.,\-/]+$/i.test(raw) && /[\sR.,\-/]/i.test(raw)) {
+    const digits = raw.replace(/\D/g, '');
+    if (digits && digits !== raw) return parseSize(digits);
+  }
+  return null;
 }
 
 // Lista de medidas separadas por vírgula, ponto e vírgula ou quebra de linha.
