@@ -397,10 +397,18 @@ const Comparar = ({ embedded = false, onSaved }) => {
       {step === 1 && (
         <Card className="border-slate-200 max-w-2xl mx-auto">
           <CardHeader>
-            <CardTitle>Passo 1: Carregar Ficheiro Excel</CardTitle>
+            <CardTitle>Passo 1: Carregar a lista da campanha</CardTitle>
             <p className="text-sm text-slate-600 mt-2">
-              Colunas: Medida e MeuPreço, ou a lista do fornecedor com Descrição e Oferta | Marca | Modelo | Indice | EAN. Formatos .xlsx, .xls ou .csv
+              Carregue o Excel tal como o fornecedor o enviou. A medida, o modelo e o preço de cada pneu são reconhecidos automaticamente.
             </p>
+            <details className="mt-2 text-sm text-slate-600" data-testid="upload-columns-help">
+              <summary className="cursor-pointer font-medium text-slate-700">Que colunas são reconhecidas?</summary>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                <li><span className="font-medium">Descrição</span> (com a medida) ou <span className="font-medium">Medida</span> — obrigatória</li>
+                <li><span className="font-medium">Oferta</span>, Preço ou MeuPreço — obrigatória</li>
+                <li>Marca, Modelo, Índice e EAN — opcionais, melhoram a correspondência</li>
+              </ul>
+            </details>
           </CardHeader>
           <CardContent className="space-y-6">
             <div>
