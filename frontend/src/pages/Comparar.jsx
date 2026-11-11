@@ -20,6 +20,8 @@ const Comparar = ({ embedded = false, onSaved }) => {
   const [results, setResults] = useState([]);
   const [stats, setStats] = useState(null);
   const [suppliersStatus, setSuppliersStatus] = useState([]);
+  const [pendingSizes, setPendingSizes] = useState([]);
+  const pendingKeyRef = useRef(null);
   const pollingTimerRef = useRef(null);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -133,7 +135,7 @@ const Comparar = ({ embedded = false, onSaved }) => {
 
       if (data?.async) {
         // Backend a processar em background — fazer polling até terminar
-        toast.info('A pesquisar preços nos fornecedores... pode demorar alguns minutos.');
+        toast.info('A comparar com os preços guardados; as medidas sem preço recente são pesquisadas nos fornecedores.');
         await _pollUntilDone(job.id);
       } else {
         // Resposta síncrona (compatibilidade)
@@ -194,12 +196,35 @@ const Comparar = ({ embedded = false, onSaved }) => {
             setSuppliersStatus(progress.suppliers_status);
           }
 
+          // Resultado provisório: mostra já os preços guardados e volta a carregar sempre que
+          // uma medida em falta fica actualizada.
+          if (status === 'running' && progress?.provisional) {
+            const pend = progress.pending_sizes || [];
+            const key = pend.join(',');
+            if (pendingKeyRef.current !== key) {
+              pendingKeyRef.current = key;
+              setPendingSizes(pend);
+              await loadResults(jobId);
+              setStep(3);
+            }
+          }
+
           if (status === 'completed') {
             pollingTimerRef.current = null;
+            pendingKeyRef.current = null;
+            setPendingSizes([]);
             sessionStorage.removeItem('comparing_job_id');
             await loadResults(jobId);
             setStep(3);
             toast.success('Comparação concluída!');
+            setComparing(false);
+            resolve();
+            return;
+          } else if (status === 'cancelled') {
+            pollingTimerRef.current = null;
+            pendingKeyRef.current = null;
+            setPendingSizes([]);
+            sessionStorage.removeItem('comparing_job_id');
             setComparing(false);
             resolve();
             return;
@@ -293,6 +318,8 @@ const Comparar = ({ embedded = false, onSaved }) => {
     setResults([]);
     setStats(null);
     setSuppliersStatus([]);
+    setPendingSizes([]);
+    pendingKeyRef.current = null;
     setComparing(false);
   };
 
@@ -484,11 +511,11 @@ const Comparar = ({ embedded = false, onSaved }) => {
 
             <div className="text-center py-4">
               <p className="text-slate-600 mb-4">
-                Clique no botão abaixo para comparar os seus preços com os preços dos fornecedores.
+                Clique no botão abaixo para comparar os preços da lista com os preços dos fornecedores.
               </p>
               <p className="text-sm text-slate-500">
-                Na primeira execução, o scraper vai pesquisar preços em tempo real (pode demorar 2–5 minutos).
-                Execuções seguintes serão instantâneas.
+                Os preços já guardados aparecem de imediato. Só as medidas sem preço recente são pesquisadas
+                nos fornecedores, e essas linhas actualizam-se quando a pesquisa terminar.
               </p>
             </div>
 
@@ -502,7 +529,7 @@ const Comparar = ({ embedded = false, onSaved }) => {
               {comparing ? (
                 <>
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  A pesquisar preços nos fornecedores... (pode demorar alguns minutos)
+                  A comparar com os preços guardados...
                 </>
               ) : (
                 <>
@@ -563,7 +590,8 @@ const Comparar = ({ embedded = false, onSaved }) => {
                     {!saved && (
                       <Button
                         onClick={handleSave}
-                        disabled={saving}
+                        disabled={saving || comparing}
+                        title={comparing ? 'Disponível quando a actualização terminar' : undefined}
                         className="bg-emerald-600 hover:bg-emerald-700 ring-2 ring-emerald-300 ring-offset-1"
                         data-testid="save-table-btn"
                       >
@@ -605,6 +633,18 @@ const Comparar = ({ embedded = false, onSaved }) => {
                 </div>
               </CardContent>
             </Card>
+          )}
+
+          {comparing && pendingSizes.length > 0 && (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100" data-testid="provisional-banner">
+              <div className="flex items-start gap-2">
+                <RotateCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+                <p>
+                  Resultados com os preços já guardados. A actualizar {pendingSizes.length === 1 ? '1 medida' : `${pendingSizes.length} medidas`} nos
+                  fornecedores; as linhas marcadas "A actualizar" mudam sozinhas quando a pesquisa terminar.
+                </p>
+              </div>
+            </div>
           )}
 
           {/* Supplier Status Summary */}

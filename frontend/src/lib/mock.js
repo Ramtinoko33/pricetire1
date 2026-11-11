@@ -44,6 +44,7 @@ const db = {
   ],
   targets: [{ id: 1, size: '195/65R15', size_key: '1956515' }, { id: 2, size: '225/45R17', size_key: '2254517' }],
   jobs: [],
+  compareStarted: {},
   refreshes: {},
   excelJobs: [
     { id: 'demo-job-0001', filename: 'exemplo_fictício.xlsx', created_at: hoursAgo(20), total_items: 4, found_items: 1, total_savings: 4.5, status: 'completed' },
@@ -482,11 +483,20 @@ function route(config) {
     db.excelJobs.unshift(j);
     return ok(config, j);
   }
-  if ((mm = m(/^\/jobs\/([^/]+)\/compare$/))) return ok(config, { async: true });
+  if ((mm = m(/^\/jobs\/([^/]+)\/compare$/))) { db.compareStarted[mm[1]] = Date.now(); return ok(config, { async: true }); }
   if ((mm = m(/^\/jobs\/([^/]+)\/progress$/))) {
-    return ok(config, { status: 'completed', total_items: 4, found_items: 1, suppliers_status: db.suppliers.filter((s) => s.is_active).map((s) => ({ name: s.name, status: s.name === 'Fornecedor C' ? 'error' : 'done', duration_s: 12, products: 5, best_price: 53.5 })) });
+    // Simula ~8 s de resultado provisório: 195/65R15 ainda a recolher nos fornecedores.
+    const provisional = Date.now() - (db.compareStarted[mm[1]] || 0) < 8000;
+    return ok(config, {
+      status: provisional ? 'running' : 'completed', total_items: 4, found_items: 1,
+      provisional, pending_sizes: provisional ? ['1956515'] : [],
+      suppliers_status: db.suppliers.filter((s) => s.is_active).map((s) => ({ name: s.name, status: provisional ? 'running' : s.name === 'Fornecedor C' ? 'error' : 'done', duration_s: 12, products: 5, best_price: 53.5 })),
+    });
   }
-  if ((mm = m(/^\/jobs\/([^/]+)\/results$/))) return ok(config, excelResults());
+  if ((mm = m(/^\/jobs\/([^/]+)\/results$/))) {
+    const provisional = Date.now() - (db.compareStarted[mm[1]] || 0) < 8000;
+    return ok(config, excelResults().map((r) => ({ ...r, updating: provisional && r.medida === '195/65R15' })));
+  }
   if ((mm = m(/^\/jobs\/([^/]+)\/export$/))) return ok(config, new Blob(['export fictício']));
   if ((mm = m(/^\/jobs\/([^/]+)\/(save|cancel)$/))) return ok(config, { ok: true });
   if ((mm = m(/^\/jobs\/([^/]+)$/)) && method === 'delete') { db.excelJobs = db.excelJobs.filter((j) => j.id !== mm[1]); return ok(config, { ok: true }); }

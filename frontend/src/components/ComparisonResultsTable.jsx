@@ -128,8 +128,9 @@ export default function ComparisonResultsTable({ results, showRef = false }) {
                     <div className="flex flex-wrap gap-1">
                       {item.match_class
                         ? <MatchBadge matchClass={item.match_class} details={reasons} />
-                        : <ToneBadge>Sem ofertas</ToneBadge>}
-                      {item.status === 'stale' && <StaleBadge />}
+                        : !item.updating && <ToneBadge>Sem ofertas</ToneBadge>}
+                      {item.status === 'stale' && !item.updating && <StaleBadge />}
+                      {item.updating && <ToneBadge tone="blue">A actualizar</ToneBadge>}
                     </div>
                   </TableCell>
                   <TableCell className="max-w-[180px]">
