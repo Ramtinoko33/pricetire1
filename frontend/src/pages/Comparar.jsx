@@ -399,7 +399,7 @@ const Comparar = ({ embedded = false, onSaved }) => {
           <CardHeader>
             <CardTitle>Passo 1: Carregar Ficheiro Excel</CardTitle>
             <p className="text-sm text-slate-600 mt-2">
-              Colunas: Medida e MeuPreço (obrigatórias) | Marca | Modelo | Indice. Formatos .xlsx, .xls ou .csv
+              Colunas: Medida e MeuPreço, ou a lista do fornecedor com Descrição e Oferta | Marca | Modelo | Indice | EAN. Formatos .xlsx, .xls ou .csv
             </p>
           </CardHeader>
           <CardContent className="space-y-6">
