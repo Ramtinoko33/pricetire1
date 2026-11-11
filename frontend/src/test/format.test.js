@@ -110,3 +110,9 @@ describe('medidas só com algarismos', () => {
     expect(a?.key).toBe(b.key);
   });
 });
+
+describe('medidas equivalentes', () => {
+  it.each(['180/70-8', '180/70R8', '180/70 8', '180708', '1878', '18x7-8'])('%s = 18x7-8', (v) => {
+    expect(parseSize(v)?.key).toBe('18X7-8');
+  });
+});

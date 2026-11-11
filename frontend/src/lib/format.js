@@ -211,7 +211,13 @@ export function expandCompactDigits(text) {
   return null;
 }
 
+// Medidas de empilhador com duas designações (igual a SIZE_ALIASES no backend): 180/70-8 = 18x7-8.
+const SIZE_ALIASES = [{ re: /^180\s*\/\s*70\s*(?:R|-|\s)?\s*8$/, digits: '180708', to: '18x7-8' }];
+
 export function parseSize(input) {
+  const raw = String(input ?? '').trim().toUpperCase();
+  const alias = SIZE_ALIASES.find((a) => a.re.test(raw) || raw.replace(/\s+/g, '') === a.digits);
+  if (alias) return parseSizeText(alias.to);
   const parsed = parseSizeText(input);
   if (parsed) return parsed;
   const expanded = expandCompactDigits(input);
