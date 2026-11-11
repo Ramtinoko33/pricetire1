@@ -10,6 +10,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { EmptyState, ErrorState, PageHeader, TableSkeleton } from '@/components/common';
 import { WithTooltip } from '@/components/badges';
 import { cn } from '@/lib/utils';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import MarcasAssociacoes from './MarcasAssociacoes';
 
 const TIER_STYLE = {
   premium: 'border-violet-300 bg-violet-50 text-violet-800 dark:bg-violet-500/15 dark:text-violet-200 dark:border-violet-500/40',
@@ -41,6 +43,8 @@ const Marcas = () => {
   const [query, setQuery] = useState('');
   const [tier, setTier] = useState('all');
   const [saving, setSaving] = useState('');
+  const [tab, setTab] = useState('tiers');
+  const [pending, setPending] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -54,6 +58,15 @@ const Marcas = () => {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const loadPending = useCallback(async () => {
+    try {
+      const { data } = await brandsAPI.aliases();
+      setPending(data?.suggestions?.length || 0);
+    } catch { /* o separador mostra o erro */ }
+  }, []);
+
+  useEffect(() => { loadPending(); }, [loadPending]);
 
   const counts = useMemo(() => {
     const c = { all: 0, premium: 0, quality: 0, budget: 0, none: 0 };
@@ -85,6 +98,17 @@ const Marcas = () => {
         title="Marcas"
         description="Tier de cada marca, usado na vista comparativa da Pesquisa (Premium, Quality, Budget) e nos alertas por categoria. Cada alteração fica gravada de imediato."
       />
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList>
+          <TabsTrigger value="tiers" data-testid="tab-tiers">Tiers</TabsTrigger>
+          <TabsTrigger value="associacoes" data-testid="tab-associacoes">
+            Associações{pending > 0 && <span className="ml-1.5 rounded-full bg-amber-500 px-1.5 text-[11px] font-semibold text-white">{pending}</span>}
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="associacoes" className="mt-4">
+          <MarcasAssociacoes onChanged={() => { load(); loadPending(); }} />
+        </TabsContent>
+        <TabsContent value="tiers" className="mt-4 space-y-4">
       <Card>
         <CardContent className="p-4 flex flex-col md:flex-row md:items-center gap-3">
           <div className="relative md:w-72">
@@ -171,6 +195,8 @@ const Marcas = () => {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

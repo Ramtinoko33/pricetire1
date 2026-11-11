@@ -465,6 +465,24 @@ function route(config) {
   if (url === '/alerts/test-email') return ok(config, { ok: true });
   if (url === '/alerts/evaluate') return ok(config, { created: 0 });
   if (url === '/brand-categories' && method === 'get') return ok(config, db.brandCategories);
+  if (url === '/brands/aliases' && method === 'get') {
+    db.brandAliases = db.brandAliases || [];
+    const decided = new Set(db.brandAliases.map((d) => d.alias));
+    const sugg = [
+      { alias: `${BRANDS[0]}X`, brand: BRANDS[0], reason: `difere de ${BRANDS[0]} em 1 letra`, offers: 4, suppliers: 1 },
+      { alias: `${BRANDS[1]}TRUCK`, brand: BRANDS[1], reason: `${BRANDS[1]} + sufixo TRUCK`, offers: 2, suppliers: 1 },
+    ].filter((x) => !decided.has(x.alias));
+    return ok(config, { suggestions: sugg, decided: db.brandAliases, main_brands: BRANDS });
+  }
+  if (url === '/brands/aliases' && method === 'post') {
+    const b = parseBody(config);
+    db.brandAliases = [{ ...b, decided_by: 'demo', decided_at: now().toISOString() }, ...(db.brandAliases || []).filter((d) => d.alias !== b.alias)];
+    return ok(config, { ...b, offers_moved: b.status === 'approved' ? 3 : 0 });
+  }
+  if ((mm = m(/^\/brands\/aliases\/(.+)$/)) && method === 'delete') {
+    db.brandAliases = (db.brandAliases || []).filter((d) => d.alias !== decodeURIComponent(mm[1]));
+    return ok(config, { deleted: true });
+  }
   if (url === '/brands/overview') {
     const cats = new Map((db.brandCategories || []).map((c) => [c.brand, c]));
     return ok(config, BRANDS.map((brand) => ({ brand, category: cats.get(brand)?.category || null, note: cats.get(brand)?.note || null,

@@ -139,6 +139,9 @@ export const monitorAPI = {
 export const brandsAPI = {
   overview: () => api.get('/brands/overview'),
   setTier: (brand, category, note) => api.put(`/brand-categories/${encodeURIComponent(brand)}`, { category: category || null, note: note || undefined }),
+  aliases: () => api.get('/brands/aliases'),
+  decideAlias: (alias, brand, status) => api.post('/brands/aliases', { alias, brand: brand || null, status }),
+  undoAlias: (alias) => api.delete(`/brands/aliases/${encodeURIComponent(alias)}`),
 };
 
 export const jobsAPI = {
