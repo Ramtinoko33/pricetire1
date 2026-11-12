@@ -136,6 +136,12 @@ export const monitorAPI = {
   runNow: (id) => api.post(`/monitor/categories/${encodeURIComponent(id)}/run-now`),
 };
 
+export const historyAPI = {
+  list: (params) => api.get('/search-history', { params: cleanParams(params || {}) }),
+  users: () => api.get('/search-history/users'),
+  trends: (params) => api.get('/search-history/trends', { params: cleanParams(params || {}) }),
+};
+
 export const brandsAPI = {
   overview: () => api.get('/brands/overview'),
   setTier: (brand, category, note) => api.put(`/brand-categories/${encodeURIComponent(brand)}`, { category: category || null, note: note || undefined }),

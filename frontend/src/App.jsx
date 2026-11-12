@@ -19,6 +19,7 @@ const Conta = lazy(() => import('./pages/Conta'));
 const Admin = lazy(() => import('./pages/Admin'));
 const Marcas = lazy(() => import('./pages/Marcas'));
 const Monitorizacao = lazy(() => import('./pages/Monitorizacao'));
+const HistoricoPesquisas = lazy(() => import('./pages/HistoricoPesquisas'));
 
 // O histórico de campanhas passou para um separador de /comparar; ligações antigas continuam a funcionar.
 function ResultsRedirect() {
@@ -52,6 +53,7 @@ export function AppRoutes() {
                   <Route path="/admin" element={<RequireAdmin><Admin /></RequireAdmin>} />
                   <Route path="/marcas" element={<RequireAdmin><Marcas /></RequireAdmin>} />
                   <Route path="/monitorizacao" element={<RequireAdmin><Monitorizacao /></RequireAdmin>} />
+                  <Route path="/historico-pesquisas" element={<RequireAdmin><HistoricoPesquisas /></RequireAdmin>} />
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
               </Suspense>

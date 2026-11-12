@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Scale, Database, Search, Moon, Sun, Menu, X, BookOpen,
-  Bell, Activity, ShieldCheck, LogOut, UserCircle, ChevronDown, Users, Tag, CalendarClock,
+  Bell, Activity, ShieldCheck, LogOut, UserCircle, ChevronDown, Users, Tag, CalendarClock, History,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
@@ -49,6 +49,7 @@ export const MENU_ITEMS = [
       { path: '/admin', label: 'Utilizadores', icon: Users },
       { path: '/suppliers', label: 'Fornecedores', icon: Database },
       { path: '/marcas', label: 'Marcas', icon: Tag },
+      { path: '/historico-pesquisas', label: 'Histórico de pesquisas', icon: History },
       { path: '/monitorizacao', label: 'Medidas monitorizadas', icon: CalendarClock },
       { path: '/operacao', label: 'Operação', icon: Activity, aliases: ['/logs'] },
       { path: '/alertas', label: 'Alertas', icon: Bell },
