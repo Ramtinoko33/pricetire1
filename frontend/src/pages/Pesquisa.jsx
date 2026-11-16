@@ -24,7 +24,7 @@ const FINISHED = JOB_FINISHED;
 
 const EMPTY_FILTERS = {
   brand: [], model: '', load_index: '', speed_index: '', xl: '', runflat: '', season: '',
-  supplier_id: '', min_price: '', max_price: '', in_stock: false, show_stale: true, include_unlisted: false, include_incompatible: false,
+  supplier_id: '', min_price: '', max_price: '', in_stock: true, show_stale: false, include_unlisted: false, include_incompatible: false,
 };
 
 const EMPTY_WANTED = { brand: '', model: '', load_index: '', speed_index: '', xl: '', runflat: '', season: '' };
