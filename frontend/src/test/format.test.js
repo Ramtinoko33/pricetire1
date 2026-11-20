@@ -77,6 +77,10 @@ describe('parseSize polegadas', () => {
     expect(parseSize('2055516')?.display).toBe('205/55R16');
     expect(parseSize('31570225')?.display).toBe('315/70R22.5');
   });
+  it.each([['4408024', '440/80R24'], ['3208524', '320/85R24'], ['4806528', '480/65R28'], ['6006534', '600/65R34'], ['7107042', '710/70R42']])(
+    'agrícola %s → %s (não é flotação)', (v, d) => {
+      expect(parseSize(v)?.display).toBe(d);
+    });
 });
 
 describe('parseSize agrícola, empilhador e OTR', () => {

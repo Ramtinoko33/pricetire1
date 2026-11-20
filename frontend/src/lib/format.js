@@ -84,6 +84,17 @@ function forkliftSize(d, w, rim) {
   };
 }
 
+// 4408024 → 440/80R24 tem prioridade sobre 44x8.00R24 (igual ao backend: _COMPACT_RE antes da flotação).
+function isMetricCompact(digits) {
+  const m = digits.match(/^(\d{3})(\d{2})(\d{2})(5?)$/);
+  if (!m) return false;
+  const w = parseInt(m[1], 10);
+  const a = parseInt(m[2], 10);
+  const rim = parseInt(m[3], 10) + (m[4] ? 0.5 : 0);
+  return w >= 125 && w <= 900 && w % 5 === 0 && a >= 25 && a <= 95 && a % 5 === 0
+    && rim >= 10 && rim <= 54 && (rim <= 26 || a >= 60);
+}
+
 function parseFlotation(text, digits) {
   const m = digits.match(/^(?:LT)?(\d{2})[X×](\d{1,2}(?:\.\d{1,2})?)(?:LT)?(ZR|R|-)?(\d{1,2}(?:\.5)?)(?:LT)?$/);
   if (m) {
@@ -92,7 +103,7 @@ function parseFlotation(text, digits) {
     return flotationSize(parseInt(m[1], 10), w, parseFloat(m[4]));
   }
   const c = digits.match(/^(\d{2})(\d{2,4})(\d{2})$/);
-  if (!c) return null;
+  if (!c || isMetricCompact(digits)) return null;
   const wd = c[2];
   const w = wd.length === 4 ? parseInt(wd, 10) / 100 : wd.length === 3 ? parseInt(wd, 10) / 10 : parseInt(wd, 10) + 0.5;
   return flotationSize(parseInt(c[1], 10), w, parseInt(c[3], 10));
